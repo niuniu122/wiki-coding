@@ -1,0 +1,29 @@
+{
+  "name": "minimax-codex",
+  "version": "0.1.0",
+  "description": "A Codex-style interactive CLI shell for MiniMax.",
+  "type": "module",
+  "bin": {
+    "minimax-codex": "dist/cli.js"
+  },
+  "scripts": {
+    "dev": "tsx src/cli.tsx",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/cli.js",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx test/run-tests.ts"
+  },
+  "dependencies": {
+    "ink": "^5.2.1",
+    "react": "^18.3.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.15",
+    "@types/react": "^18.3.23",
+    "tsx": "^4.20.3",
+    "typescript": "^5.8.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

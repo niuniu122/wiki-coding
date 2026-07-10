@@ -1,0 +1,4 @@
+.mini-codex/
+dist/
+node_modules/
+*.log
