@@ -23,7 +23,15 @@ fn compat_report_matches_golden_and_is_byte_identical_on_second_run() {
     assert_eq!(first_json, second_json);
     let expected = fs::read_to_string(root.join("fixtures/compat/report.expected.json"))
         .expect("golden report");
-    assert_eq!(first_json, expected);
+    assert_eq!(first_json, normalize_golden_newlines(&expected));
+}
+
+#[test]
+fn compat_report_golden_accepts_windows_checkout_newlines() {
+    assert_eq!(
+        normalize_golden_newlines("{\r\n  \"status\": \"matched\"\r\n}\r\n"),
+        "{\n  \"status\": \"matched\"\n}\n"
+    );
 }
 
 #[test]
@@ -196,4 +204,8 @@ fn synthetic_graph(edges: &[(&str, &[&str])]) -> ArchitectureGraph {
             })
             .collect(),
     }
+}
+
+fn normalize_golden_newlines(value: &str) -> String {
+    value.replace("\r\n", "\n")
 }
