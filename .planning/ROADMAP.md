@@ -7,7 +7,7 @@ The milestone proceeds as six vertical, verifiable boundaries: freeze compatibil
 ## Phases
 
 - [x] **Phase 1: Contract Foundation** - Compile the Rust workspace and prove typed protocol/parity contracts offline. (completed 2026-07-15)
-- [ ] **Phase 2: Usable Rust Agent Shell** - Run, stream, resume, compact, diagnose, and operate through TUI or headless CLI.
+- [x] **Phase 2: Usable Rust Agent Shell** - Run, stream, resume, compact, diagnose, and operate through TUI or headless CLI. (completed 2026-07-15)
 - [ ] **Phase 3: Safe Tool Completion** - Execute the v1 tool set under exactly two permission modes.
 - [ ] **Phase 4: Vault and Main-Model Wiki** - Persist raw evidence and maintain recoverable Obsidian knowledge through the pinned main model.
 - [ ] **Phase 5: Retrieval and Project Discovery** - Serve three isolated indexes and preserve BM25-first project finding with truthful embedding.
@@ -67,13 +67,13 @@ Cross-cutting constraints:
   4. Configuration and credentials resolve predictably without writing plaintext secrets.
   5. Startup recovery, single-writer lease, controlled shutdown, and safe folded trace are observable through doctor/tests.
 
-**Plans**: 2/3 plans executed
+**Plans**: 3/3 plans executed
 
 Plans:
 
 - [x] 02-01-PLAN.md
 - [x] 02-02-PLAN.md
-- [ ] 02-03-PLAN.md
+- [x] 02-03-PLAN.md
 
 **Wave 1**
 
@@ -85,7 +85,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 02-03: Add compatible TUI/headless surfaces, diagnostics, configuration, and credentials
+- [x] 02-03: Add compatible TUI/headless surfaces, diagnostics, configuration, and credentials
 
 ### Phase 3: Safe Tool Completion
 
@@ -173,7 +173,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Contract Foundation | 4/4 | Complete    | 2026-07-15 |
-| 2. Usable Rust Agent Shell | 2/3 | In Progress|  |
+| 2. Usable Rust Agent Shell | 3/3 | Complete   | 2026-07-15 |
 | 3. Safe Tool Completion | 0/2 | Not started | - |
 | 4. Vault and Main-Model Wiki | 0/3 | Not started | - |
 | 5. Retrieval and Project Discovery | 0/3 | Not started | - |

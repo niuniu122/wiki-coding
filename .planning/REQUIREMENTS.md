@@ -24,15 +24,15 @@
 - [x] **RUN-01**: One-shot and interactive runs stream visible output, support cancellation, and persist one terminal result.
 - [x] **RUN-02**: Users can create, list, resume, continue, interrupt, retry, and finalize sessions after a process restart.
 - [x] **RUN-03**: Local deterministic compaction produces a stable short summary without an extra model call and reports retained context.
-- [ ] **RUN-04**: A single-writer lease, controlled shutdown, and startup recovery prevent concurrent or half-finalized workspace state.
+- [x] **RUN-04**: A single-writer lease, controlled shutdown, and startup recovery prevent concurrent or half-finalized workspace state.
 - [x] **RUN-05**: Folded local trace records safe structured work evidence without credentials or private raw chain of thought.
 
 ### CLI and TUI
 
-- [ ] **CLI-01**: TUI supports `/interrupt`, `/new`, `/threads`, `/resume`, `/compact`, `/api`, `/provider`, `/continue`, `/agent`, `/chat`, `/models`, `/model`, `/capabilities`, `/permissions`, `/trace`, `/retry`, and `/exit|/quit`.
-- [ ] **CLI-02**: Headless one-shot mode can emit stable JSONL events and meaningful exit codes without TUI dependencies.
-- [ ] **CLI-03**: `doctor`, `migrate`, Vault maintenance, and index maintenance commands give actionable diagnostics.
-- [ ] **CLI-04**: Typed configuration has one precedence chain, and credentials resolve env first then OS keyring with env-only headless fallback.
+- [x] **CLI-01**: TUI supports `/interrupt`, `/new`, `/threads`, `/resume`, `/compact`, `/api`, `/provider`, `/continue`, `/agent`, `/chat`, `/models`, `/model`, `/capabilities`, `/permissions`, `/trace`, `/retry`, and `/exit|/quit`.
+- [x] **CLI-02**: Headless one-shot mode can emit stable JSONL events and meaningful exit codes without TUI dependencies.
+- [x] **CLI-03**: `doctor`, `migrate`, Vault maintenance, and index maintenance commands give actionable diagnostics.
+- [x] **CLI-04**: Typed configuration has one precedence chain, and credentials resolve env first then OS keyring with env-only headless fallback.
 
 ### Tools and Permissions
 
@@ -113,12 +113,12 @@
 | RUN-01 | Phase 2 | Complete |
 | RUN-02 | Phase 2 | Complete |
 | RUN-03 | Phase 2 | Complete |
-| RUN-04 | Phase 2 | Pending |
+| RUN-04 | Phase 2 | Complete |
 | RUN-05 | Phase 2 | Complete |
-| CLI-01 | Phase 2 | Pending |
-| CLI-02 | Phase 2 | Pending |
-| CLI-03 | Phase 2 | Pending |
-| CLI-04 | Phase 2 | Pending |
+| CLI-01 | Phase 2 | Complete |
+| CLI-02 | Phase 2 | Complete |
+| CLI-03 | Phase 2 | Complete |
+| CLI-04 | Phase 2 | Complete |
 | TOOL-01 | Phase 3 | Pending |
 | TOOL-02 | Phase 3 | Pending |
 | TOOL-03 | Phase 3 | Pending |
