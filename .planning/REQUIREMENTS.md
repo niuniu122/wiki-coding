@@ -36,9 +36,9 @@
 
 ### Tools and Permissions
 
-- [ ] **TOOL-01**: Each model tool request has a stable call ID, normalized arguments, durable result, and correct Provider round-trip ordering.
-- [ ] **TOOL-02**: `confirm` asks before every external tool invocation and returns a structured rejection when declined.
-- [ ] **TOOL-03**: `full-access` auto-approves allowed tools only for the current process and resets to `confirm` on restart.
+- [x] **TOOL-01**: Each model tool request has a stable call ID, normalized arguments, durable result, and correct Provider round-trip ordering.
+- [x] **TOOL-02**: `confirm` asks before every external tool invocation and returns a structured rejection when declined.
+- [x] **TOOL-03**: `full-access` auto-approves allowed tools only for the current process and resets to `confirm` on restart.
 - [ ] **TOOL-04**: Rust v1 implements read/list, patch/write, bounded shell, Git status/diff, and npm diagnostics.
 - [ ] **TOOL-05**: Both modes enforce path, schema, secret, destructive-operation, cancellation, and unknown-side-effect hard gates.
 
@@ -119,11 +119,11 @@
 | CLI-02 | Phase 2 | Complete |
 | CLI-03 | Phase 2 | Complete |
 | CLI-04 | Phase 2 | Complete |
-| TOOL-01 | Phase 3 | Pending |
-| TOOL-02 | Phase 3 | Pending |
-| TOOL-03 | Phase 3 | Pending |
+| TOOL-01 | Phase 3 | Complete |
+| TOOL-02 | Phase 3 | Complete |
+| TOOL-03 | Phase 3 | Complete |
 | TOOL-04 | Phase 3 | Pending |
-| TOOL-05 | Phase 3 | Pending |
+| TOOL-05 | Phase 3 | In Progress |
 | VAULT-01 | Phase 4 | Pending |
 | VAULT-02 | Phase 4 | Pending |
 | VAULT-03 | Phase 4 | Pending |

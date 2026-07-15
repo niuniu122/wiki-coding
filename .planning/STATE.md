@@ -5,15 +5,15 @@ milestone_name: milestone
 current_phase: 3
 current_phase_name: Safe Tool Completion
 status: executing
-stopped_at: Phase 3 context gathered
-last_updated: "2026-07-15T12:38:11.452Z"
+stopped_at: Phase 3 Plan 01 complete; ready for Plan 02
+last_updated: "2026-07-15T13:55:22Z"
 last_activity: 2026-07-15
-last_activity_desc: Phase 2 completed
+last_activity_desc: Phase 3 Plan 01 native tool runtime completed
 progress:
   total_phases: 6
   completed_phases: 2
-  total_plans: 7
-  completed_plans: 7
+  total_plans: 9
+  completed_plans: 8
   percent: 33
 ---
 
@@ -28,10 +28,10 @@ See: .planning/PROJECT.md (updated 2026-07-15)
 
 ## Current Position
 
-Phase: 3 (Safe Tool Completion) — READY TO PLAN
-Plan: 1 of 2
-Status: Ready to execute
-Last activity: 2026-07-15 — Phase 2 completed
+Phase: 3 (Safe Tool Completion) — EXECUTING
+Plan: 2 of 2
+Status: Executing Phase 3
+Last activity: 2026-07-15 — Phase 3 Plan 01 completed
 
 Progress: [███░░░░░░░] 33%
 
@@ -39,9 +39,9 @@ Progress: [███░░░░░░░] 33%
 
 **Velocity:**
 
-- Total plans completed: 7
-- Average duration: 22 min
-- Total execution time: 156 min
+- Total plans completed: 8
+- Average duration: 29 min
+- Total execution time: 229 min
 
 **By Phase:**
 
@@ -51,6 +51,7 @@ Progress: [███░░░░░░░] 33%
 | Phase 2 P01 | 26 min | 3 tasks | 18 files |
 | Phase 2 P02 | 27 min | 3 tasks | 22 files |
 | Phase 2 P03 | 44 min | 3 tasks | 21 files |
+| Phase 3 P01 | 73 min | 3 tasks | 37 files |
 
 ## Accumulated Context
 
@@ -71,6 +72,8 @@ Progress: [███░░░░░░░] 33%
 - Interactive and JSONL output consume the same persisted schema-v1 events; rendering remains outside core.
 - Configuration precedence is defaults, user, project, environment, then CLI; headless credentials are environment-only.
 - The npm product entry remains TypeScript until Phase 6 even though the Rust development shell is now usable.
+- Native tool calls use typed Provider history, durable request/decision/start/terminal facts, and serial bounded execution.
+- Restart closes pre-start work as cancelled and post-start work as indeterminate without automatic replay.
 
 ### Pending Todos
 
@@ -91,6 +94,6 @@ None outside the roadmap.
 
 ## Session Continuity
 
-Last session: 2026-07-15T12:22:54.539Z
-Stopped at: Phase 3 context gathered
+Last session: 2026-07-15T13:55:22Z
+Stopped at: Phase 3 Plan 01 complete; ready for Plan 02
 Resume file: .planning/phases/MMX-03-safe-tool-completion/03-CONTEXT.md

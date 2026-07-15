@@ -104,7 +104,7 @@ Plans:
 Plans:
 **Wave 1**
 
-- [ ] 03-01: Implement tool state machine, approval protocol, and two-mode policy
+- [x] 03-01: Implement tool state machine, approval protocol, and two-mode policy
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
@@ -178,7 +178,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 1. Contract Foundation | 4/4 | Complete    | 2026-07-15 |
 | 2. Usable Rust Agent Shell | 3/3 | Complete   | 2026-07-15 |
-| 3. Safe Tool Completion | 0/2 | Not started | - |
+| 3. Safe Tool Completion | 1/2 | In progress | - |
 | 4. Vault and Main-Model Wiki | 0/3 | Not started | - |
 | 5. Retrieval and Project Discovery | 0/3 | Not started | - |
 | 6. Migration, Release, and Cutover | 0/3 | Not started | - |
