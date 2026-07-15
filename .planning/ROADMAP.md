@@ -27,14 +27,14 @@ The milestone proceeds as six vertical, verifiable boundaries: freeze compatibil
   3. A parity report lists every public command/provider behavior as matched, pending, or explicitly different.
   4. Dependency checks fail if core imports an adapter crate.
 
-**Plans**: 3/4 plans executed
+**Plans**: 4/4 plans executed
 
 Plans:
 
 - [x] 01-01-PLAN.md
 - [x] 01-02-PLAN.md
 - [x] 01-03-PLAN.md
-- [ ] 01-04-PLAN.md
+- [x] 01-04-PLAN.md
 
 **Wave 1**
 
@@ -47,7 +47,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 01-04: Build deterministic compat harness, architecture gates, and CI integration
+- [x] 01-04: Build deterministic compat harness, architecture gates, and CI integration
 
 Cross-cutting constraints:
 
@@ -160,7 +160,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Contract Foundation | 3/4 | In Progress |  |
+| 1. Contract Foundation | 4/4 | In Progress |  |
 | 2. Usable Rust Agent Shell | 0/3 | Not started | - |
 | 3. Safe Tool Completion | 0/2 | Not started | - |
 | 4. Vault and Main-Model Wiki | 0/3 | Not started | - |
