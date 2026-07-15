@@ -8,6 +8,8 @@ license.workspace = true
 [dependencies]
 minimax-core = { path = "../core" }
 minimax-protocol = { path = "../protocol" }
+serde.workspace = true
+serde_json.workspace = true
 
 [lints]
 workspace = true
