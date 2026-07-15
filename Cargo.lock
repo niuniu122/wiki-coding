@@ -984,6 +984,7 @@ dependencies = [
  "crossterm",
  "is-terminal",
  "minimax-protocol",
+ "serde_json",
 ]
 
 [[package]]

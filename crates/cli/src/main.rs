@@ -5,18 +5,18 @@ use std::process::ExitCode;
 
 use clap::Parser as _;
 use minimax_cli::{
-    ChatArgs, Cli, CliCommand, CommonArgs, DoctorArgs, DriverIds, ExitClass, HttpProviderPort,
-    JsonlWriter, MaintenanceRoute, RunArgs, RuntimeDriver, exit_for_error, exit_for_report,
-    inspect,
+    ChatArgs, Cli, CliCommand, CommonArgs, DoctorArgs, DriverIds, ExitClass, HeadlessApprovalPort,
+    HttpProviderPort, InteractiveApprovalPort, JsonlWriter, MaintenanceRoute, RunArgs,
+    RuntimeDriver, exit_for_error, exit_for_report, inspect,
 };
-use minimax_core::CompactionBudget;
+use minimax_core::{CompactionBudget, PermissionMode};
 use minimax_protocol::{ModelId, SessionId};
 use minimax_provider::{
     CredentialMode, CredentialResolver, HttpProviderClient, OsKeyringBackend, ResolvedConfig,
 };
 use minimax_tui::{
     CommandAvailability, CommandIntent, CrosstermTerminalHooks, EventRenderer, InteractiveShell,
-    ParsedInput, parse_input,
+    ParsedInput, StdioApprovalInput, parse_input,
 };
 
 #[tokio::main]
@@ -46,45 +46,79 @@ async fn execute_run(args: RunArgs) -> ExitClass {
     let Some((config, provider)) = prepare_provider(&args.common, CredentialMode::Headless) else {
         return ExitClass::Usage;
     };
-    let mut driver = match RuntimeDriver::open(
-        &args.common.project,
-        config.binding(),
-        provider,
-        DriverIds::system(),
-    ) {
+    let driver = if args.agent {
+        RuntimeDriver::open_with_builtin_tools(
+            &args.common.project,
+            config.binding(),
+            provider,
+            DriverIds::system(),
+            Box::new(HeadlessApprovalPort),
+        )
+    } else {
+        RuntimeDriver::open(
+            &args.common.project,
+            config.binding(),
+            provider,
+            DriverIds::system(),
+        )
+    };
+    let mut driver = match driver {
         Ok(driver) => driver,
         Err(error) => {
             eprintln!("run failed: {error}");
             return exit_for_error(&error);
         }
     };
+    if args.agent {
+        driver.set_permission_mode(args.permission.into());
+    }
     let report = if args.jsonl {
         let mut writer = JsonlWriter::new(io::stdout().lock());
         let mut output_failed = false;
-        let report = run_with_shutdown_with(
-            &mut driver,
-            args.prompt,
-            config.max_output_tokens,
-            |event| {
-                if !output_failed && writer.write_event(event).is_err() {
-                    output_failed = true;
-                }
-            },
-        )
-        .await;
+        let publish = |event: &minimax_protocol::RuntimeEventV1| {
+            if !output_failed && writer.write_event(event).is_err() {
+                output_failed = true;
+            }
+        };
+        let report = if args.agent {
+            run_agent_with_shutdown_with(
+                &mut driver,
+                args.prompt,
+                config.max_output_tokens,
+                publish,
+            )
+            .await
+        } else {
+            run_with_shutdown_with(&mut driver, args.prompt, config.max_output_tokens, publish)
+                .await
+        };
         if output_failed {
             eprintln!("run failed: output stream is unavailable");
             return ExitClass::Workspace;
         }
         report
     } else {
-        run_with_shutdown_with(
-            &mut driver,
-            args.prompt,
-            config.max_output_tokens,
-            |event| println!("{}", EventRenderer::event(event)),
-        )
-        .await
+        let report = if args.agent {
+            run_agent_with_shutdown_with(
+                &mut driver,
+                args.prompt,
+                config.max_output_tokens,
+                |event| println!("{}", EventRenderer::event(event)),
+            )
+            .await
+        } else {
+            run_with_shutdown_with(
+                &mut driver,
+                args.prompt,
+                config.max_output_tokens,
+                |event| println!("{}", EventRenderer::event(event)),
+            )
+            .await
+        };
+        if let Ok(report) = &report {
+            render_tool_results(report);
+        }
+        report
     };
     match report {
         Ok(report) => exit_for_report(&report),
@@ -100,19 +134,19 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
     else {
         return ExitClass::Usage;
     };
-    let mut driver = match RuntimeDriver::open(
-        &args.common.project,
-        config.binding(),
-        provider,
-        DriverIds::system(),
-    ) {
-        Ok(driver) => driver,
-        Err(error) => {
-            eprintln!("chat failed: {error}");
-            return exit_for_error(&error);
-        }
-    };
     if let Some(prompt) = args.prompt {
+        let mut driver = match RuntimeDriver::open(
+            &args.common.project,
+            config.binding(),
+            provider,
+            DriverIds::system(),
+        ) {
+            Ok(driver) => driver,
+            Err(error) => {
+                eprintln!("chat failed: {error}");
+                return exit_for_error(&error);
+            }
+        };
         return render_chat_turn(&mut driver, prompt, config.max_output_tokens).await;
     }
 
@@ -123,6 +157,24 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
         Err(_) => {
             eprintln!("chat failed: terminal initialization is unavailable");
             return ExitClass::Workspace;
+        }
+    };
+    let interactive = io::stdin().is_terminal() && io::stdout().is_terminal();
+    let approval = InteractiveApprovalPort::new(Box::new(StdioApprovalInput::new(
+        session.mode(),
+        interactive,
+    )));
+    let mut driver = match RuntimeDriver::open_with_builtin_tools(
+        &args.common.project,
+        config.binding(),
+        provider,
+        DriverIds::system(),
+        Box::new(approval),
+    ) {
+        Ok(driver) => driver,
+        Err(error) => {
+            eprintln!("chat failed: {error}");
+            return exit_for_error(&error);
         }
     };
     println!("MiniMax Codex Rust development shell. Use /exit to leave.");
@@ -170,6 +222,40 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
                         if exit != ExitClass::Completed {
                             return exit;
                         }
+                    }
+                    CommandIntent::AgentSubmit(prompt) => {
+                        let exit =
+                            render_agent_turn(&mut driver, prompt, config.max_output_tokens).await;
+                        if exit != ExitClass::Completed {
+                            return exit;
+                        }
+                    }
+                    CommandIntent::AgentContinue => {
+                        let exit = render_agent_turn(
+                            &mut driver,
+                            "Continue the previous agent task from the durable session context."
+                                .to_owned(),
+                            config.max_output_tokens,
+                        )
+                        .await;
+                        if exit != ExitClass::Completed {
+                            return exit;
+                        }
+                    }
+                    CommandIntent::Permissions(None) => println!(
+                        "permission mode: {}",
+                        permission_name(driver.permission_mode())
+                    ),
+                    CommandIntent::Permissions(Some(mode)) => {
+                        let mode = match mode {
+                            minimax_tui::PermissionName::Confirm => PermissionMode::Confirm,
+                            minimax_tui::PermissionName::FullAccess => PermissionMode::FullAccess,
+                        };
+                        driver.set_permission_mode(mode);
+                        println!(
+                            "permission mode: {} | applies only to this process; workspace, secret, command, size, timeout, and cancellation gates remain enforced",
+                            permission_name(mode)
+                        );
                     }
                     CommandIntent::NewSession => match driver.create_session(config.binding()) {
                         Ok(id) => println!("new session: {}", id.as_str()),
@@ -247,10 +333,7 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
                     CommandIntent::Interrupt => println!(
                         "press Ctrl-C during a turn to persist an interrupted terminal outcome"
                     ),
-                    CommandIntent::AgentContinue
-                    | CommandIntent::AgentSubmit(_)
-                    | CommandIntent::Capabilities(_)
-                    | CommandIntent::Permissions(_) => unreachable!("availability checked above"),
+                    CommandIntent::Capabilities(_) => unreachable!("availability checked above"),
                 }
             }
         }
@@ -275,6 +358,40 @@ async fn render_chat_turn<P: minimax_cli::ProviderPort>(
     }
 }
 
+async fn render_agent_turn<P: minimax_cli::ProviderPort>(
+    driver: &mut RuntimeDriver<P>,
+    prompt: String,
+    max_output_tokens: u32,
+) -> ExitClass {
+    match run_agent_with_shutdown_with(driver, prompt, max_output_tokens, |event| {
+        println!("{}", EventRenderer::event(event));
+    })
+    .await
+    {
+        Ok(report) => {
+            render_tool_results(&report);
+            exit_for_report(&report)
+        }
+        Err(error) => {
+            eprintln!("agent turn failed: {error}");
+            exit_for_error(&error)
+        }
+    }
+}
+
+fn render_tool_results(report: &minimax_cli::RunReport) {
+    for result in &report.tool_results {
+        println!("{}", EventRenderer::tool_result(result));
+    }
+}
+
+const fn permission_name(mode: PermissionMode) -> &'static str {
+    match mode {
+        PermissionMode::Confirm => "confirm",
+        PermissionMode::FullAccess => "full-access",
+    }
+}
+
 async fn run_with_shutdown_with<P, F>(
     driver: &mut RuntimeDriver<P>,
     prompt: String,
@@ -287,6 +404,22 @@ where
 {
     let cancellation = driver.cancellation_token();
     let run = driver.run_prompt_with(prompt, max_output_tokens, publish);
+    tokio::pin!(run);
+    wait_for_run_or_signal(&mut run, cancellation).await
+}
+
+async fn run_agent_with_shutdown_with<P, F>(
+    driver: &mut RuntimeDriver<P>,
+    prompt: String,
+    max_output_tokens: u32,
+    publish: F,
+) -> Result<minimax_cli::RunReport, minimax_cli::DriverError>
+where
+    P: minimax_cli::ProviderPort,
+    F: FnMut(&minimax_protocol::RuntimeEventV1),
+{
+    let cancellation = driver.cancellation_token();
+    let run = driver.run_agent_with(prompt, max_output_tokens, publish);
     tokio::pin!(run);
     wait_for_run_or_signal(&mut run, cancellation).await
 }

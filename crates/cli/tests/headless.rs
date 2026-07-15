@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use clap::Parser as _;
 use minimax_cli::{
     Cli, CliCommand, DriverError, DriverIds, ExitClass, JsonlWriter, MaintenanceRoute,
-    ProviderPort, RuntimeDriver, exit_for_error, exit_for_report, inspect,
+    PermissionArg, ProviderPort, RuntimeDriver, exit_for_error, exit_for_report, inspect,
 };
 use minimax_protocol::{
     ModelBinding, ModelId, ProviderId, ProviderProtocolKind, RuntimeErrorCode, RuntimeFailure,
@@ -139,6 +139,23 @@ fn clap_routes_all_phase_two_and_later_maintenance_commands() {
             .expect("run route")
             .command,
         CliCommand::Run(args) if args.jsonl && args.prompt == "hello"
+    ));
+    assert!(matches!(
+        Cli::try_parse_from([
+            "minimax-codex-rust",
+            "run",
+            "--agent",
+            "--permission",
+            "full-access",
+            "--prompt",
+            "inspect",
+        ])
+        .expect("agent run route")
+        .command,
+        CliCommand::Run(args)
+            if args.agent
+                && args.permission == PermissionArg::FullAccess
+                && args.prompt == "inspect"
     ));
     assert!(matches!(
         Cli::try_parse_from(["minimax-codex-rust", "chat"])

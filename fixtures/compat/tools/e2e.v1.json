@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "providerProtocol": "responses",
+      "calls": [
+        {
+          "callId": "responses-read-a",
+          "tool": "read_file",
+          "path": "A.md"
+        },
+        {
+          "callId": "responses-read-b",
+          "tool": "read_file",
+          "path": "B.md"
+        }
+      ],
+      "finalAnswer": "final answer"
+    },
+    {
+      "providerProtocol": "chat_completions",
+      "calls": [
+        {
+          "callId": "chat-read-a",
+          "tool": "read_file",
+          "path": "A.md"
+        },
+        {
+          "callId": "chat-read-b",
+          "tool": "read_file",
+          "path": "B.md"
+        }
+      ],
+      "finalAnswer": "final answer"
+    }
+  ]
+}

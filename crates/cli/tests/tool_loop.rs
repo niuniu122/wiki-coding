@@ -4,16 +4,20 @@ use std::path::{Path, PathBuf};
 use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
-use minimax_cli::{DriverIds, ProviderPort, RuntimeDriver};
+use minimax_cli::{
+    DriverIds, HeadlessApprovalPort, InteractiveApprovalPort, ProviderPort, RuntimeDriver,
+};
 use minimax_core::{
     ApprovalFuture, ApprovalPort, CancellationPort, PermissionMode, ToolFuture, ToolPort,
 };
 use minimax_protocol::{
     AgentLimits, ConversationItem, JournalRecord, ModelBinding, ModelId, ProviderId,
     ProviderProtocolKind, RuntimeErrorCode, RuntimeFailure, SchemaVersion, StreamEvent,
-    TerminalOutcome, ToolCallFragment, ToolCallId, ToolDecision, ToolDecisionKind, ToolDefinition,
-    ToolInvocation, ToolResult, ToolTerminalStatus, TurnRequest,
+    TerminalOutcome, ToolCall, ToolCallFragment, ToolCallId, ToolDecision, ToolDecisionKind,
+    ToolDefinition, ToolEffect, ToolInvocation, ToolResult, ToolTerminalStatus, TurnRequest,
 };
+use minimax_tui::ApprovalInput;
+use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
@@ -294,6 +298,58 @@ fn journal_path(root: &Path) -> PathBuf {
     root.join(".minimax/runtime/v1/sessions.jsonl")
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct E2eFixture {
+    schema_version: u16,
+    cases: Vec<E2eCase>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct E2eCase {
+    provider_protocol: String,
+    calls: Vec<E2eCall>,
+    final_answer: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct E2eCall {
+    call_id: String,
+    tool: String,
+    path: String,
+}
+
+fn e2e_fixture() -> E2eFixture {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("repository root");
+    let raw = std::fs::read_to_string(root.join("fixtures/compat/tools/e2e.v1.json"))
+        .expect("E2E fixture");
+    serde_json::from_str(&raw).expect("strict E2E fixture")
+}
+
+fn protocol_from_fixture(value: &str) -> ProviderProtocolKind {
+    match value {
+        "responses" => ProviderProtocolKind::Responses,
+        "chat_completions" => ProviderProtocolKind::ChatCompletions,
+        _ => panic!("unknown fixture protocol"),
+    }
+}
+
+fn fixture_tool_round(case: &E2eCase) -> ScriptRound {
+    assert_eq!(case.calls.len(), 2);
+    assert!(case.calls.iter().all(|call| call.tool == "read_file"));
+    let calls = case
+        .calls
+        .iter()
+        .map(|call| (call.call_id.as_str(), call.path.as_str()))
+        .collect::<Vec<_>>();
+    tool_round(&calls)
+}
+
 #[tokio::test]
 async fn confirm_mode_preserves_order_ids_and_durability_for_both_provider_protocols() {
     for protocol in [
@@ -487,6 +543,27 @@ async fn full_access_skips_prompt_but_still_preflights_persists_and_executes() {
     assert!(!journal.contains(r#""permissionMode""#));
     assert!(!journal.contains("full_access"));
     assert!(journal.contains("policy_approved"));
+
+    let restarted = RuntimeDriver::open_with_agent_ports(
+        project.path(),
+        binding(ProviderProtocolKind::Responses),
+        ScriptedProvider {
+            rounds: VecDeque::new(),
+            requests: Arc::new(Mutex::new(Vec::new())),
+            journal_path: journal_path(project.path()),
+        },
+        DriverIds::new("restart-confirm", 2_500),
+        Box::new(HeadlessApprovalPort),
+        Box::new(ToolSpy {
+            preflight_calls: Arc::new(Mutex::new(Vec::new())),
+            execute_calls: Arc::new(Mutex::new(Vec::new())),
+            deny_preflight: false,
+        }),
+        vec![definition()],
+        AgentLimits::default(),
+    )
+    .expect("restarted driver");
+    assert_eq!(restarted.permission_mode(), PermissionMode::Confirm);
 }
 
 #[tokio::test]
@@ -734,5 +811,271 @@ async fn cancellation_after_started_persists_indeterminate_and_never_reexecutes(
             .as_ref()
             .map(|result| result.status),
         Some(ToolTerminalStatus::Indeterminate)
+    );
+}
+
+#[derive(Clone, Copy)]
+enum ApprovalAnswer {
+    Text(&'static str),
+    Eof,
+    Interrupted,
+}
+
+struct FixedApprovalInput {
+    interactive: bool,
+    answer: ApprovalAnswer,
+}
+
+struct QueuedApprovalInput {
+    answers: Mutex<VecDeque<&'static str>>,
+}
+
+impl ApprovalInput for QueuedApprovalInput {
+    fn is_interactive(&self) -> bool {
+        true
+    }
+
+    fn read_approval(&self) -> std::io::Result<Option<String>> {
+        Ok(self
+            .answers
+            .lock()
+            .expect("approval answers")
+            .pop_front()
+            .map(str::to_owned))
+    }
+}
+
+impl ApprovalInput for FixedApprovalInput {
+    fn is_interactive(&self) -> bool {
+        self.interactive
+    }
+
+    fn read_approval(&self) -> std::io::Result<Option<String>> {
+        match self.answer {
+            ApprovalAnswer::Text(answer) => Ok(Some(answer.to_owned())),
+            ApprovalAnswer::Eof => Ok(None),
+            ApprovalAnswer::Interrupted => Err(std::io::Error::new(
+                std::io::ErrorKind::Interrupted,
+                "fixture interrupt",
+            )),
+        }
+    }
+}
+
+fn approval_invocation() -> ToolInvocation {
+    ToolInvocation::new(
+        ToolCall::new(
+            ToolCallId::new("call-approval").expect("call id"),
+            "read_file",
+            r#"{"path":"README.md"}"#,
+        )
+        .expect("call"),
+        ToolEffect::Read,
+    )
+    .expect("invocation")
+}
+
+#[tokio::test]
+async fn interactive_approval_accepts_only_exact_yes_and_never_retries() {
+    let cases = [
+        (
+            true,
+            ApprovalAnswer::Text("yes\n"),
+            ToolDecisionKind::Approved,
+            "user_approved",
+        ),
+        (
+            true,
+            ApprovalAnswer::Text("no\n"),
+            ToolDecisionKind::Rejected,
+            "user_rejected",
+        ),
+        (
+            true,
+            ApprovalAnswer::Text(" yes\n"),
+            ToolDecisionKind::Rejected,
+            "approval_invalid",
+        ),
+        (
+            true,
+            ApprovalAnswer::Text("YES\n"),
+            ToolDecisionKind::Rejected,
+            "approval_invalid",
+        ),
+        (
+            true,
+            ApprovalAnswer::Eof,
+            ToolDecisionKind::Rejected,
+            "approval_eof",
+        ),
+        (
+            true,
+            ApprovalAnswer::Interrupted,
+            ToolDecisionKind::Rejected,
+            "approval_interrupted",
+        ),
+        (
+            false,
+            ApprovalAnswer::Text("yes\n"),
+            ToolDecisionKind::Rejected,
+            "approval_noninteractive",
+        ),
+    ];
+    for (interactive, answer, expected, code) in cases {
+        let port = InteractiveApprovalPort::new(Box::new(FixedApprovalInput {
+            interactive,
+            answer,
+        }));
+        let decision = port.decide(&approval_invocation()).await;
+        assert_eq!(decision.decision, expected);
+        assert_eq!(decision.code, code);
+        assert_eq!(decision.call_id.as_str(), "call-approval");
+    }
+}
+
+#[tokio::test]
+async fn concrete_builtin_tools_complete_on_both_provider_protocols_in_full_access() {
+    let fixture = e2e_fixture();
+    assert_eq!(fixture.schema_version, 1);
+    assert_eq!(fixture.cases.len(), 2);
+    for case in fixture.cases {
+        let protocol = protocol_from_fixture(&case.provider_protocol);
+        let project = tempfile::tempdir().expect("project");
+        std::fs::write(project.path().join("A.md"), "bounded fixture A").expect("fixture A");
+        std::fs::write(project.path().join("B.md"), "bounded fixture B").expect("fixture B");
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let provider = ScriptedProvider {
+            rounds: VecDeque::from([fixture_tool_round(&case), final_round(2)]),
+            requests: Arc::clone(&requests),
+            journal_path: journal_path(project.path()),
+        };
+        let mut driver = RuntimeDriver::open_with_builtin_tools(
+            project.path(),
+            binding(protocol),
+            provider,
+            DriverIds::new("concrete", 8_000),
+            Box::new(HeadlessApprovalPort),
+        )
+        .expect("builtin tools");
+        driver.set_permission_mode(PermissionMode::FullAccess);
+
+        let report = driver
+            .run_agent("read fixture", 128)
+            .await
+            .expect("agent run");
+        assert_eq!(report.tool_results.len(), 2);
+        assert_eq!(
+            report
+                .tool_results
+                .iter()
+                .map(|result| result.call_id.as_str())
+                .collect::<Vec<_>>(),
+            case.calls
+                .iter()
+                .map(|call| call.call_id.as_str())
+                .collect::<Vec<_>>()
+        );
+        assert!(report.tool_results.iter().all(|result| {
+            result.status == ToolTerminalStatus::Succeeded
+                && result.code == "ok"
+                && result
+                    .output
+                    .as_deref()
+                    .is_some_and(|output| output.contains("bounded fixture"))
+        }));
+        assert!(report.events.iter().any(|event| {
+            matches!(
+                &event.event,
+                minimax_protocol::RuntimeEvent::VisibleTextDelta { delta }
+                    if delta == &case.final_answer
+            )
+        }));
+        assert_eq!(requests.lock().expect("requests").len(), 2);
+    }
+}
+
+#[tokio::test]
+async fn concrete_confirm_mode_approves_rejects_and_headless_fails_closed() {
+    for (answer, expected_status, expected_code) in [
+        (Some("yes\n"), ToolTerminalStatus::Succeeded, "ok"),
+        (Some("no\n"), ToolTerminalStatus::Rejected, "user_rejected"),
+        (None, ToolTerminalStatus::Rejected, "approval_unavailable"),
+    ] {
+        let project = tempfile::tempdir().expect("project");
+        std::fs::write(project.path().join("README.md"), "bounded fixture").expect("fixture file");
+        let provider = ScriptedProvider {
+            rounds: VecDeque::from([
+                tool_round(&[("call-confirm-concrete", "README.md")]),
+                final_round(1),
+            ]),
+            requests: Arc::new(Mutex::new(Vec::new())),
+            journal_path: journal_path(project.path()),
+        };
+        let approval: Box<dyn ApprovalPort> = answer.map_or_else(
+            || Box::new(HeadlessApprovalPort) as Box<dyn ApprovalPort>,
+            |answer| {
+                Box::new(InteractiveApprovalPort::new(Box::new(FixedApprovalInput {
+                    interactive: true,
+                    answer: ApprovalAnswer::Text(answer),
+                }))) as Box<dyn ApprovalPort>
+            },
+        );
+        let mut driver = RuntimeDriver::open_with_builtin_tools(
+            project.path(),
+            binding(ProviderProtocolKind::Responses),
+            provider,
+            DriverIds::new("confirm-concrete", 9_000),
+            approval,
+        )
+        .expect("builtin tools");
+
+        let report = driver
+            .run_agent("read fixture", 128)
+            .await
+            .expect("agent run");
+        assert_eq!(report.tool_results.len(), 1);
+        assert_eq!(report.tool_results[0].status, expected_status);
+        assert_eq!(report.tool_results[0].code, expected_code);
+    }
+}
+
+#[tokio::test]
+async fn fixture_confirm_mode_binds_one_answer_to_each_ordered_call() {
+    let case = e2e_fixture().cases.remove(0);
+    let project = tempfile::tempdir().expect("project");
+    std::fs::write(project.path().join("A.md"), "bounded fixture A").expect("fixture A");
+    std::fs::write(project.path().join("B.md"), "bounded fixture B").expect("fixture B");
+    let provider = ScriptedProvider {
+        rounds: VecDeque::from([fixture_tool_round(&case), final_round(2)]),
+        requests: Arc::new(Mutex::new(Vec::new())),
+        journal_path: journal_path(project.path()),
+    };
+    let approval = InteractiveApprovalPort::new(Box::new(QueuedApprovalInput {
+        answers: Mutex::new(VecDeque::from(["yes\n", "no\n"])),
+    }));
+    let mut driver = RuntimeDriver::open_with_builtin_tools(
+        project.path(),
+        binding(protocol_from_fixture(&case.provider_protocol)),
+        provider,
+        DriverIds::new("confirm-fixture", 10_000),
+        Box::new(approval),
+    )
+    .expect("builtin tools");
+
+    let report = driver.run_agent("read both", 128).await.expect("agent run");
+    assert_eq!(report.tool_results.len(), 2);
+    assert_eq!(report.tool_results[0].status, ToolTerminalStatus::Succeeded);
+    assert_eq!(report.tool_results[1].status, ToolTerminalStatus::Rejected);
+    assert_eq!(report.tool_results[1].code, "user_rejected");
+    assert_eq!(
+        report
+            .tool_results
+            .iter()
+            .map(|result| result.call_id.as_str())
+            .collect::<Vec<_>>(),
+        case.calls
+            .iter()
+            .map(|call| call.call_id.as_str())
+            .collect::<Vec<_>>()
     );
 }

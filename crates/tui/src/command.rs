@@ -37,9 +37,6 @@ impl CommandIntent {
     #[must_use]
     pub const fn availability(&self) -> CommandAvailability {
         match self {
-            Self::AgentContinue | Self::AgentSubmit(_) | Self::Permissions(_) => {
-                CommandAvailability::NotAvailable { owning_phase: 3 }
-            }
             Self::Capabilities(_) => CommandAvailability::NotAvailable { owning_phase: 5 },
             _ => CommandAvailability::Available,
         }

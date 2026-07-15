@@ -59,6 +59,52 @@
       ]
     },
     {
+      "id": "rust.requirement.TOOL-01",
+      "status": "matched",
+      "evidence": [
+        "crates/cli/tests/tool_loop.rs",
+        "crates/provider/tests/provider_fixtures.rs",
+        "fixtures/compat/tools/e2e.v1.json"
+      ]
+    },
+    {
+      "id": "rust.requirement.TOOL-02",
+      "status": "matched",
+      "evidence": [
+        "crates/cli/tests/tool_loop.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/tools/e2e.v1.json"
+      ]
+    },
+    {
+      "id": "rust.requirement.TOOL-03",
+      "status": "matched",
+      "evidence": [
+        "crates/cli/tests/tool_loop.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
+    },
+    {
+      "id": "rust.requirement.TOOL-04",
+      "status": "matched",
+      "evidence": [
+        "crates/tools/tests/process_tools.rs",
+        "crates/tools/tests/workspace_tools.rs",
+        "fixtures/compat/tools/v1-schemas.json"
+      ]
+    },
+    {
+      "id": "rust.requirement.TOOL-05",
+      "status": "matched",
+      "evidence": [
+        "crates/cli/tests/tool_loop.rs",
+        "crates/tools/tests/process_tools.rs",
+        "crates/tools/tests/workspace_tools.rs",
+        "fixtures/compat/tools/denial-matrix.v1.json"
+      ]
+    },
+    {
       "id": "rust.product_entry",
       "status": "matched",
       "evidence": [

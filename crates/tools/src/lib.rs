@@ -3,6 +3,7 @@
 //! Permission modes never enter the policy API. Both `confirm` and
 //! `full-access` therefore cross the same preflight before any effect.
 
+mod adapter;
 mod error;
 mod git;
 mod npm;
@@ -27,3 +28,4 @@ pub use write::{ApplyPatchTool, WriteFileTool};
 
 /// Human-readable boundary used by architecture checks and documentation.
 pub const CRATE_ROLE: &str = "permission-aware tool adapters and external effects";
+pub use adapter::BuiltinToolPort;

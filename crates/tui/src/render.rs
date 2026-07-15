@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
 use minimax_protocol::{
-    RuntimeEvent, RuntimeEventV1, RuntimeTerminalOutcome, SessionRecord, SessionStatus, TraceCode,
-    TraceEntry,
+    RuntimeEvent, RuntimeEventV1, RuntimeTerminalOutcome, SessionRecord, SessionStatus, ToolEffect,
+    ToolInvocation, ToolResult, TraceCode, TraceEntry,
 };
 
 const MAX_RENDER_CHARS: usize = 16_000;
@@ -124,6 +124,54 @@ impl EventRenderer {
         sanitize_bounded(&format!(
             "{command} is not available in the Rust development shell until Phase {owning_phase}"
         ))
+    }
+
+    #[must_use]
+    pub fn approval_request(invocation: &ToolInvocation) -> String {
+        let mut value = serde_json::from_str::<serde_json::Value>(&invocation.call.arguments_json)
+            .unwrap_or(serde_json::Value::Null);
+        let scope = value
+            .get("path")
+            .and_then(|path| path.as_str())
+            .map(|path| path.replace('\\', "/"))
+            .unwrap_or_else(|| "project".to_owned());
+        if let Some(path) = value.get_mut("path")
+            && let Some(raw) = path.as_str()
+        {
+            *path = serde_json::Value::String(raw.replace('\\', "/"));
+        }
+        let arguments = serde_json::to_string(&value).unwrap_or_else(|_| "<invalid>".to_owned());
+        sanitize_bounded(&format!(
+            "approval required | call={} | tool={} | effect={} | scope={} | arguments={}\nType exactly yes to allow this one call: ",
+            invocation.call.call_id.as_str(),
+            invocation.call.name,
+            effect_name(invocation.effect),
+            scope,
+            arguments
+        ))
+    }
+
+    #[must_use]
+    pub fn tool_result(result: &ToolResult) -> String {
+        sanitize_bounded(&format!(
+            "tool result | call={} | tool={} | status={:?} | code={}{}",
+            result.call_id.as_str(),
+            result.tool_name,
+            result.status,
+            result.code,
+            result
+                .output
+                .as_deref()
+                .map_or_else(String::new, |output| format!(" | output={output}"))
+        ))
+    }
+}
+
+const fn effect_name(effect: ToolEffect) -> &'static str {
+    match effect {
+        ToolEffect::Read => "read",
+        ToolEffect::Write => "write",
+        ToolEffect::Process => "process",
     }
 }
 

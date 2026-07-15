@@ -13,7 +13,10 @@ pub use architecture::{
     validate_architecture, validate_core_source_boundary, validate_core_source_directory,
     validate_core_source_text,
 };
-pub use baseline::{BaselineError, validate_product_entry, validate_rust_command_surface};
+pub use baseline::{
+    BaselineError, validate_product_entry, validate_rust_command_surface,
+    validate_rust_tool_evidence,
+};
 pub use manifest::{
     BaselineStatus, CommandManifest, CompatManifests, ManifestError, ParityStatus,
     ProviderManifest, StatusItem, load_compat_manifests, repository_root,

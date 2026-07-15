@@ -6,7 +6,7 @@ use minimax_compat_harness::{
     build_report, load_cargo_architecture, load_compat_manifests, report_json, repository_root,
     validate_architecture, validate_core_source_boundary, validate_core_source_directory,
     validate_core_source_text, validate_product_entry, validate_report,
-    validate_rust_command_surface,
+    validate_rust_command_surface, validate_rust_tool_evidence,
 };
 
 #[test]
@@ -43,6 +43,11 @@ fn compat_report_contains_every_baseline_item_exactly_once() {
     let mut expected_ids = BTreeSet::from([
         "rust.permission_modes".to_owned(),
         "rust.product_entry".to_owned(),
+        "rust.requirement.TOOL-01".to_owned(),
+        "rust.requirement.TOOL-02".to_owned(),
+        "rust.requirement.TOOL-03".to_owned(),
+        "rust.requirement.TOOL-04".to_owned(),
+        "rust.requirement.TOOL-05".to_owned(),
     ]);
     for implementation in ["rust", "typescript"] {
         for command in &manifests.commands.commands {
@@ -75,6 +80,7 @@ fn rust_command_permission_and_product_baselines_are_executable() {
     let root = repository_root();
     let manifests = load_compat_manifests(&root).expect("strict manifests");
     validate_rust_command_surface(&manifests.commands).expect("complete Rust command surface");
+    validate_rust_tool_evidence(&root, &manifests.baseline).expect("executable Rust tool evidence");
     validate_product_entry(&root).expect("TypeScript npm product entry");
 }
 

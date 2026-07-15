@@ -1,8 +1,10 @@
 use std::collections::VecDeque;
 use std::fmt;
 use std::future::Future;
+use std::io::Write as _;
 use std::path::Path;
 use std::pin::Pin;
+use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use minimax_core::{
@@ -19,6 +21,8 @@ use minimax_protocol::{
     ToolResultMessage, ToolTerminalStatus, TurnId, TurnReceipt, TurnRequest,
 };
 use minimax_provider::{HttpProviderClient, ResolvedCredential};
+use minimax_tools::BuiltinToolPort;
+use minimax_tui::{ApprovalInput, EventRenderer};
 use minimax_vault::{RuntimeStore, RuntimeStoreError};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
@@ -63,9 +67,9 @@ impl ProviderPort for HttpProviderPort {
 }
 
 #[derive(Clone, Copy, Debug, Default)]
-struct ApprovalUnavailable;
+pub struct HeadlessApprovalPort;
 
-impl ApprovalPort for ApprovalUnavailable {
+impl ApprovalPort for HeadlessApprovalPort {
     fn decide<'a>(&'a self, invocation: &'a ToolInvocation) -> minimax_core::ApprovalFuture<'a> {
         Box::pin(async move {
             ToolDecision {
@@ -76,6 +80,75 @@ impl ApprovalPort for ApprovalUnavailable {
             }
         })
     }
+}
+
+pub struct InteractiveApprovalPort {
+    input: Arc<dyn ApprovalInput>,
+}
+
+impl InteractiveApprovalPort {
+    #[must_use]
+    pub fn new(input: Box<dyn ApprovalInput>) -> Self {
+        Self {
+            input: Arc::from(input),
+        }
+    }
+}
+
+impl ApprovalPort for InteractiveApprovalPort {
+    fn decide<'a>(&'a self, invocation: &'a ToolInvocation) -> minimax_core::ApprovalFuture<'a> {
+        let input = Arc::clone(&self.input);
+        let invocation = invocation.clone();
+        let call_id = invocation.call.call_id.clone();
+        Box::pin(async move {
+            match tokio::task::spawn_blocking(move || decide_interactively(&*input, &invocation))
+                .await
+            {
+                Ok(decision) => decision,
+                Err(_) => ToolDecision {
+                    schema_version: SchemaVersion,
+                    call_id,
+                    decision: ToolDecisionKind::Rejected,
+                    code: "approval_task_failed".to_owned(),
+                },
+            }
+        })
+    }
+}
+
+fn decide_interactively(input: &dyn ApprovalInput, invocation: &ToolInvocation) -> ToolDecision {
+    let decision = if !input.is_interactive() {
+        (ToolDecisionKind::Rejected, "approval_noninteractive")
+    } else if write_approval_prompt(invocation).is_err() {
+        (ToolDecisionKind::Rejected, "approval_output_failed")
+    } else {
+        match input.read_approval() {
+            Ok(Some(answer)) if answer.trim_end_matches(['\r', '\n']) == "yes" => {
+                (ToolDecisionKind::Approved, "user_approved")
+            }
+            Ok(Some(answer)) if answer.trim_end_matches(['\r', '\n']) == "no" => {
+                (ToolDecisionKind::Rejected, "user_rejected")
+            }
+            Ok(Some(_)) => (ToolDecisionKind::Rejected, "approval_invalid"),
+            Ok(None) => (ToolDecisionKind::Rejected, "approval_eof"),
+            Err(error) if error.kind() == std::io::ErrorKind::Interrupted => {
+                (ToolDecisionKind::Rejected, "approval_interrupted")
+            }
+            Err(_) => (ToolDecisionKind::Rejected, "approval_input_failed"),
+        }
+    };
+    ToolDecision {
+        schema_version: SchemaVersion,
+        call_id: invocation.call.call_id.clone(),
+        decision: decision.0,
+        code: decision.1.to_owned(),
+    }
+}
+
+fn write_approval_prompt(invocation: &ToolInvocation) -> std::io::Result<()> {
+    let mut stdout = std::io::stdout().lock();
+    stdout.write_all(EventRenderer::approval_request(invocation).as_bytes())?;
+    stdout.flush()
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -225,6 +298,7 @@ impl From<CompactionError> for DriverError {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RunReport {
     pub events: Vec<RuntimeEventV1>,
+    pub tool_results: Vec<ToolResult>,
     pub receipt: TurnReceipt,
 }
 
@@ -252,9 +326,33 @@ impl<P: ProviderPort> RuntimeDriver<P> {
             binding,
             provider,
             ids,
-            Box::new(ApprovalUnavailable),
+            Box::new(HeadlessApprovalPort),
             Box::new(ToolUnavailable),
             Vec::new(),
+            AgentLimits::default(),
+        )
+    }
+
+    pub fn open_with_builtin_tools(
+        project_root: impl AsRef<Path>,
+        binding: ModelBinding,
+        provider: P,
+        ids: DriverIds,
+        approval: Box<dyn ApprovalPort>,
+    ) -> Result<Self, DriverError> {
+        let project_root = project_root.as_ref().to_path_buf();
+        let tools = BuiltinToolPort::production(&project_root)
+            .map_err(|_| DriverError::Runtime(RuntimeErrorCode::Configuration))?;
+        let definitions = BuiltinToolPort::definitions()
+            .map_err(|_| DriverError::Runtime(RuntimeErrorCode::Configuration))?;
+        Self::open_with_agent_ports(
+            project_root,
+            binding,
+            provider,
+            ids,
+            approval,
+            Box::new(tools),
+            definitions,
             AgentLimits::default(),
         )
     }
@@ -510,6 +608,7 @@ impl<P: ProviderPort> RuntimeDriver<P> {
         };
         Ok(RunReport {
             events,
+            tool_results: Vec::new(),
             receipt: receipt.clone(),
         })
     }
@@ -521,6 +620,7 @@ impl<P: ProviderPort> RuntimeDriver<P> {
     ) -> Result<RunReport, DriverError> {
         let mut machine = RunMachine::new();
         let mut events = Vec::new();
+        let mut tool_results = Vec::new();
         let mut assistant = String::new();
         let run_cancellation = self.cancellation.child_token();
         let mut budget = AgentBudget::new(self.agent_limits, budget_now_unix_ms())
@@ -554,6 +654,7 @@ impl<P: ProviderPort> RuntimeDriver<P> {
                 };
                 return Ok(RunReport {
                     events,
+                    tool_results,
                     receipt: receipt.clone(),
                 });
             }
@@ -575,6 +676,7 @@ impl<P: ProviderPort> RuntimeDriver<P> {
                 };
                 return Ok(RunReport {
                     events,
+                    tool_results,
                     receipt: receipt.clone(),
                 });
             }
@@ -591,6 +693,7 @@ impl<P: ProviderPort> RuntimeDriver<P> {
                 RunState::Terminal { receipt } => {
                     return Ok(RunReport {
                         events,
+                        tool_results,
                         receipt: receipt.clone(),
                     });
                 }
@@ -606,6 +709,7 @@ impl<P: ProviderPort> RuntimeDriver<P> {
                             .await?;
                         results.push(result);
                     }
+                    tool_results.extend(results.iter().cloned());
                     request.messages.push(ConversationItem::AssistantToolCalls(
                         AssistantToolCallBatch {
                             tool_calls: invocations

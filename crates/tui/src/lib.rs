@@ -11,7 +11,10 @@ pub use command::{
     CommandAvailability, CommandIntent, CommandParseError, ParsedInput, PermissionName, parse_input,
 };
 pub use render::EventRenderer;
-pub use shell::{CrosstermTerminalHooks, InteractiveShell, ShellMode, ShellSession, TerminalHooks};
+pub use shell::{
+    ApprovalInput, CrosstermTerminalHooks, InteractiveShell, ShellMode, ShellSession,
+    StdioApprovalInput, TerminalHooks,
+};
 
 /// Human-readable boundary used by architecture checks and documentation.
 pub const CRATE_ROLE: &str = "terminal rendering and input translation over protocol state";

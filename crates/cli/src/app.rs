@@ -30,8 +30,28 @@ pub struct RunArgs {
     pub common: CommonArgs,
     #[arg(long)]
     pub jsonl: bool,
+    #[arg(long)]
+    pub agent: bool,
+    #[arg(long, value_enum, default_value_t = PermissionArg::Confirm)]
+    pub permission: PermissionArg,
     #[arg(long, short = 'p')]
     pub prompt: String,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, ValueEnum)]
+pub enum PermissionArg {
+    #[default]
+    Confirm,
+    FullAccess,
+}
+
+impl From<PermissionArg> for minimax_core::PermissionMode {
+    fn from(value: PermissionArg) -> Self {
+        match value {
+            PermissionArg::Confirm => Self::Confirm,
+            PermissionArg::FullAccess => Self::FullAccess,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Args)]

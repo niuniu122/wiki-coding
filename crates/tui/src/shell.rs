@@ -48,6 +48,34 @@ pub enum ShellMode {
     Line,
 }
 
+pub trait ApprovalInput: Send + Sync {
+    fn is_interactive(&self) -> bool;
+    fn read_approval(&self) -> io::Result<Option<String>>;
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct StdioApprovalInput {
+    mode: ShellMode,
+    interactive: bool,
+}
+
+impl StdioApprovalInput {
+    #[must_use]
+    pub const fn new(mode: ShellMode, interactive: bool) -> Self {
+        Self { mode, interactive }
+    }
+}
+
+impl ApprovalInput for StdioApprovalInput {
+    fn is_interactive(&self) -> bool {
+        self.interactive
+    }
+
+    fn read_approval(&self) -> io::Result<Option<String>> {
+        read_for_mode(self.mode)
+    }
+}
+
 pub struct InteractiveShell<'a> {
     hooks: &'a dyn TerminalHooks,
     input_is_terminal: bool,
@@ -116,10 +144,14 @@ impl ShellSession<'_> {
     }
 
     pub fn read_line(&self) -> io::Result<Option<String>> {
-        match self.mode {
-            ShellMode::Line => read_standard_line(),
-            ShellMode::Raw => read_raw_line(),
-        }
+        read_for_mode(self.mode)
+    }
+}
+
+fn read_for_mode(mode: ShellMode) -> io::Result<Option<String>> {
+    match mode {
+        ShellMode::Line => read_standard_line(),
+        ShellMode::Raw => read_raw_line(),
     }
 }
 

@@ -3,7 +3,8 @@ use std::collections::BTreeMap;
 use std::io;
 
 use minimax_protocol::{
-    DiagnosticCode, RuntimeEvent, RuntimeEventV1, RuntimeTerminalOutcome, TraceCode, TraceEntry,
+    DiagnosticCode, RuntimeEvent, RuntimeEventV1, RuntimeTerminalOutcome, SchemaVersion, ToolCall,
+    ToolCallId, ToolEffect, ToolInvocation, ToolResult, ToolTerminalStatus, TraceCode, TraceEntry,
 };
 use minimax_tui::{
     CommandAvailability, CommandIntent, EventRenderer, InteractiveShell, ParsedInput,
@@ -69,14 +70,50 @@ fn parser_rejects_unknown_arguments_and_any_third_permission_mode() {
             PermissionName::Confirm
         ))))
     );
-    assert_eq!(
-        CommandIntent::Permissions(Some(PermissionName::FullAccess)).availability(),
-        CommandAvailability::NotAvailable { owning_phase: 3 }
-    );
+    for intent in [
+        CommandIntent::AgentContinue,
+        CommandIntent::AgentSubmit("inspect".to_owned()),
+        CommandIntent::Permissions(Some(PermissionName::FullAccess)),
+    ] {
+        assert_eq!(intent.availability(), CommandAvailability::Available);
+    }
     assert_eq!(
         CommandIntent::Capabilities(None).availability(),
         CommandAvailability::NotAvailable { owning_phase: 5 }
     );
+}
+
+#[test]
+fn approval_and_tool_result_rendering_is_bounded_normalized_and_identified() {
+    let invocation = ToolInvocation::new(
+        ToolCall::new(
+            ToolCallId::new("call-render").expect("call id"),
+            "read_file",
+            r#"{"path":"docs\\note.md"}"#,
+        )
+        .expect("call"),
+        ToolEffect::Read,
+    )
+    .expect("invocation");
+    let prompt = EventRenderer::approval_request(&invocation);
+    assert!(prompt.contains("call=call-render"));
+    assert!(prompt.contains("tool=read_file"));
+    assert!(prompt.contains("effect=read"));
+    assert!(prompt.contains("scope=docs/note.md"));
+    assert!(prompt.contains(r#""path":"docs/note.md""#));
+    assert!(prompt.contains("Type exactly yes"));
+
+    let rendered = EventRenderer::tool_result(&ToolResult {
+        schema_version: SchemaVersion,
+        call_id: ToolCallId::new("call-render").expect("call id"),
+        tool_name: "read_file".to_owned(),
+        status: ToolTerminalStatus::Succeeded,
+        code: "ok".to_owned(),
+        output: Some("safe\u{1b}[31m output".to_owned()),
+    });
+    assert!(rendered.contains("call=call-render"));
+    assert!(rendered.contains("status=Succeeded"));
+    assert!(!rendered.contains('\u{1b}'));
 }
 
 #[test]

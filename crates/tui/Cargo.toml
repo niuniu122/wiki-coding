@@ -8,6 +8,7 @@ license.workspace = true
 [dependencies]
 is-terminal.workspace = true
 minimax-protocol = { path = "../protocol" }
+serde_json.workspace = true
 
 [target.'cfg(not(target_abi = "llvm"))'.dependencies]
 crossterm.workspace = true
