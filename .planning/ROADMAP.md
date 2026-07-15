@@ -67,12 +67,12 @@ Cross-cutting constraints:
   4. Configuration and credentials resolve predictably without writing plaintext secrets.
   5. Startup recovery, single-writer lease, controlled shutdown, and safe folded trace are observable through doctor/tests.
 
-**Plans**: 1/3 plans executed
+**Plans**: 2/3 plans executed
 
 Plans:
 
 - [x] 02-01-PLAN.md
-- [ ] 02-02-PLAN.md
+- [x] 02-02-PLAN.md
 - [ ] 02-03-PLAN.md
 
 **Wave 1**
@@ -81,7 +81,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 02-02: Add durable sessions, recovery, deterministic compaction, and trace
+- [x] 02-02: Add durable sessions, recovery, deterministic compaction, and trace
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -173,7 +173,7 @@ Plans:
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
 | 1. Contract Foundation | 4/4 | Complete    | 2026-07-15 |
-| 2. Usable Rust Agent Shell | 1/3 | In Progress|  |
+| 2. Usable Rust Agent Shell | 2/3 | In Progress|  |
 | 3. Safe Tool Completion | 0/2 | Not started | - |
 | 4. Vault and Main-Model Wiki | 0/3 | Not started | - |
 | 5. Retrieval and Project Discovery | 0/3 | Not started | - |
