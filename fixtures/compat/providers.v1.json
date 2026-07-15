@@ -1,0 +1,53 @@
+{
+  "schemaVersion": 1,
+  "protocols": [
+    "responses",
+    "chat_completions"
+  ],
+  "profileClasses": [
+    {
+      "id": "minimax_official",
+      "source": "builtin",
+      "providerProfileId": "provider:minimax/official",
+      "protocols": [
+        "responses"
+      ],
+      "credentialBindings": [
+        "MINIMAX_API_KEY"
+      ]
+    },
+    {
+      "id": "minimax_hashsight",
+      "source": "builtin",
+      "providerProfileId": "provider:minimax/hashsight",
+      "protocols": [
+        "chat_completions"
+      ],
+      "credentialBindings": [
+        "HASHSIGHT_API_KEY"
+      ]
+    },
+    {
+      "id": "custom_openai_compatible",
+      "source": "user",
+      "providerProfileId": "provider:user/{profile}",
+      "protocols": [
+        "responses",
+        "chat_completions"
+      ],
+      "credentialBindings": []
+    }
+  ],
+  "featureMatrix": {
+    "streaming": true,
+    "native_tool_calls": true,
+    "parallel_tool_calls": true,
+    "structured_output": false,
+    "reasoning_metadata": true,
+    "usage": true,
+    "prompt_caching": false,
+    "image_input": false,
+    "audio_input": false,
+    "provider_hosted_tools": false
+  }
+}

@@ -1,0 +1,113 @@
+{
+  "schemaVersion": 1,
+  "commands": [
+    {
+      "name": "/interrupt",
+      "aliases": [],
+      "argument": "none",
+      "outcome": "turn.interrupt"
+    },
+    {
+      "name": "/new",
+      "aliases": [],
+      "argument": "none",
+      "outcome": "thread.new"
+    },
+    {
+      "name": "/threads",
+      "aliases": [],
+      "argument": "none",
+      "outcome": "thread.list"
+    },
+    {
+      "name": "/resume",
+      "aliases": [],
+      "argument": "required",
+      "outcome": "thread.resume"
+    },
+    {
+      "name": "/compact",
+      "aliases": [],
+      "argument": "none",
+      "outcome": "compact.manual"
+    },
+    {
+      "name": "/api",
+      "aliases": [],
+      "argument": "none",
+      "outcome": "config.api_key.request"
+    },
+    {
+      "name": "/provider",
+      "aliases": [],
+      "argument": "optional",
+      "outcome": "provider.list_or_switch"
+    },
+    {
+      "name": "/continue",
+      "aliases": [],
+      "argument": "none",
+      "outcome": "agent.continue"
+    },
+    {
+      "name": "/agent",
+      "aliases": [],
+      "argument": "required",
+      "outcome": "agent.submit"
+    },
+    {
+      "name": "/chat",
+      "aliases": [],
+      "argument": "required",
+      "outcome": "turn.submit"
+    },
+    {
+      "name": "/models",
+      "aliases": [],
+      "argument": "none",
+      "outcome": "model.list"
+    },
+    {
+      "name": "/model",
+      "aliases": [],
+      "argument": "required",
+      "outcome": "model.switch"
+    },
+    {
+      "name": "/capabilities",
+      "aliases": [],
+      "argument": "optional",
+      "outcome": "capability.list_or_search"
+    },
+    {
+      "name": "/permissions",
+      "aliases": [],
+      "argument": "optional",
+      "outcome": "permission.show_or_set"
+    },
+    {
+      "name": "/trace",
+      "aliases": [],
+      "argument": "none",
+      "outcome": "trace.toggle"
+    },
+    {
+      "name": "/retry",
+      "aliases": [],
+      "argument": "none",
+      "outcome": "runtime.init.retry"
+    },
+    {
+      "name": "/exit",
+      "aliases": [
+        "/quit"
+      ],
+      "argument": "none",
+      "outcome": "app.exit"
+    }
+  ],
+  "targetPermissionModes": [
+    "confirm",
+    "full-access"
+  ]
+}
