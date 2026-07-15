@@ -102,8 +102,12 @@ Plans:
 **Plans**: 2 plans
 
 Plans:
+**Wave 1**
 
 - [ ] 03-01: Implement tool state machine, approval protocol, and two-mode policy
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 03-02: Implement and verify the bounded v1 tool adapters
 
 ### Phase 4: Vault and Main-Model Wiki
