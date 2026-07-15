@@ -1,0 +1,131 @@
+{
+  "schema_version": 1,
+  "tools": [
+    {
+      "description": "Read one bounded UTF-8 workspace file.",
+      "name": "read_file",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": { "path": { "type": "string" } },
+        "required": ["path"],
+        "type": "object"
+      },
+      "schema_version": 1,
+      "strict": true
+    },
+    {
+      "description": "List one bounded workspace directory.",
+      "name": "list_directory",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": { "path": { "type": "string" } },
+        "required": ["path"],
+        "type": "object"
+      },
+      "schema_version": 1,
+      "strict": true
+    },
+    {
+      "description": "Apply ordered exact edits to one workspace file.",
+      "name": "apply_patch",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "edits": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "expected_occurrences": { "minimum": 1, "type": "integer" },
+                "new_text": { "type": "string" },
+                "old_text": { "minLength": 1, "type": "string" }
+              },
+              "required": ["old_text", "new_text", "expected_occurrences"],
+              "type": "object"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "expected_sha256": { "pattern": "^[0-9a-f]{64}$", "type": "string" },
+          "path": { "type": "string" }
+        },
+        "required": ["path", "expected_sha256", "edits"],
+        "type": "object"
+      },
+      "schema_version": 1,
+      "strict": true
+    },
+    {
+      "description": "Create or conflict-aware replace one workspace file.",
+      "name": "write_file",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "content": { "type": "string" },
+          "expected_sha256": { "pattern": "^[0-9a-f]{64}$", "type": "string" },
+          "mode": { "enum": ["create", "replace"], "type": "string" },
+          "path": { "type": "string" }
+        },
+        "required": ["path", "mode", "content"],
+        "type": "object"
+      },
+      "schema_version": 1,
+      "strict": true
+    },
+    {
+      "description": "Run one finite local diagnostic action.",
+      "name": "run_diagnostic",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "action": { "enum": ["cargo_check", "cargo_test", "cargo_clippy", "cargo_fmt_check", "node_check", "rg_search"], "type": "string" },
+          "max_results": { "maximum": 500, "minimum": 1, "type": "integer" },
+          "path": { "type": "string" },
+          "pattern": { "maxLength": 1024, "minLength": 1, "type": "string" }
+        },
+        "required": ["action"],
+        "type": "object"
+      },
+      "schema_version": 1,
+      "strict": true
+    },
+    {
+      "description": "Inspect bounded Git status without mutation.",
+      "name": "git_status",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": { "path": { "type": "string" } },
+        "required": [],
+        "type": "object"
+      },
+      "schema_version": 1,
+      "strict": true
+    },
+    {
+      "description": "Inspect bounded Git diff without mutation.",
+      "name": "git_diff",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": {
+          "cached": { "type": "boolean" },
+          "path": { "type": "string" }
+        },
+        "required": [],
+        "type": "object"
+      },
+      "schema_version": 1,
+      "strict": true
+    },
+    {
+      "description": "Run one validated existing npm diagnostic script.",
+      "name": "npm_diagnostic",
+      "parameters": {
+        "additionalProperties": false,
+        "properties": { "script": { "type": "string" } },
+        "required": ["script"],
+        "type": "object"
+      },
+      "schema_version": 1,
+      "strict": true
+    }
+  ]
+}

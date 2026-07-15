@@ -11,6 +11,16 @@ pub const MAX_TOOL_DESCRIPTION_BYTES: usize = 1_024;
 pub const MAX_TOOL_ARGUMENT_BYTES: usize = 64 * 1_024;
 pub const MAX_TOOL_RESULT_BYTES: usize = 64 * 1_024;
 pub const MAX_TOOL_CODE_BYTES: usize = 64;
+pub const V1_TOOL_NAMES: [&str; 8] = [
+    "read_file",
+    "list_directory",
+    "apply_patch",
+    "write_file",
+    "run_diagnostic",
+    "git_status",
+    "git_diff",
+    "npm_diagnostic",
+];
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]

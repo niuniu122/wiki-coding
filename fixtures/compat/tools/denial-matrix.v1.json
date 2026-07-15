@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "cases": [
+    { "name": "empty_path", "tool": "read_file", "arguments": { "path": "" }, "code": "invalid_path" },
+    { "name": "absolute_path", "tool": "read_file", "arguments": { "path": "C:/outside.txt" }, "code": "invalid_path" },
+    { "name": "parent_escape", "tool": "read_file", "arguments": { "path": "../outside.txt" }, "code": "invalid_path" },
+    { "name": "protected_git", "tool": "read_file", "arguments": { "path": ".git/config" }, "code": "protected_path" },
+    { "name": "protected_runtime", "tool": "write_file", "arguments": { "path": ".minimax/state", "mode": "create", "content": "x" }, "code": "protected_path" },
+    { "name": "secret_filename", "tool": "read_file", "arguments": { "path": ".env" }, "code": "secret_path" },
+    { "name": "secret_content", "tool": "write_file", "arguments": { "path": "safe.txt", "mode": "create", "content": "password=abcdefghijklmnop" }, "code": "secret_content" },
+    { "name": "wrong_effect", "tool": "read_file", "arguments": { "path": "safe.txt" }, "effect": "write", "code": "effect_mismatch" }
+  ],
+  "permission_modes": ["confirm", "full-access"],
+  "preflight_uses_permission_mode": false
+}

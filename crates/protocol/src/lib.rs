@@ -28,7 +28,8 @@ pub use session::{
 pub use tool::{
     MAX_TOOL_ARGUMENT_BYTES, MAX_TOOL_CODE_BYTES, MAX_TOOL_DESCRIPTION_BYTES, MAX_TOOL_NAME_BYTES,
     MAX_TOOL_RESULT_BYTES, ToolCall, ToolDecision, ToolDecisionKind, ToolDefinition, ToolEffect,
-    ToolInvocation, ToolResult, ToolTerminalStatus, ToolValidationError, validate_unique_call_ids,
+    ToolInvocation, ToolResult, ToolTerminalStatus, ToolValidationError, V1_TOOL_NAMES,
+    validate_unique_call_ids,
 };
 
 /// Human-readable boundary used by architecture checks and documentation.
