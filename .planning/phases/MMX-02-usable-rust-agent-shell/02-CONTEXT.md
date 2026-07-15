@@ -16,8 +16,8 @@ Deliver the first actually usable Rust conversation path without switching the p
 
 ### Runtime and Provider
 
-- **D-201:** Use a native Rust async runtime and direct HTTP adapters. Do not add an external agent framework or Provider SDK that duplicates the protocol/core boundary.
-- **D-202:** `minimax-core` owns provider-neutral run/session state machines and ports; `minimax-provider` owns HTTP, SSE, Responses, and Chat Completions wire details.
+- **D-201:** Use a native Rust runtime and direct HTTP adapters. Tokio/cancellation live in adapters and the CLI composition driver; core stays a pure synchronous state machine. Do not add an external agent framework or Provider SDK that duplicates the protocol/core boundary.
+- **D-202:** `minimax-core` owns provider-neutral run/session reducers and effects; `minimax-provider` owns async HTTP, SSE, Responses, and Chat Completions wire details.
 - **D-203:** One Provider stream produces safe typed events and exactly one terminal outcome. Premature EOF, duplicate terminal, data after terminal, cancellation, timeout, and HTTP/protocol failures stay distinct and redacted.
 - **D-204:** Provider tests are deterministic fixtures or loopback transports. Default tests never use a real credential, remote endpoint, or paid request.
 

@@ -66,7 +66,7 @@ No domain-specific regulated workflow is assumed. General credential protection,
 **Version:** Workspace contract v1; exact dependency versions are pinned in `Cargo.lock`
 
 **Rationale:**
-The project already owns typed Provider events, a strict terminal reducer, and a one-way crate architecture. Phase 2 is a bounded state machine with two HTTP wire adapters, not a multi-agent graph or RAG pipeline. A Python/TypeScript AI framework would create a second runtime, duplicate session/checkpoint policy, and undermine the Rust composition root. Tokio supplies cancellation-aware async execution; Reqwest/rustls supplies cross-platform HTTPS and streaming; Serde keeps the protocol strict.
+The project already owns typed Provider events, a strict terminal reducer, and a one-way crate architecture. Phase 2 is a bounded state machine with two HTTP wire adapters, not a multi-agent graph or RAG pipeline. A Python/TypeScript AI framework would create a second runtime, duplicate session/checkpoint policy, and undermine the Rust composition root. Core remains a pure reducer; Tokio supplies cancellation-aware async execution in adapters/the composition driver, Reqwest/rustls supplies cross-platform HTTPS and streaming, and Serde keeps the protocol strict.
 
 **Alternatives Considered:**
 
@@ -96,21 +96,20 @@ Exact versions must support Rust 1.97.0 and are committed through `Cargo.lock`.
 ### Core Imports
 
 ```rust
-use minimax_protocol::{RuntimeEventV1, TerminalOutcome};
-use tokio_util::sync::CancellationToken;
+use minimax_core::{RunInput, RunMachine};
+use minimax_protocol::RuntimeEventV1;
 ```
 
 ### Entry Point Pattern
 
 ```rust
-pub async fn run_turn(
-    ports: &impl RuntimePorts,
+pub async fn drive_turn(
+    machine: &mut RunMachine,
+    adapters: &mut RuntimeAdapters,
     request: TurnRequest,
-    cancel: CancellationToken,
 ) -> Result<TurnReceipt, RuntimeError> {
-    ports.begin_turn(&request).await?;
-    let stream = ports.open_provider_stream(&request).await?;
-    drive_stream(ports, request.turn_id, stream, cancel).await
+    apply_effects(machine.apply(RunInput::Begin(request))?, adapters).await?;
+    drive_provider_events(machine, adapters).await
 }
 ```
 
@@ -148,7 +147,7 @@ crates/cli/src/{main,headless,doctor}.rs
 
 **Model Configuration:** Resolve a validated provider profile and model before creating the turn. The session records provider/profile/model/protocol/endpoint identity and bounded context settings. Retry keeps that identity unless an explicit later command changes the active model for a new turn.
 
-**Core Pattern:** Persist intent before external I/O; stream typed safe events; persist one terminal outcome before publishing completion. A bounded channel applies backpressure. Core never reads terminal state or Provider frames directly.
+**Core Pattern:** A pure `RunMachine` maps typed inputs to effects. The CLI composition driver persists intent before external I/O, feeds normalized stream events back into the reducer, and persists one terminal outcome before publishing completion. A bounded channel applies backpressure. Core imports no async runtime and never reads terminal state or Provider frames directly.
 
 **Tool Use:** Phase 2 does not execute tools. A normalized tool-call request is recorded as an observable event and ends with an explicit later-phase-required outcome rather than inventing a tool result.
 

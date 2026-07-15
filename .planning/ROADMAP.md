@@ -70,9 +70,16 @@ Cross-cutting constraints:
 **Plans**: 3 plans
 
 Plans:
+**Wave 1**
 
 - [ ] 02-01: Implement provider adapters and the minimal streaming runtime
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 02-02: Add durable sessions, recovery, deterministic compaction, and trace
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 02-03: Add compatible TUI/headless surfaces, diagnostics, configuration, and credentials
 
 ### Phase 3: Safe Tool Completion
