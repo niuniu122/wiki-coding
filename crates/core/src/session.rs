@@ -488,14 +488,44 @@ impl SessionMachine {
             )?,
             JournalRecord::CompactionStored {
                 session_id,
-                pointer,
+                compaction,
                 stored_at_unix_ms,
             } => {
                 let session = self
                     .sessions
                     .get_mut(session_id)
                     .ok_or(RuntimeErrorCode::Recovery)?;
-                session.compaction = Some(pointer.clone());
+                let covered_index = session
+                    .turns
+                    .iter()
+                    .position(|turn| {
+                        turn.turn_id == compaction.covered_through_turn_id
+                            && turn.status == TurnStatus::Completed
+                    })
+                    .ok_or(RuntimeErrorCode::Recovery)?;
+                if compaction.retained_recent_turns.iter().any(|retained| {
+                    !session.turns[..=covered_index].iter().any(|turn| {
+                        turn.turn_id == retained.turn_id && turn.status == TurnStatus::Completed
+                    })
+                }) {
+                    return Err(RuntimeErrorCode::Recovery);
+                }
+                if let Some(previous) = &session.compaction {
+                    let previous_index = session
+                        .turns
+                        .iter()
+                        .position(|turn| turn.turn_id == previous.covered_through_turn_id)
+                        .ok_or(RuntimeErrorCode::Recovery)?;
+                    if previous.compaction_id == compaction.compaction_id
+                        || previous_index >= covered_index
+                    {
+                        return Err(RuntimeErrorCode::Recovery);
+                    }
+                }
+                session.compaction = Some(minimax_protocol::CompactionPointer {
+                    compaction_id: compaction.compaction_id.clone(),
+                    covered_through_turn_id: compaction.covered_through_turn_id.clone(),
+                });
                 session.updated_at_unix_ms = *stored_at_unix_ms;
             }
             JournalRecord::TraceStored { session_id, .. } => {

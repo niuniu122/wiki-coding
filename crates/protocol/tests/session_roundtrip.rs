@@ -1,11 +1,11 @@
 use std::collections::BTreeMap;
 
 use minimax_protocol::{
-    CompactionId, CompactionPointer, JournalRecord, MessageRole, ModelBinding, ModelId, ProviderId,
-    ProviderProtocolKind, RecordId, RequestId, RuntimeErrorCode, RuntimeFailure,
-    RuntimeTerminalOutcome, SessionId, SessionRecord, SessionRecordV1, SessionStatus, TraceCode,
-    TraceEntry, TurnId, TurnReceipt, TurnRecord, TurnStatus, VisibleMessage,
-    parse_session_record_v1,
+    CompactionId, CompactionRecentTurn, CompactionRecord, JournalRecord, MessageRole, ModelBinding,
+    ModelId, ProviderId, ProviderProtocolKind, RecordId, RequestId, RuntimeErrorCode,
+    RuntimeFailure, RuntimeTerminalOutcome, SessionId, SessionRecord, SessionRecordV1,
+    SessionStatus, TraceCode, TraceEntry, TurnId, TurnReceipt, TurnRecord, TurnStatus,
+    VisibleMessage, parse_session_record_v1,
 };
 
 fn binding() -> ModelBinding {
@@ -125,10 +125,21 @@ fn every_session_record_variant_round_trips_strictly() {
     round_trip(
         JournalRecord::CompactionStored {
             session_id: session_id(),
-            pointer: CompactionPointer {
+            compaction: Box::new(CompactionRecord {
                 compaction_id: CompactionId::new("compact-1").expect("compaction"),
                 covered_through_turn_id: turn_id(),
-            },
+                goal: vec!["goal".to_owned()],
+                constraints: vec!["offline".to_owned()],
+                decisions: vec!["use Rust".to_owned()],
+                open_items: vec!["verify".to_owned()],
+                retained_recent_turns: vec![CompactionRecentTurn {
+                    turn_id: turn_id(),
+                    user: "question".to_owned(),
+                    assistant: "answer".to_owned(),
+                }],
+                before_estimated_tokens: 100,
+                after_estimated_tokens: 25,
+            }),
             stored_at_unix_ms: 14,
         },
         "compaction",

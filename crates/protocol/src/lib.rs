@@ -18,9 +18,9 @@ pub use runtime::{
     TurnReceipt, TurnRequest, parse_runtime_event_v1,
 };
 pub use session::{
-    CompactionId, CompactionPointer, JournalRecord, ModelBinding, RecordId, RecoveryRecord,
-    SessionRecord, SessionRecordV1, SessionStatus, TraceCode, TraceEntry, TurnRecord, TurnStatus,
-    VisibleMessage, parse_session_record_v1,
+    CompactionId, CompactionPointer, CompactionRecentTurn, CompactionRecord, JournalRecord,
+    ModelBinding, RecordId, RecoveryRecord, SessionRecord, SessionRecordV1, SessionStatus,
+    TraceCode, TraceEntry, TurnRecord, TurnStatus, VisibleMessage, parse_session_record_v1,
 };
 
 /// Human-readable boundary used by architecture checks and documentation.

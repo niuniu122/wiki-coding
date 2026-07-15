@@ -125,7 +125,29 @@ pub struct CompactionPointer {
     pub covered_through_turn_id: TurnId,
 }
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CompactionRecentTurn {
+    pub turn_id: TurnId,
+    pub user: String,
+    pub assistant: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct CompactionRecord {
+    pub compaction_id: CompactionId,
+    pub covered_through_turn_id: TurnId,
+    pub goal: Vec<String>,
+    pub constraints: Vec<String>,
+    pub decisions: Vec<String>,
+    pub open_items: Vec<String>,
+    pub retained_recent_turns: Vec<CompactionRecentTurn>,
+    pub before_estimated_tokens: u64,
+    pub after_estimated_tokens: u64,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum TraceCode {
     TurnStarted,
@@ -182,7 +204,7 @@ pub enum JournalRecord {
     },
     CompactionStored {
         session_id: SessionId,
-        pointer: CompactionPointer,
+        compaction: Box<CompactionRecord>,
         stored_at_unix_ms: u64,
     },
     TraceStored {

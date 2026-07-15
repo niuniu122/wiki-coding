@@ -165,7 +165,7 @@ fn validate_core_source_directory_inner(
 }
 
 pub fn validate_core_source_text(file: &str, source: &str) -> Result<(), ArchitectureError> {
-    const DENIED: [&str; 15] = [
+    const DENIED: [&str; 19] = [
         "std::path",
         "std::fs",
         "PathBuf",
@@ -181,6 +181,10 @@ pub fn validate_core_source_text(file: &str, source: &str) -> Result<(), Archite
         "crossterm",
         "keyring",
         "rusqlite",
+        "sqlx",
+        "diesel",
+        "sea_orm",
+        "seaorm",
     ];
     if let Some(pattern) = DENIED.iter().find(|pattern| source.contains(*pattern)) {
         return Err(ArchitectureError::Violation(format!(

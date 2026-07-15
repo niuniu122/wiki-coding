@@ -1,10 +1,13 @@
+use std::collections::BTreeMap;
 use std::fs::OpenOptions;
 use std::io::Write;
 
-use minimax_core::{SessionCommand, SessionEffect, SessionMachine};
+use minimax_core::{
+    SafeTraceFact, SafeTraceRecorder, SessionCommand, SessionEffect, SessionMachine,
+};
 use minimax_protocol::{
-    ModelBinding, ModelId, ProviderId, ProviderProtocolKind, RecordId, RequestId, SessionId,
-    SessionRecordV1, TurnId, TurnStatus,
+    JournalRecord, ModelBinding, ModelId, ProviderId, ProviderProtocolKind, RecordId, RequestId,
+    SessionId, SessionRecordV1, TraceCode, TurnId, TurnStatus,
 };
 use minimax_vault::{RuntimeStore, RuntimeStoreError};
 use tempfile::TempDir;
@@ -247,4 +250,46 @@ fn oversized_record_is_rejected_before_journal_mutation() {
         std::fs::read(store.journal_path()).expect("journal after large record"),
         before
     );
+}
+
+#[test]
+fn safe_trace_protocol_record_never_persists_adversarial_input() {
+    let project = root();
+    let mut policy = SessionMachine::new();
+    let create = create_record(&mut policy, "trace");
+    let session_id = policy.active_session().expect("active").session_id.clone();
+    let entry = SafeTraceRecorder::record(
+        5,
+        TraceCode::ProviderFailed,
+        BTreeMap::from([
+            (
+                "request_id".to_owned(),
+                SafeTraceFact::String("DO_NOT_PERSIST_THIS sk-supersecret".to_owned()),
+            ),
+            (
+                "raw_frame".to_owned(),
+                SafeTraceFact::String("{\"choices\":[{\"delta\":{}}]}".to_owned()),
+            ),
+        ]),
+    );
+    let trace = SessionRecordV1::new(
+        record_id("record-safe-trace"),
+        JournalRecord::TraceStored { session_id, entry },
+    );
+    let journal_path = {
+        let mut store = RuntimeStore::open(project.path()).expect("open");
+        store.append(create).expect("create");
+        store.append(trace).expect("trace");
+        store.journal_path().to_path_buf()
+    };
+    let persisted = std::fs::read_to_string(journal_path).expect("journal text");
+    for marker in [
+        "DO_NOT_PERSIST_THIS",
+        "sk-supersecret",
+        "choices",
+        "raw_frame",
+    ] {
+        assert!(!persisted.contains(marker));
+    }
+    assert!(persisted.contains("[REDACTED]"));
 }

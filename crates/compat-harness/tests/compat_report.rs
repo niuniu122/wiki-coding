@@ -145,18 +145,31 @@ fn architecture_rejects_local_cycle() {
 
 #[test]
 fn architecture_rejects_database_package() {
-    let mut graph = synthetic_graph(&[("minimax-protocol", &[])]);
-    graph.packages.push(ArchitecturePackage {
-        name: "rusqlite".to_owned(),
-        local: false,
-        dependencies: Vec::new(),
-    });
-    assert_eq!(
-        validate_architecture(&graph),
-        Err(ArchitectureError::Violation(
-            "database dependency denied: rusqlite".to_owned()
-        ))
-    );
+    for package in ["rusqlite", "sqlx-core", "diesel", "sea-orm"] {
+        let mut graph = synthetic_graph(&[("minimax-protocol", &[])]);
+        graph.packages.push(ArchitecturePackage {
+            name: package.to_owned(),
+            local: false,
+            dependencies: Vec::new(),
+        });
+        assert_eq!(
+            validate_architecture(&graph),
+            Err(ArchitectureError::Violation(format!(
+                "database dependency denied: {package}"
+            )))
+        );
+    }
+}
+
+#[test]
+fn architecture_rejects_database_access_in_core_source() {
+    for pattern in ["rusqlite", "sqlx", "diesel", "sea_orm", "seaorm"] {
+        let source = format!("use {pattern}::Connection;");
+        assert!(matches!(
+            validate_core_source_text("storage.rs", &source),
+            Err(ArchitectureError::Violation(_))
+        ));
+    }
 }
 
 #[test]
