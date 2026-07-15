@@ -14,9 +14,9 @@
 
 ### Compatibility
 
-- [ ] **COMP-01**: Existing public slash commands retain compatible names and user-visible outcomes.
-- [ ] **COMP-02**: Responses and Chat Completions streams parse into the same typed runtime contract and reject malformed or premature terminal sequences.
-- [ ] **COMP-03**: Built-in MiniMax official/Hashsight and custom OpenAI-compatible provider profiles remain configurable.
+- [x] **COMP-01**: Existing public slash commands retain compatible names and user-visible outcomes.
+- [x] **COMP-02**: Responses and Chat Completions streams parse into the same typed runtime contract and reject malformed or premature terminal sequences.
+- [x] **COMP-03**: Built-in MiniMax official/Hashsight and custom OpenAI-compatible provider profiles remain configurable.
 - [ ] **COMP-04**: Every migrated behavior has a TypeScript/Rust parity fixture or an explicitly approved difference.
 
 ### Runtime
@@ -106,9 +106,9 @@
 | ARCH-02 | Phase 1 | Pending |
 | ARCH-03 | Phase 1 | Pending |
 | ARCH-04 | Phase 1 | Pending |
-| COMP-01 | Phase 1 | Pending |
-| COMP-02 | Phase 1 | Pending |
-| COMP-03 | Phase 1 | Pending |
+| COMP-01 | Phase 1 | Complete |
+| COMP-02 | Phase 1 | Complete |
+| COMP-03 | Phase 1 | Complete |
 | COMP-04 | Phase 1 | Pending |
 | RUN-01 | Phase 2 | Pending |
 | RUN-02 | Phase 2 | Pending |
@@ -149,6 +149,7 @@
 | REL-04 | Phase 6 | Pending |
 
 **Coverage:**
+
 - v1 requirements: 45 total
 - Mapped to phases: 45
 - Unmapped: 0
