@@ -126,7 +126,28 @@ export interface AppConfig {
   features?: import("./config/feature-flags.js").AgentFeatureFlagConfig;
 }
 
-export interface ModelContextMessage {
-  role: Role;
-  content: string;
+export interface ModelContextToolCall {
+  readonly callId: string;
+  readonly name: string;
+  readonly argumentsJson: string;
 }
+
+export type ModelContextMessage =
+  | {
+      readonly role: Role;
+      readonly content: string;
+      readonly toolCalls?: never;
+      readonly toolCallId?: never;
+    }
+  | {
+      readonly role: "assistant";
+      readonly content: string;
+      readonly toolCalls: readonly ModelContextToolCall[];
+      readonly toolCallId?: never;
+    }
+  | {
+      readonly role: "tool";
+      readonly content: string;
+      readonly toolCallId: string;
+      readonly toolCalls?: never;
+    };

@@ -1,5 +1,5 @@
 import type {CapabilityCard} from "../capabilities/search/capability-card.js";
-import type {ModelContextMessage} from "../types.js";
+import type {ModelContextMessage, ModelContextToolCall} from "../types.js";
 import type {ModelToolDefinition} from "./model-action.js";
 
 export const LOCAL_CAPABILITY_TOOL_NAME = "invoke_local_capability";
@@ -50,9 +50,25 @@ export class AgentContextBuilder {
     this.assertWithinBudget();
   }
 
-  appendToolResult(capabilityId: string, status: string, output: string): void {
+  appendToolCalls(calls: readonly ModelContextToolCall[]): void {
+    if (calls.length === 0) throw new Error("Agent tool-call context cannot be empty.");
     this.messages.push({
-      role: "system",
+      role: "assistant",
+      content: "",
+      toolCalls: Object.freeze(calls.map((call) => Object.freeze({...call})))
+    });
+    this.assertWithinBudget();
+  }
+
+  appendToolResult(
+    toolCallId: string,
+    capabilityId: string,
+    status: string,
+    output: string
+  ): void {
+    this.messages.push({
+      role: "tool",
+      toolCallId,
       content: `Local capability result (${capabilityId}, ${status}):\n${output.slice(0, 12_000)}`
     });
     this.assertWithinBudget();
@@ -69,5 +85,16 @@ export class AgentContextBuilder {
 }
 
 function estimateTokens(messages: readonly ModelContextMessage[]): number {
-  return Math.ceil(messages.reduce((sum, message) => sum + message.content.length, 0) / 4);
+  return Math.ceil(messages.reduce(
+    (sum, message) => sum + modelVisibleLength(message),
+    0
+  ) / 4);
+}
+
+function modelVisibleLength(message: ModelContextMessage): number {
+  const toolCallLength = message.toolCalls?.reduce(
+    (sum, call) => sum + call.callId.length + call.name.length + call.argumentsJson.length,
+    0
+  ) ?? 0;
+  return message.content.length + toolCallLength + (message.toolCallId?.length ?? 0);
 }

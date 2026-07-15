@@ -70,10 +70,7 @@ class ResponsesProtocol implements ProviderProtocol {
   buildRequest(input: ProviderRequestInput): Record<string, unknown> {
     return {
       model: input.model,
-      input: input.messages.map((message) => ({
-        role: message.role,
-        content: message.content
-      })),
+      input: input.messages.flatMap(toResponsesInputItems),
       stream: true,
       max_output_tokens: input.maxOutputTokens,
       metadata: {prompt_cache_key: "minimax-codex-v1"},
@@ -141,7 +138,7 @@ class ChatCompletionsProtocol implements ProviderProtocol {
   buildRequest(input: ProviderRequestInput): Record<string, unknown> {
     return {
       model: input.model,
-      messages: input.messages,
+      messages: input.messages.map(toChatCompletionMessage),
       stream: true,
       stream_options: {include_usage: true},
       max_tokens: input.maxOutputTokens,
@@ -186,6 +183,52 @@ class ChatCompletionsProtocol implements ProviderProtocol {
 
     return readUsage(json) ?? {type: "ignored"};
   }
+}
+
+function toResponsesInputItems(
+  message: ModelContextMessage
+): readonly Record<string, unknown>[] {
+  if (message.toolCalls) {
+    return message.toolCalls.map((call) => ({
+      type: "function_call",
+      call_id: call.callId,
+      name: call.name,
+      arguments: call.argumentsJson
+    }));
+  }
+  if (message.role === "tool") {
+    return [{
+      type: "function_call_output",
+      call_id: message.toolCallId,
+      output: message.content
+    }];
+  }
+  return [{role: message.role, content: message.content}];
+}
+
+function toChatCompletionMessage(message: ModelContextMessage): Record<string, unknown> {
+  if (message.toolCalls) {
+    return {
+      role: "assistant",
+      content: message.content || null,
+      tool_calls: message.toolCalls.map((call) => ({
+        id: call.callId,
+        type: "function",
+        function: {
+          name: call.name,
+          arguments: call.argumentsJson
+        }
+      }))
+    };
+  }
+  if (message.role === "tool") {
+    return {
+      role: "tool",
+      tool_call_id: message.toolCallId,
+      content: message.content
+    };
+  }
+  return {role: message.role, content: message.content};
 }
 
 export function createProviderProtocol(protocol: ApiProtocol): ProviderProtocol {

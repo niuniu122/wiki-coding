@@ -121,6 +121,26 @@ test("single tool run performs retrieval -> model -> policy dispatcher -> model"
     assert.equal(f.counts.model, 2);
     assert.equal(f.counts.dispatch, 1);
     assert.match(JSON.stringify(f.requests[1]?.messages), /file contents/);
+    const followUpMessages = f.requests[1]?.messages as Array<Record<string, unknown>>;
+    assert.deepEqual(followUpMessages.slice(-2), [
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [{
+          callId: "invocation-1",
+          name: "invoke_local_capability",
+          argumentsJson: JSON.stringify({
+            capabilityId: CAPABILITY.id,
+            arguments: {path: "README.md"}
+          })
+        }]
+      },
+      {
+        role: "tool",
+        toolCallId: "invocation-1",
+        content: `Local capability result (${CAPABILITY.id}, succeeded):\nfile contents`
+      }
+    ]);
     const snapshot = await f.repository.readThread(f.session.activeThread.id);
     assert.deepEqual(snapshot.items.flatMap((item) => item.agent ? [item.agent.payload.kind] : []), ["user", "checkpoint", "tool_request", "tool_result", "checkpoint", "assistant", "final"]);
   } finally { await rm(f.root, {recursive: true, force: true}); }

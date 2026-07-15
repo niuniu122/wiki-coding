@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {createProviderProtocol} from "../src/providers/provider-protocol.js";
+import type {ModelContextMessage} from "../src/types.js";
 
 test("responses protocol owns its request shape and separates reasoning from visible text", () => {
   const protocol = createProviderProtocol("responses");
@@ -64,6 +65,60 @@ test("chat completions protocol owns chat request and usage parsing", () => {
   );
   assert.deepEqual(protocol.parseEvent("[DONE]"), {type: "completed"});
   assert.deepEqual(protocol.parseEvent(JSON.stringify({choices: []})), {type: "ignored"});
+});
+
+test("tool exchanges preserve call identity in both Provider protocols", () => {
+  const messages: ModelContextMessage[] = [
+    {role: "user", content: "read package.json"},
+    {
+      role: "assistant",
+      content: "",
+      toolCalls: [{
+        callId: "call-1",
+        name: "invoke_local_capability",
+        argumentsJson: "{\"path\":\"package.json\"}"
+      }]
+    },
+    {role: "tool", toolCallId: "call-1", content: "file contents"}
+  ];
+
+  const responses = createProviderProtocol("responses").buildRequest({
+    model: "MiniMax-M3",
+    messages,
+    maxOutputTokens: 128
+  });
+  assert.deepEqual(responses.input, [
+    {role: "user", content: "read package.json"},
+    {
+      type: "function_call",
+      call_id: "call-1",
+      name: "invoke_local_capability",
+      arguments: "{\"path\":\"package.json\"}"
+    },
+    {type: "function_call_output", call_id: "call-1", output: "file contents"}
+  ]);
+
+  const chat = createProviderProtocol("chat_completions").buildRequest({
+    model: "deepseek-v4-flash",
+    messages,
+    maxOutputTokens: 128
+  });
+  assert.deepEqual(chat.messages, [
+    {role: "user", content: "read package.json"},
+    {
+      role: "assistant",
+      content: null,
+      tool_calls: [{
+        id: "call-1",
+        type: "function",
+        function: {
+          name: "invoke_local_capability",
+          arguments: "{\"path\":\"package.json\"}"
+        }
+      }]
+    },
+    {role: "tool", tool_call_id: "call-1", content: "file contents"}
+  ]);
 });
 
 test("malformed provider JSON is rejected without exposing the frame", () => {

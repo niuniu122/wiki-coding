@@ -78,6 +78,26 @@ test("continue replays a durable tool result into model context without dispatch
     assert.equal(events.at(-1)?.type, "agent.completed");
     assert.equal(dispatches, 0);
     assert.match(JSON.stringify(requests), /durable file contents/);
+    const replayed = requests[0] as Array<Record<string, unknown>>;
+    assert.deepEqual(replayed.slice(-2), [
+      {
+        role: "assistant",
+        content: "",
+        toolCalls: [{
+          callId: "invocation-stable",
+          name: "invoke_local_capability",
+          argumentsJson: JSON.stringify({
+            capabilityId: CAPABILITY.id,
+            arguments: {path: "README.md"}
+          })
+        }]
+      },
+      {
+        role: "tool",
+        toolCallId: "invocation-stable",
+        content: `Local capability result (${CAPABILITY.id}, completed):\ndurable file contents`
+      }
+    ]);
     const snapshot = await f.repository.readThread(f.session.activeThread.id);
     assert.equal(snapshot.turns.find((turn) => turn.id === f.turn.id)?.status, "completed");
     const checkpoints = snapshot.items.flatMap((item) => item.agent?.payload.kind === "checkpoint" ? [item.agent.payload] : []);

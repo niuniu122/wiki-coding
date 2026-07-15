@@ -23,11 +23,21 @@ export class ConservativeTokenEstimator implements TokenEstimator {
 
   estimateMessages(messages: ModelContextMessage[]): number {
     const raw = messages.reduce(
-      (total, message) => total + MESSAGE_OVERHEAD + estimateRawText(message.content),
+      (total, message) =>
+        total + MESSAGE_OVERHEAD + estimateRawText(modelVisibleText(message)),
       0
     );
     return withSafetyMargin(raw);
   }
+}
+
+function modelVisibleText(message: ModelContextMessage): string {
+  const calls = message.toolCalls?.map(
+    (call) => `${call.callId}\n${call.name}\n${call.argumentsJson}`
+  ).join("\n") ?? "";
+  return [message.content, message.toolCallId ?? "", calls]
+    .filter(Boolean)
+    .join("\n");
 }
 
 function estimateRawText(text: string): number {

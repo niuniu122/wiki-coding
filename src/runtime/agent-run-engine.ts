@@ -185,6 +185,7 @@ export class AgentRunEngine {
           return;
         }
 
+        context.appendToolCalls(toolCalls);
         for (const call of toolCalls) {
           input.budget.consumeToolCall();
           if (call.name !== LOCAL_CAPABILITY_TOOL_NAME) throw new Error("Model requested an unknown Agent tool.");
@@ -197,7 +198,7 @@ export class AgentRunEngine {
           const result = await dispatcher.dispatch(invocation, active.controller.signal);
           yield {type: "agent.tool.completed", turnId: input.turn.id, invocationId: invocation.invocationId, status: result.status};
           const output = dispatchOutput(result);
-          context.appendToolResult(capabilityId, result.status, output);
+          context.appendToolResult(call.callId, capabilityId, result.status, output);
           await input.journal.checkpoint(retrieval.snapshotVersion, input.runtimeSnapshot.selection.modelProfileId, input.budget, input.continuationGeneration);
           if (result.status === "confirmation_required") {
             await this.finish(active, "interrupted");
@@ -268,9 +269,24 @@ function replayDurableContext(context: AgentContextBuilder, items: readonly Thre
   const capabilityByInvocation = new Map<string, string>();
   for (const item of [...items].sort((left, right) => (left.agent?.sequence ?? 0) - (right.agent?.sequence ?? 0))) {
     const payload = item.agent?.payload;
-    if (payload?.kind === "tool_request") capabilityByInvocation.set(payload.invocationId, payload.capabilityId);
+    if (payload?.kind === "tool_request") {
+      capabilityByInvocation.set(payload.invocationId, payload.capabilityId);
+      context.appendToolCalls([{
+        callId: payload.invocationId,
+        name: LOCAL_CAPABILITY_TOOL_NAME,
+        argumentsJson: JSON.stringify({
+          capabilityId: payload.capabilityId,
+          arguments: payload.arguments
+        })
+      }]);
+    }
     else if (payload?.kind === "assistant") context.appendAssistant(payload.text);
-    else if (payload?.kind === "tool_result") context.appendToolResult(capabilityByInvocation.get(payload.invocationId) ?? "unknown", payload.status, payload.output);
+    else if (payload?.kind === "tool_result") context.appendToolResult(
+      payload.invocationId,
+      capabilityByInvocation.get(payload.invocationId) ?? "unknown",
+      payload.status,
+      payload.output
+    );
   }
 }
 

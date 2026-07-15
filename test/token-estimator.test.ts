@@ -46,3 +46,22 @@ test("compound emoji components are counted conservatively with one safety margi
     9
   );
 });
+
+test("tool call identity and arguments remain inside the token budget", () => {
+  const estimator = new ConservativeTokenEstimator();
+  const plain = estimator.estimateMessages([{role: "assistant", content: ""}]);
+  const exchange = estimator.estimateMessages([
+    {
+      role: "assistant",
+      content: "",
+      toolCalls: [{
+        callId: "call-1",
+        name: "invoke_local_capability",
+        argumentsJson: "{\"path\":\"package.json\"}"
+      }]
+    },
+    {role: "tool", toolCallId: "call-1", content: "file contents"}
+  ]);
+
+  assert.ok(exchange > plain);
+});
