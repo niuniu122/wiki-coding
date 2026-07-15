@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::fmt;
 
 use secrecy::SecretString;
+use serde::Serialize;
 
 use crate::ResolvedConfig;
 
@@ -13,7 +14,8 @@ pub enum CredentialMode {
     Interactive,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CredentialSource {
     Environment,
     OsKeyring,

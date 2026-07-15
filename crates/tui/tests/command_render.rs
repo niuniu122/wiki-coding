@@ -180,4 +180,20 @@ fn non_tty_never_enables_raw_mode_and_raw_guard_restores_on_drop() {
         assert_eq!(hooks.disabled.get(), 0);
     }
     assert_eq!(hooks.disabled.get(), 1);
+
+    struct UnsupportedHooks;
+    impl TerminalHooks for UnsupportedHooks {
+        fn enable_raw_mode(&self) -> io::Result<()> {
+            Err(io::Error::new(io::ErrorKind::Unsupported, "fixture"))
+        }
+
+        fn disable_raw_mode(&self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+    let unsupported = UnsupportedHooks;
+    let fallback = InteractiveShell::with_capabilities(&unsupported, true, true)
+        .begin()
+        .expect("unsupported raw mode falls back to line input");
+    assert_eq!(fallback.mode(), ShellMode::Line);
 }

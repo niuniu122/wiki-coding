@@ -6,6 +6,7 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+clap.workspace = true
 minimax-core = { path = "../core" }
 minimax-protocol = { path = "../protocol" }
 minimax-provider = { path = "../provider" }
@@ -13,6 +14,14 @@ minimax-retrieval = { path = "../retrieval" }
 minimax-tools = { path = "../tools" }
 minimax-tui = { path = "../tui" }
 minimax-vault = { path = "../vault" }
+secrecy.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

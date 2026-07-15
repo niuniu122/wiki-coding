@@ -27,8 +27,12 @@
     },
     {
       "id": "rust.public_commands",
-      "status": "pending",
-      "evidence": []
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
     },
     {
       "id": "rust.provider_profiles",
@@ -47,13 +51,21 @@
     },
     {
       "id": "rust.permission_modes",
-      "status": "pending",
-      "evidence": []
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
     },
     {
       "id": "rust.product_entry",
-      "status": "pending",
-      "evidence": []
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/cli/tests/headless.rs",
+        "package.json"
+      ]
     }
   ]
 }

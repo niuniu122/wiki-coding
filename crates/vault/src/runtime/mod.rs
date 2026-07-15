@@ -7,8 +7,8 @@ use std::collections::BTreeSet;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
-use minimax_core::{SessionCommand, SessionMachine};
-use minimax_protocol::{RecordId, SessionRecordV1};
+use minimax_core::{SessionCommand, SessionEffect, SessionMachine};
+use minimax_protocol::{RecordId, RuntimeErrorCode, SessionRecordV1};
 
 use self::index::RuntimeIndex;
 use self::journal::{JournalLoad, RuntimeJournal};
@@ -25,6 +25,7 @@ pub enum RuntimeStoreError {
     RecordTooLarge,
     IndexTooLarge,
     IndexConflict,
+    Command(RuntimeErrorCode),
 }
 
 impl fmt::Display for RuntimeStoreError {
@@ -36,6 +37,7 @@ impl fmt::Display for RuntimeStoreError {
             Self::RecordTooLarge => "a runtime journal record exceeds the one MiB limit",
             Self::IndexTooLarge => "the derived runtime index exceeds the one MiB limit",
             Self::IndexConflict => "the derived runtime index conflicts with the journal",
+            Self::Command(code) => return code.fmt(formatter),
         };
         formatter.write_str(message)
     }
@@ -90,6 +92,20 @@ impl RuntimeStore {
         self.machine = next;
         self.current_index = RuntimeIndex::ensure(&self.runtime_dir, &self.journal, &self.machine)?;
         Ok(())
+    }
+
+    pub fn apply_command(
+        &mut self,
+        command: SessionCommand,
+    ) -> Result<Vec<SessionEffect>, RuntimeStoreError> {
+        let mut preview = self.machine.clone();
+        let effects = preview.apply(command).map_err(RuntimeStoreError::Command)?;
+        for effect in &effects {
+            if let SessionEffect::Persist(record) = effect {
+                self.append(record.clone())?;
+            }
+        }
+        Ok(effects)
     }
 
     #[must_use]

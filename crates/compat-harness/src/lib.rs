@@ -4,6 +4,7 @@
 //! behavioral parity with the existing TypeScript implementation.
 
 pub mod architecture;
+pub mod baseline;
 pub mod manifest;
 pub mod report;
 
@@ -12,6 +13,7 @@ pub use architecture::{
     validate_architecture, validate_core_source_boundary, validate_core_source_directory,
     validate_core_source_text,
 };
+pub use baseline::{BaselineError, validate_product_entry, validate_rust_command_surface};
 pub use manifest::{
     BaselineStatus, CommandManifest, CompatManifests, ManifestError, ParityStatus,
     ProviderManifest, StatusItem, load_compat_manifests, repository_root,

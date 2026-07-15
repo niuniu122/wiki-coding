@@ -5,7 +5,8 @@ use std::process::ExitCode;
 
 use minimax_compat_harness::{
     build_report, load_cargo_architecture, load_compat_manifests, report_json, repository_root,
-    validate_architecture, validate_core_source_boundary, validate_report,
+    validate_architecture, validate_core_source_boundary, validate_product_entry, validate_report,
+    validate_rust_command_surface,
 };
 use minimax_protocol::{ProtocolErrorCode, ProviderProtocolKind, StreamEvent};
 use minimax_provider::{CompatibilityEvent, replay_fixture};
@@ -48,6 +49,8 @@ fn run(arguments: Vec<String>) -> Result<Option<String>, String> {
 
 fn verify_repository(root: &Path) -> Result<(), String> {
     let first_manifests = load_compat_manifests(root).map_err(|error| error.to_string())?;
+    validate_rust_command_surface(&first_manifests.commands).map_err(|error| error.to_string())?;
+    validate_product_entry(root).map_err(|error| error.to_string())?;
     verify_provider_fixtures(root)?;
     let architecture = load_cargo_architecture(root).map_err(|error| error.to_string())?;
     validate_architecture(&architecture).map_err(|error| error.to_string())?;

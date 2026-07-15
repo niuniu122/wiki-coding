@@ -4,103 +4,183 @@
   "entries": [
     {
       "id": "rust.command./agent",
-      "status": "pending",
-      "evidence": []
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
     },
     {
       "id": "rust.command./api",
-      "status": "pending",
-      "evidence": []
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
     },
     {
       "id": "rust.command./capabilities",
-      "status": "pending",
-      "evidence": []
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
     },
     {
       "id": "rust.command./chat",
-      "status": "pending",
-      "evidence": []
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
     },
     {
       "id": "rust.command./compact",
-      "status": "pending",
-      "evidence": []
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
     },
     {
       "id": "rust.command./continue",
-      "status": "pending",
-      "evidence": []
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
     },
     {
       "id": "rust.command./exit",
-      "status": "pending",
-      "evidence": []
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
     },
     {
       "id": "rust.command./interrupt",
-      "status": "pending",
-      "evidence": []
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
     },
     {
       "id": "rust.command./model",
-      "status": "pending",
-      "evidence": []
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
     },
     {
       "id": "rust.command./models",
-      "status": "pending",
-      "evidence": []
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
     },
     {
       "id": "rust.command./new",
-      "status": "pending",
-      "evidence": []
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
     },
     {
       "id": "rust.command./permissions",
-      "status": "pending",
-      "evidence": []
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
     },
     {
       "id": "rust.command./provider",
-      "status": "pending",
-      "evidence": []
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
     },
     {
       "id": "rust.command./quit",
-      "status": "pending",
-      "evidence": []
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
     },
     {
       "id": "rust.command./resume",
-      "status": "pending",
-      "evidence": []
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
     },
     {
       "id": "rust.command./retry",
-      "status": "pending",
-      "evidence": []
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
     },
     {
       "id": "rust.command./threads",
-      "status": "pending",
-      "evidence": []
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
     },
     {
       "id": "rust.command./trace",
-      "status": "pending",
-      "evidence": []
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
     },
     {
       "id": "rust.permission_modes",
-      "status": "pending",
-      "evidence": []
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
     },
     {
       "id": "rust.product_entry",
-      "status": "pending",
-      "evidence": []
+      "status": "matched",
+      "evidence": [
+        "crates/cli/tests/headless.rs",
+        "crates/compat-harness/src/baseline.rs",
+        "package.json"
+      ]
     },
     {
       "id": "rust.provider_profile.custom_openai_compatible",

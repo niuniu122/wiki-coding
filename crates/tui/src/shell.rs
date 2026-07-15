@@ -1,5 +1,8 @@
 use std::io;
 
+#[cfg(not(target_abi = "llvm"))]
+use std::io::Write as _;
+
 use is_terminal::IsTerminal as _;
 
 pub trait TerminalHooks {
@@ -76,11 +79,17 @@ impl<'a> InteractiveShell<'a> {
 
     pub fn begin(&self) -> io::Result<ShellSession<'a>> {
         if self.input_is_terminal && self.output_is_terminal {
-            self.hooks.enable_raw_mode()?;
-            Ok(ShellSession {
-                mode: ShellMode::Raw,
-                guard: Some(RawModeGuard { hooks: self.hooks }),
-            })
+            match self.hooks.enable_raw_mode() {
+                Ok(()) => Ok(ShellSession {
+                    mode: ShellMode::Raw,
+                    guard: Some(RawModeGuard { hooks: self.hooks }),
+                }),
+                Err(error) if error.kind() == io::ErrorKind::Unsupported => Ok(ShellSession {
+                    mode: ShellMode::Line,
+                    guard: None,
+                }),
+                Err(error) => Err(error),
+            }
         } else {
             Ok(ShellSession {
                 mode: ShellMode::Line,
@@ -105,6 +114,78 @@ impl ShellSession<'_> {
     pub const fn raw_mode_is_guarded(&self) -> bool {
         self.guard.is_some()
     }
+
+    pub fn read_line(&self) -> io::Result<Option<String>> {
+        match self.mode {
+            ShellMode::Line => read_standard_line(),
+            ShellMode::Raw => read_raw_line(),
+        }
+    }
+}
+
+fn read_standard_line() -> io::Result<Option<String>> {
+    let mut line = String::new();
+    match io::stdin().read_line(&mut line)? {
+        0 => Ok(None),
+        _ => Ok(Some(line)),
+    }
+}
+
+#[cfg(not(target_abi = "llvm"))]
+fn read_raw_line() -> io::Result<Option<String>> {
+    use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+
+    let mut line = String::new();
+    loop {
+        let Event::Key(key) = event::read()? else {
+            continue;
+        };
+        if key.kind != KeyEventKind::Press {
+            continue;
+        }
+        match key.code {
+            KeyCode::Enter => {
+                println!();
+                return Ok(Some(line));
+            }
+            KeyCode::Backspace => {
+                if line.pop().is_some() {
+                    print!("\u{8} \u{8}");
+                    io::stdout().flush()?;
+                }
+            }
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                return Err(io::Error::new(
+                    io::ErrorKind::Interrupted,
+                    "turn interrupted",
+                ));
+            }
+            KeyCode::Char('d')
+                if line.is_empty() && key.modifiers.contains(KeyModifiers::CONTROL) =>
+            {
+                println!();
+                return Ok(None);
+            }
+            KeyCode::Char(character)
+                if !key
+                    .modifiers
+                    .intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) =>
+            {
+                line.push(character);
+                print!("{character}");
+                io::stdout().flush()?;
+            }
+            _ => {}
+        }
+    }
+}
+
+#[cfg(target_abi = "llvm")]
+fn read_raw_line() -> io::Result<Option<String>> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "raw terminal input is unavailable on this development fallback target",
+    ))
 }
 
 struct RawModeGuard<'a> {

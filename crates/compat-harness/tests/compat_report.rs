@@ -5,7 +5,8 @@ use minimax_compat_harness::{
     ArchitectureError, ArchitectureGraph, ArchitecturePackage, ManifestError, ParityStatus,
     build_report, load_cargo_architecture, load_compat_manifests, report_json, repository_root,
     validate_architecture, validate_core_source_boundary, validate_core_source_directory,
-    validate_core_source_text, validate_report,
+    validate_core_source_text, validate_product_entry, validate_report,
+    validate_rust_command_surface,
 };
 
 #[test]
@@ -67,6 +68,14 @@ fn compat_report_contains_every_baseline_item_exactly_once() {
     assert_eq!(report_ids, expected_ids);
     assert_eq!(manifests.commands.commands.len(), 17);
     assert_eq!(manifests.providers.profile_classes.len(), 3);
+}
+
+#[test]
+fn rust_command_permission_and_product_baselines_are_executable() {
+    let root = repository_root();
+    let manifests = load_compat_manifests(&root).expect("strict manifests");
+    validate_rust_command_surface(&manifests.commands).expect("complete Rust command surface");
+    validate_product_entry(&root).expect("TypeScript npm product entry");
 }
 
 #[test]
