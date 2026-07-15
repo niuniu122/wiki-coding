@@ -5,16 +5,16 @@ milestone_name: milestone
 current_phase: 1
 current_phase_name: Contract Foundation
 status: executing
-stopped_at: Completed 01-02-PLAN.md
-last_updated: "2026-07-15T08:51:06Z"
+stopped_at: Completed 01-03-PLAN.md
+last_updated: "2026-07-15T09:05:51Z"
 last_activity: 2026-07-15
 last_activity_desc: Phase 1 execution started
 progress:
   total_phases: 6
   completed_phases: 0
   total_plans: 4
-  completed_plans: 2
-  percent: 50
+  completed_plans: 3
+  percent: 75
 ---
 
 # Project State
@@ -29,25 +29,25 @@ See: .planning/PROJECT.md (updated 2026-07-15)
 ## Current Position
 
 Phase: 1 (Contract Foundation) — EXECUTING
-Plan: 3 of 4
+Plan: 4 of 4
 Status: Ready to execute
-Last activity: 2026-07-15 — Rust workspace scaffold compiled and verified
+Last activity: 2026-07-15 — Typed protocol, terminal sequence, and Provider normalization verified
 
-Progress: [█████░░░░░] 50%
+Progress: [███████░░░] 75%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 2
+- Total plans completed: 3
 - Average duration: 15 min
-- Total execution time: 30 min
+- Total execution time: 44 min
 
 **By Phase:**
 
 | Phase | Plans | Total | Avg/Plan |
 |-------|-------|-------|----------|
-| 1 | 2 | 30 min | 15 min |
+| 1 | 3 | 44 min | 15 min |
 
 ## Accumulated Context
 
@@ -59,6 +59,8 @@ Progress: [█████░░░░░] 50%
 - No SQLite; one per-project Obsidian-compatible Vault.
 - Command parity is measured over canonical names plus aliases; `/quit` remains the `/exit` alias.
 - Rust behavior remains `pending` until executable Rust evidence exists.
+- Provider streams cross one typed schema-versioned boundary, and core accepts exactly one terminal outcome.
+- Raw Provider reasoning is represented only by a content-free `ReasoningFiltered` marker.
 
 ### Pending Todos
 
@@ -79,6 +81,6 @@ None outside the roadmap.
 
 ## Session Continuity
 
-Last session: 2026-07-15T08:51:06Z
-Stopped at: Completed 01-02-PLAN.md
+Last session: 2026-07-15T09:05:51Z
+Stopped at: Completed 01-03-PLAN.md
 Resume file: None
