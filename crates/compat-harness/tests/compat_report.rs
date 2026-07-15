@@ -4,7 +4,8 @@ use std::fs;
 use minimax_compat_harness::{
     ArchitectureError, ArchitectureGraph, ArchitecturePackage, ManifestError, ParityStatus,
     build_report, load_cargo_architecture, load_compat_manifests, report_json, repository_root,
-    validate_architecture, validate_report,
+    validate_architecture, validate_core_source_boundary, validate_core_source_text,
+    validate_report,
 };
 
 #[test]
@@ -86,6 +87,7 @@ fn architecture_real_cargo_metadata_passes() {
     let root = repository_root();
     let graph = load_cargo_architecture(&root).expect("locked Cargo metadata");
     validate_architecture(&graph).expect("valid workspace architecture");
+    validate_core_source_boundary(&root).expect("abstract core source boundary");
 }
 
 #[test]
@@ -94,7 +96,7 @@ fn architecture_rejects_core_to_vault() {
     assert_eq!(
         validate_architecture(&graph),
         Err(ArchitectureError::Violation(
-            "forbidden local dependency: minimax-core -> minimax-vault".to_owned()
+            "core dependency denied: minimax-core -> minimax-vault".to_owned()
         ))
     );
 }
@@ -145,6 +147,27 @@ fn architecture_rejects_database_package() {
         validate_architecture(&graph),
         Err(ArchitectureError::Violation(
             "database dependency denied: rusqlite".to_owned()
+        ))
+    );
+}
+
+#[test]
+fn architecture_rejects_core_http_dependency() {
+    let graph = synthetic_graph(&[("minimax-core", &["minimax-protocol", "reqwest"])]);
+    assert_eq!(
+        validate_architecture(&graph),
+        Err(ArchitectureError::Violation(
+            "core dependency denied: minimax-core -> reqwest".to_owned()
+        ))
+    );
+}
+
+#[test]
+fn architecture_rejects_markdown_paths_in_core_source() {
+    assert_eq!(
+        validate_core_source_text("session.rs", "use std::path::PathBuf; // notes.md"),
+        Err(ArchitectureError::Violation(
+            "core source boundary denied: session.rs contains std::path".to_owned()
         ))
     );
 }

@@ -8,7 +8,7 @@ requires:
     provides: typed protocol, deterministic reducer, and Provider fixture normalization
 provides:
   - Deterministic evidence-backed matched, pending, and approved-difference reporting
-  - Cargo metadata enforcement for dependency direction, cycles, harness isolation, and database exclusion
+  - Cargo/source enforcement for dependency direction, core HTTP/Markdown isolation, cycles, harness isolation, and database exclusion
   - One credential-free Rust contract command in Windows and Linux CI
 affects: [ci, architecture, compatibility, release-gates]
 tech-stack:
@@ -30,7 +30,7 @@ key-decisions:
   - "CI uses runner-provided rustup and the repository-pinned 1.97.0 toolchain without a third-party Rust setup action."
 patterns-established:
   - "Matched compatibility claims require an existing evidence path; pending claims cannot carry success evidence."
-  - "Production dependency direction and the no-database choice are executable Cargo metadata policy."
+  - "Production dependency direction, abstract core boundaries, and the no-database choice are executable architecture policy."
 requirements-completed: [ARCH-02, ARCH-04, COMP-04]
 coverage:
   - id: D1
@@ -42,11 +42,11 @@ coverage:
         status: pass
     human_judgment: false
   - id: D2
-    description: "Real Cargo metadata passes while synthetic forbidden core, harness, cycle, and database cases fail with exact diagnostics."
+    description: "Real Cargo metadata and core source pass while synthetic adapter, HTTP, Markdown-path, harness, cycle, and database cases fail with exact diagnostics."
     requirement: ARCH-02
     verification:
       - kind: integration
-        ref: "cargo test -p minimax-compat-harness --locked architecture (5/5)"
+        ref: "cargo test -p minimax-compat-harness --locked architecture (7/7)"
         status: pass
     human_judgment: false
   - id: D3
@@ -80,7 +80,7 @@ status: complete
 ## Accomplishments
 
 - Built strict command, Provider, and baseline manifest loading plus a sorted golden report with one status for every command, alias, Provider profile, and protocol; it remains byte-identical across runs.
-- Turned crate boundaries into Cargo metadata policy with exact negative tests for core-to-adapter, production-to-harness, cycles, and database packages.
+- Turned crate boundaries into Cargo/source policy with exact negative tests for core-to-adapter, core HTTP/Markdown paths, production-to-harness, cycles, and database packages.
 - Added a dependency-free `minimax-compat-harness verify` command and made both Windows and Linux CI run pinned fmt, Clippy, workspace tests, and contract verification without credentials.
 
 ## Task Commits
@@ -93,7 +93,7 @@ status: complete
 
 - `crates/compat-harness/src/manifest.rs` - Loads strict schema-versioned compatibility manifests from a repository-root path independent of the current directory.
 - `crates/compat-harness/src/report.rs` - Sorts, serializes, and validates evidence-backed parity claims.
-- `crates/compat-harness/src/architecture.rs` - Converts locked Cargo metadata into a validated dependency graph.
+- `crates/compat-harness/src/architecture.rs` - Converts locked Cargo metadata into a validated dependency graph and keeps core free of HTTP/Markdown-path details.
 - `crates/compat-harness/src/main.rs` - Exposes `verify` and `report --format json` without a CLI framework.
 - `crates/compat-harness/tests/compat_report.rs` - Covers golden reports and positive/negative architecture cases.
 - `fixtures/compat/report.expected.json` - Locks the initial deterministic Rust parity report.
@@ -148,7 +148,7 @@ None - verification is fixture-only and CI installs the pinned base toolchain th
 ## Self-Check: PASSED
 
 - All three task commits and all claimed files exist; the worktree is clean before planning metadata updates.
-- Eight harness tests, four core tests, five protocol tests, and two Provider tests pass under the official Rust 1.97.0 local gnullvm toolchain.
+- Ten harness tests, four core tests, five protocol tests, and two Provider tests pass under the official Rust 1.97.0 local gnullvm toolchain.
 - Workspace fmt and Clippy with `-D warnings`, locked workspace tests, two aggregate verification runs, and byte-identical 48-entry, 7,159-byte reports pass.
 - `npm run check`, `npm run build`, all 432 TypeScript tests, and `git diff --check` pass; `package.json` still launches `dist/cli.js`.
 

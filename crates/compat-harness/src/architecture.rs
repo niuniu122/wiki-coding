@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::ffi::OsString;
 use std::fmt;
+use std::fs;
 use std::path::Path;
 use std::process::Command;
 
@@ -27,6 +28,7 @@ pub struct ArchitectureGraph {
 pub enum ArchitectureError {
     MetadataCommand,
     MetadataParse,
+    CoreSourceRead,
     Violation(String),
 }
 
@@ -35,6 +37,7 @@ impl fmt::Display for ArchitectureError {
         match self {
             Self::MetadataCommand => formatter.write_str("cargo metadata command failed"),
             Self::MetadataParse => formatter.write_str("cargo metadata returned invalid JSON"),
+            Self::CoreSourceRead => formatter.write_str("cannot read minimax-core source boundary"),
             Self::Violation(message) => formatter.write_str(message),
         }
     }
@@ -90,6 +93,7 @@ pub fn load_cargo_architecture(root: &Path) -> Result<ArchitectureGraph, Archite
 
 pub fn validate_architecture(graph: &ArchitectureGraph) -> Result<(), ArchitectureError> {
     validate_database_denylist(graph)?;
+    validate_core_dependencies(graph)?;
 
     let local_names = graph
         .packages
@@ -127,6 +131,45 @@ pub fn validate_architecture(graph: &ArchitectureGraph) -> Result<(), Architectu
                 )));
             }
         }
+    }
+    Ok(())
+}
+
+pub fn validate_core_source_boundary(root: &Path) -> Result<(), ArchitectureError> {
+    let source_root = root.join("crates/core/src");
+    for entry in fs::read_dir(source_root).map_err(|_| ArchitectureError::CoreSourceRead)? {
+        let entry = entry.map_err(|_| ArchitectureError::CoreSourceRead)?;
+        if entry
+            .path()
+            .extension()
+            .and_then(|extension| extension.to_str())
+            != Some("rs")
+        {
+            continue;
+        }
+        let source =
+            fs::read_to_string(entry.path()).map_err(|_| ArchitectureError::CoreSourceRead)?;
+        validate_core_source_text(&entry.file_name().to_string_lossy(), &source)?;
+    }
+    Ok(())
+}
+
+pub fn validate_core_source_text(file: &str, source: &str) -> Result<(), ArchitectureError> {
+    const DENIED: [&str; 9] = [
+        "std::path",
+        "PathBuf",
+        "Path::",
+        ".md",
+        "minimax_vault",
+        "minimax_tools",
+        "reqwest",
+        "hyper::",
+        "http::",
+    ];
+    if let Some(pattern) = DENIED.iter().find(|pattern| source.contains(*pattern)) {
+        return Err(ArchitectureError::Violation(format!(
+            "core source boundary denied: {file} contains {pattern}"
+        )));
     }
     Ok(())
 }
@@ -180,6 +223,24 @@ fn dependency_allowed(package: &str, dependency: &str) -> bool {
         COMPAT_HARNESS => dependency != CLI && dependency != COMPAT_HARNESS,
         _ => false,
     }
+}
+
+fn validate_core_dependencies(graph: &ArchitectureGraph) -> Result<(), ArchitectureError> {
+    const ALLOWED: [&str; 3] = [PROTOCOL, "serde", "serde_json"];
+    if let Some(core) = graph
+        .packages
+        .iter()
+        .find(|package| package.local && package.name == CORE)
+    {
+        for dependency in &core.dependencies {
+            if !ALLOWED.contains(&dependency.as_str()) {
+                return Err(ArchitectureError::Violation(format!(
+                    "core dependency denied: {CORE} -> {dependency}"
+                )));
+            }
+        }
+    }
+    Ok(())
 }
 
 fn validate_database_denylist(graph: &ArchitectureGraph) -> Result<(), ArchitectureError> {
