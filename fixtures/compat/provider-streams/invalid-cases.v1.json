@@ -1,0 +1,69 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {
+      "case_id": "malformed_json",
+      "protocol": "responses",
+      "raw": [
+        "{broken SECRET_PROVIDER_DETAIL}"
+      ],
+      "expected_error": {
+        "code": "malformed_json",
+        "category": "protocol",
+        "forbidden_fragments": [
+          "SECRET_PROVIDER_DETAIL"
+        ]
+      }
+    },
+    {
+      "case_id": "missing_call_id",
+      "protocol": "responses",
+      "raw": [
+        "{\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\",\"name\":\"invoke_local_capability\"}}"
+      ],
+      "expected_error": {
+        "code": "missing_call_id",
+        "category": "protocol",
+        "forbidden_fragments": []
+      }
+    },
+    {
+      "case_id": "premature_eof",
+      "protocol": "responses",
+      "raw": [
+        "{\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}"
+      ],
+      "expected_error": {
+        "code": "premature_eof",
+        "category": "protocol",
+        "forbidden_fragments": []
+      }
+    },
+    {
+      "case_id": "duplicate_terminal",
+      "protocol": "chat_completions",
+      "raw": [
+        "[DONE]",
+        "[DONE]"
+      ],
+      "expected_error": {
+        "code": "duplicate_terminal",
+        "category": "protocol",
+        "forbidden_fragments": []
+      }
+    },
+    {
+      "case_id": "event_after_terminal",
+      "protocol": "responses",
+      "raw": [
+        "{\"type\":\"response.completed\"}",
+        "{\"type\":\"response.output_text.delta\",\"delta\":\"late\"}"
+      ],
+      "expected_error": {
+        "code": "event_after_terminal",
+        "category": "protocol",
+        "forbidden_fragments": []
+      }
+    }
+  ]
+}
