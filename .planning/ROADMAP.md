@@ -6,7 +6,7 @@ The milestone proceeds as six vertical, verifiable boundaries: freeze compatibil
 
 ## Phases
 
-- [ ] **Phase 1: Contract Foundation** - Compile the Rust workspace and prove typed protocol/parity contracts offline.
+- [x] **Phase 1: Contract Foundation** - Compile the Rust workspace and prove typed protocol/parity contracts offline. (completed 2026-07-15)
 - [ ] **Phase 2: Usable Rust Agent Shell** - Run, stream, resume, compact, diagnose, and operate through TUI or headless CLI.
 - [ ] **Phase 3: Safe Tool Completion** - Execute the v1 tool set under exactly two permission modes.
 - [ ] **Phase 4: Vault and Main-Model Wiki** - Persist raw evidence and maintain recoverable Obsidian knowledge through the pinned main model.
@@ -160,7 +160,7 @@ Plans:
 
 | Phase | Plans Complete | Status | Completed |
 |-------|----------------|--------|-----------|
-| 1. Contract Foundation | 4/4 | In Progress |  |
+| 1. Contract Foundation | 4/4 | Complete    | 2026-07-15 |
 | 2. Usable Rust Agent Shell | 0/3 | Not started | - |
 | 3. Safe Tool Completion | 0/2 | Not started | - |
 | 4. Vault and Main-Model Wiki | 0/3 | Not started | - |

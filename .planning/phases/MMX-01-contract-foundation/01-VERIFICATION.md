@@ -1,27 +1,18 @@
 ---
 phase: MMX-01-contract-foundation
-verified: 2026-07-15T09:27:32Z
-status: human_needed
-score: 13/14 must-haves verified
-behavior_unverified: 1
+verified: 2026-07-15T09:48:24Z
+status: passed
+score: 14/14 must-haves verified
+behavior_unverified: 0
 overrides_applied: 0
-behavior_unverified_items:
-  - truth: "A clean supported Windows/MSVC and Linux toolchain can compile and test the workspace without changing the TypeScript product entry."
-    test: "Run the checked-in GitHub Actions CI matrix on a branch or pull request."
-    expected: "Both ubuntu-latest and windows-latest complete npm checks, pinned Rust fmt/Clippy/tests, contract verification, build, and offline evaluations successfully."
-    why_human: "The workflow is structurally tested, but push/PR authorization was not granted, so the external runners have not executed."
-human_verification:
-  - test: "Run the checked-in GitHub Actions CI matrix on a branch or pull request."
-    expected: "Both ubuntu-latest and windows-latest jobs pass all twelve allowlisted offline steps with no credentials."
-    why_human: "Local Windows uses the official gnullvm fallback because this Windows 10 20H2 host cannot install current MSVC Build Tools; only supported hosted runners can close the platform proof."
 ---
 
 # Phase 1: Contract Foundation Verification Report
 
 **Phase Goal:** Maintainers can build and test a one-way Rust workspace whose protocol and compatibility fixtures make later slices independently verifiable.
-**Verified:** 2026-07-15T09:27:32Z
-**Status:** human_needed
-**Re-verification:** No - initial verification
+**Verified:** 2026-07-15T09:48:24Z
+**Status:** passed
+**Re-verification:** Yes - hosted Windows/MSVC and Linux CI completed successfully
 
 ## Goal Achievement
 
@@ -29,9 +20,9 @@ human_verification:
 
 | # | Truth | Status | Evidence |
 |---|-------|--------|----------|
-| 1 | Supported Windows/MSVC and Linux can compile and test the unchanged product entry | PRESENT_BEHAVIOR_UNVERIFIED | `.github/workflows/ci.yml` has the exact two-OS matrix and twelve-step contract; local Windows gnullvm passes, but hosted MSVC/Linux jobs have not run without push/PR authorization. |
+| 1 | Supported Windows/MSVC and Linux can compile and test the unchanged product entry | VERIFIED | GitHub Actions run `29405715580` passed both `windows-latest` and `ubuntu-latest`; every allowlisted offline npm/Rust/build/evaluation step completed successfully. |
 | 2 | Responses and Chat Completions converge on one typed contract and reject illegal terminal sequences | VERIFIED | Provider fixtures pass 2/2, core sequence tests pass 4/4, and protocol round trips pass 5/5. |
-| 3 | The parity report labels every public command, alias, Provider profile, and protocol | VERIFIED | The golden report contains 48 unique expanded entries; 3/3 report tests prove completeness, evidence rules, and byte identity. |
+| 3 | The parity report labels every public command, alias, Provider profile, and protocol | VERIFIED | The golden report contains 48 unique expanded entries; 4/4 report tests prove completeness, evidence rules, byte identity, and cross-platform checkout handling. |
 | 4 | Dependency checks fail if core imports an adapter | VERIFIED | Exact negative tests reject core-to-vault and production-to-harness edges. |
 | 5 | Every locked command and alias has one machine-readable inventory entry | VERIFIED | `commands.v1.json` contains 17 canonical commands plus `/quit`; TypeScript uniqueness tests and strict Rust loading pass. |
 | 6 | Provider profiles are inventoried without credential values | VERIFIED | `providers.v1.json` contains official, Hashsight, and custom classes; secret-field/value tests pass. |
@@ -44,7 +35,7 @@ human_verification:
 | 13 | Architecture gates reject core HTTP/Markdown paths, cycles, harness edges, and databases | VERIFIED | Seven architecture tests cover real metadata/source plus every required synthetic failure. |
 | 14 | One offline command verifies manifests, Provider fixtures, architecture, and deterministic reports | VERIFIED | `npm run verify:rust-contracts` succeeds twice; `report --format json` is byte-identical across runs. |
 
-**Score:** 13/14 truths verified (1 present, behavior-unverified)
+**Score:** 14/14 truths verified
 
 ### Required Artifacts
 
@@ -63,7 +54,7 @@ human_verification:
 | `crates/compat-harness/src/architecture.rs` | Architecture enforcement | VERIFIED | Cargo graph, core dependency/source, cycle, harness, and database policy. |
 | `fixtures/compat/report.expected.json` | Golden report | VERIFIED | Exact second-run equality test passes. |
 | `crates/compat-harness/src/main.rs` | Aggregate verifier CLI | VERIFIED | `verify` and `report --format json` execute successfully. |
-| `.github/workflows/ci.yml` | Windows/Linux offline matrix | VERIFIED (structure) | Exact structural validator passes 20/20; external execution remains the human item. |
+| `.github/workflows/ci.yml` | Windows/Linux offline matrix | VERIFIED | Exact structural validator passes 20/20, and hosted run `29405715580` passed both matrix jobs. |
 
 All 16 artifacts declared across the four plans passed `verify.artifacts`; the table groups related workspace files for readability.
 
@@ -77,7 +68,7 @@ All 16 artifacts declared across the four plans passed `verify.artifacts`; the t
 | Compat manifest loader | baseline status | repository-root `baseline-status.v1.json` load | WIRED | Main and tests call loader before report generation. |
 | Architecture verifier | Cargo workspace | `cargo metadata --locked --format-version 1` | WIRED | Real metadata test and aggregate CLI both execute it. |
 | npm aggregate script | compat binary | `cargo run -p minimax-compat-harness --locked -- verify` | WIRED | Local aggregate command exits 0. |
-| CI matrix | npm/Rust gates | twelve exact allowlisted steps | WIRED | Structural validator rejects missing, reordered, credentialed, or extra steps. |
+| CI matrix | npm/Rust gates | twelve exact allowlisted steps | WIRED | Structural validator rejects missing, reordered, credentialed, or extra steps; hosted Windows and Linux jobs both passed. |
 
 ### Data-Flow Trace (Level 4)
 
@@ -87,9 +78,9 @@ Not applicable: Phase 1 adds deterministic fixtures, libraries, and build gates;
 
 | Behavior | Command | Result | Status |
 |----------|---------|--------|--------|
-| Typed event/terminal behavior | `cargo test --workspace --locked` | 21 Rust tests passed | PASS |
+| Typed event/terminal behavior | `cargo test --workspace --locked` | 22 Rust tests passed | PASS |
 | Strict architecture failures | `cargo test -p minimax-compat-harness --locked architecture` | 7/7 passed | PASS |
-| Individual parity inventory | `cargo test -p minimax-compat-harness --locked compat_report` | 3/3 passed, 48 entries | PASS |
+| Individual parity inventory | `cargo test -p minimax-compat-harness --locked compat_report` | 4/4 passed, including Windows CRLF regression; 48 entries | PASS |
 | Aggregate contract verifier | `npm run verify:rust-contracts` (twice) | Both exits 0 | PASS |
 | Deterministic report | `report --format json` (twice) | 7,159 UTF-8 bytes each, byte-identical | PASS |
 | TypeScript regression | `npm test` | 432/432 passed | PASS |
@@ -103,7 +94,7 @@ No standalone probe scripts are declared for this phase; the executable compatib
 
 | Requirement | Source Plan | Status | Evidence |
 |-------------|-------------|--------|----------|
-| ARCH-01 | 01-02, 01-04 | HUMAN CHECK PENDING | Workspace and CI matrix exist; hosted Windows/MSVC and Linux execution awaits authorization. |
+| ARCH-01 | 01-02, 01-04 | VERIFIED | Hosted GitHub Actions run `29405715580` passed all offline gates on Windows/MSVC and Linux. |
 | ARCH-02 | 01-02, 01-04 | VERIFIED | Real metadata/source pass and seven negative architecture cases pass. |
 | ARCH-03 | 01-03 | VERIFIED | Strict typed event schema and exactly-one-terminal reducer tests. |
 | ARCH-04 | 01-03, 01-04 | VERIFIED | Fixed clock/IDs, offline fixtures, and byte-identical reports. |
@@ -120,21 +111,21 @@ No standalone probe scripts are declared for this phase; the executable compatib
 
 No TODO, FIXME, `todo!`, `unimplemented!`, database package, live Provider call, credential injection, raw reasoning retention, or product-entry change was found.
 
-### Human Verification Required
+### Hosted Verification Result
 
 #### 1. Hosted Windows/MSVC and Linux CI
 
-**Test:** Run the checked-in GitHub Actions workflow on a branch or pull request.
+**Test:** Run the checked-in GitHub Actions workflow on branch `codex/rust-rewrite`.
 
 **Expected:** Both matrix jobs pass all twelve offline steps: npm install/check/test, pinned Rust install/fmt/Clippy/tests/contracts, build, and both offline evaluations.
 
-**Why human:** Push/PR was explicitly outside current authorization, and this local Windows release cannot host current MSVC Build Tools. Structure is verified, but external runner behavior has not executed.
+**Result:** PASS. Run `29405715580` completed successfully: Ubuntu in 42 seconds and Windows in 1 minute 33 seconds. The first Windows run exposed only a CRLF-vs-LF golden-fixture comparison; commit `18244fc` normalized checkout newlines in the test without changing production output, and the rerun passed.
 
 ### Gaps Summary
 
-No implementation gap was found. One external platform run is required before Phase 1 can be marked formally complete.
+No implementation or verification gap remains for Phase 1.
 
 ---
 
-_Verified: 2026-07-15T09:27:32Z_
+_Verified: 2026-07-15T09:48:24Z_
 _Verifier: Codex inline gsd-verifier fallback (subagents not authorized)_
