@@ -22,7 +22,8 @@ pub use runtime::{
 pub use session::{
     CompactionId, CompactionPointer, CompactionRecentTurn, CompactionRecord, JournalRecord,
     ModelBinding, RecordId, RecoveryRecord, SessionRecord, SessionRecordV1, SessionStatus,
-    TraceCode, TraceEntry, TurnRecord, TurnStatus, VisibleMessage, parse_session_record_v1,
+    ToolInvocationRecord, TraceCode, TraceEntry, TurnRecord, TurnStatus, VisibleMessage,
+    parse_session_record_v1,
 };
 pub use tool::{
     MAX_TOOL_ARGUMENT_BYTES, MAX_TOOL_CODE_BYTES, MAX_TOOL_DESCRIPTION_BYTES, MAX_TOOL_NAME_BYTES,

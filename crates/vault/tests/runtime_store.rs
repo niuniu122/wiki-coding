@@ -7,7 +7,9 @@ use minimax_core::{
 };
 use minimax_protocol::{
     JournalRecord, ModelBinding, ModelId, ProviderId, ProviderProtocolKind, RecordId, RequestId,
-    SessionId, SessionRecordV1, TraceCode, TurnId, TurnStatus,
+    SchemaVersion, SessionId, SessionRecordV1, ToolCall, ToolCallId, ToolDecision,
+    ToolDecisionKind, ToolEffect, ToolInvocation, ToolResult, ToolTerminalStatus, TraceCode,
+    TurnId, TurnStatus,
 };
 use minimax_vault::{RuntimeStore, RuntimeStoreError};
 use tempfile::TempDir;
@@ -64,6 +66,79 @@ fn start_record(machine: &mut SessionMachine, suffix: &str) -> SessionRecordV1 {
 
 fn root() -> TempDir {
     tempfile::tempdir().expect("temporary project")
+}
+
+fn invocation(call_id: &str) -> ToolInvocation {
+    ToolInvocation::new(
+        ToolCall::new(
+            ToolCallId::new(call_id).expect("call"),
+            "read_file",
+            r#"{"path":"README.md"}"#,
+        )
+        .expect("tool call"),
+        ToolEffect::Read,
+    )
+    .expect("invocation")
+}
+
+fn decision(call_id: &str) -> ToolDecision {
+    ToolDecision {
+        schema_version: SchemaVersion,
+        call_id: ToolCallId::new(call_id).expect("call"),
+        decision: ToolDecisionKind::Approved,
+        code: "approved".to_owned(),
+    }
+}
+
+fn append_abandoned_tool_prefix(
+    project: &TempDir,
+    suffix: &str,
+    started: bool,
+) -> std::path::PathBuf {
+    let mut policy = SessionMachine::new();
+    let create = create_record(&mut policy, suffix);
+    let start = start_record(&mut policy, suffix);
+    let turn_id = TurnId::new(format!("turn-{suffix}")).expect("turn");
+    let requested = persisted(
+        policy
+            .apply(SessionCommand::RecordToolRequested {
+                record_id: record_id(&format!("record-tool-request-{suffix}")),
+                turn_id: turn_id.clone(),
+                invocation: invocation(&format!("call-{suffix}")),
+                now_unix_ms: 3,
+            })
+            .expect("request"),
+    );
+    let approved = persisted(
+        policy
+            .apply(SessionCommand::RecordToolDecision {
+                record_id: record_id(&format!("record-tool-decision-{suffix}")),
+                turn_id: turn_id.clone(),
+                decision: decision(&format!("call-{suffix}")),
+                now_unix_ms: 4,
+            })
+            .expect("decision"),
+    );
+    let started_record = started.then(|| {
+        persisted(
+            policy
+                .apply(SessionCommand::RecordToolStarted {
+                    record_id: record_id(&format!("record-tool-started-{suffix}")),
+                    turn_id,
+                    call_id: ToolCallId::new(format!("call-{suffix}")).expect("call"),
+                    now_unix_ms: 5,
+                })
+                .expect("started"),
+        )
+    });
+    let mut store = RuntimeStore::open(project.path()).expect("open");
+    for record in [create, start, requested, approved] {
+        store.append(record).expect("append prefix");
+    }
+    if let Some(record) = started_record {
+        store.append(record).expect("append started");
+    }
+    store.journal_path().to_path_buf()
 }
 
 #[test]
@@ -292,4 +367,212 @@ fn safe_trace_protocol_record_never_persists_adversarial_input() {
         assert!(!persisted.contains(marker));
     }
     assert!(persisted.contains("[REDACTED]"));
+}
+
+#[test]
+fn approved_but_not_started_tool_recovers_cancelled_once_without_execution() {
+    let project = root();
+    let journal_path = append_abandoned_tool_prefix(&project, "pre-start", false);
+
+    {
+        let recovered = RuntimeStore::open(project.path()).expect("recover");
+        let turn = &recovered.machine().active_session().expect("active").turns[0];
+        let invocation = &turn.tool_invocations[0];
+        assert_eq!(invocation.started_at_unix_ms, None);
+        assert_eq!(
+            invocation
+                .terminal_result
+                .as_ref()
+                .map(|result| (result.status, result.code.as_str())),
+            Some((ToolTerminalStatus::Cancelled, "recovered_before_start"))
+        );
+        assert_eq!(turn.status, TurnStatus::Interrupted);
+    }
+
+    let once = std::fs::read(&journal_path).expect("journal after recovery");
+    RuntimeStore::open(project.path()).expect("stable reopen");
+    assert_eq!(std::fs::read(journal_path).expect("stable journal"), once);
+}
+
+#[test]
+fn requested_without_a_decision_recovers_cancelled_without_approval_or_execution() {
+    let project = root();
+    let mut policy = SessionMachine::new();
+    let create = create_record(&mut policy, "requested-only");
+    let start = start_record(&mut policy, "requested-only");
+    let requested = persisted(
+        policy
+            .apply(SessionCommand::RecordToolRequested {
+                record_id: record_id("record-requested-only-tool"),
+                turn_id: TurnId::new("turn-requested-only").expect("turn"),
+                invocation: invocation("call-requested-only"),
+                now_unix_ms: 3,
+            })
+            .expect("request"),
+    );
+    {
+        let mut store = RuntimeStore::open(project.path()).expect("open");
+        for record in [create, start, requested] {
+            store.append(record).expect("append");
+        }
+    }
+
+    let recovered = RuntimeStore::open(project.path()).expect("recover");
+    let invocation =
+        &recovered.machine().active_session().expect("active").turns[0].tool_invocations[0];
+    assert!(invocation.decision.is_none());
+    assert!(invocation.started_at_unix_ms.is_none());
+    assert_eq!(
+        invocation
+            .terminal_result
+            .as_ref()
+            .map(|result| result.status),
+        Some(ToolTerminalStatus::Cancelled)
+    );
+}
+
+#[test]
+fn started_tool_recovers_indeterminate_once_and_never_claims_success() {
+    let project = root();
+    let journal_path = append_abandoned_tool_prefix(&project, "started", true);
+
+    {
+        let recovered = RuntimeStore::open(project.path()).expect("recover");
+        let invocation =
+            &recovered.machine().active_session().expect("active").turns[0].tool_invocations[0];
+        assert_eq!(invocation.started_at_unix_ms, Some(5));
+        assert_eq!(
+            invocation
+                .terminal_result
+                .as_ref()
+                .map(|result| (result.status, result.code.as_str())),
+            Some((ToolTerminalStatus::Indeterminate, "effect_unknown"))
+        );
+    }
+
+    let once = std::fs::read(&journal_path).expect("journal after recovery");
+    RuntimeStore::open(project.path()).expect("stable reopen");
+    assert_eq!(std::fs::read(journal_path).expect("stable journal"), once);
+}
+
+#[test]
+fn duplicate_record_id_is_idempotent_only_for_identical_payload() {
+    let project = root();
+    let mut policy = SessionMachine::new();
+    let original = create_record(&mut policy, "duplicate-payload");
+    let mut store = RuntimeStore::open(project.path()).expect("open");
+    store.append(original.clone()).expect("append original");
+    store.append(original.clone()).expect("identical duplicate");
+
+    let conflicting = SessionRecordV1::new(
+        original.record_id,
+        JournalRecord::TraceStored {
+            session_id: SessionId::new("session-duplicate-payload").expect("session"),
+            entry: minimax_protocol::TraceEntry {
+                recorded_at_unix_ms: 9,
+                code: TraceCode::CommandRejected,
+                facts: BTreeMap::new(),
+            },
+        },
+    );
+    assert_eq!(store.append(conflicting), Err(RuntimeStoreError::Recovery));
+}
+
+#[test]
+fn journal_load_accepts_identical_record_replay_and_rejects_conflicting_payload() {
+    let identical_project = root();
+    let mut policy = SessionMachine::new();
+    let original = create_record(&mut policy, "physical-replay");
+    let journal_path = {
+        let mut store = RuntimeStore::open(identical_project.path()).expect("open");
+        store.append(original.clone()).expect("append");
+        store.journal_path().to_path_buf()
+    };
+    let mut bytes = serde_json::to_vec(&original).expect("serialize replay");
+    bytes.push(b'\n');
+    OpenOptions::new()
+        .append(true)
+        .open(&journal_path)
+        .expect("open journal")
+        .write_all(&bytes)
+        .expect("append replay");
+    RuntimeStore::open(identical_project.path()).expect("identical replay is idempotent");
+
+    let conflicting_project = root();
+    let mut policy = SessionMachine::new();
+    let original = create_record(&mut policy, "physical-conflict");
+    let journal_path = {
+        let mut store = RuntimeStore::open(conflicting_project.path()).expect("open");
+        store.append(original.clone()).expect("append");
+        store.journal_path().to_path_buf()
+    };
+    let conflicting = SessionRecordV1::new(
+        original.record_id,
+        JournalRecord::TraceStored {
+            session_id: SessionId::new("session-physical-conflict").expect("session"),
+            entry: minimax_protocol::TraceEntry {
+                recorded_at_unix_ms: 9,
+                code: TraceCode::CommandRejected,
+                facts: BTreeMap::new(),
+            },
+        },
+    );
+    let mut bytes = serde_json::to_vec(&conflicting).expect("serialize conflict");
+    bytes.push(b'\n');
+    OpenOptions::new()
+        .append(true)
+        .open(&journal_path)
+        .expect("open journal")
+        .write_all(&bytes)
+        .expect("append conflict");
+    assert!(matches!(
+        RuntimeStore::open(conflicting_project.path()),
+        Err(RuntimeStoreError::Recovery)
+    ));
+}
+
+#[test]
+fn terminal_tool_record_can_be_replayed_without_duplicate_journal_bytes() {
+    let project = root();
+    let mut policy = SessionMachine::new();
+    let create = create_record(&mut policy, "terminal-replay");
+    let start = start_record(&mut policy, "terminal-replay");
+    let turn_id = TurnId::new("turn-terminal-replay").expect("turn");
+    let requested = persisted(
+        policy
+            .apply(SessionCommand::RecordToolRequested {
+                record_id: record_id("record-terminal-replay-request"),
+                turn_id: turn_id.clone(),
+                invocation: invocation("call-terminal-replay"),
+                now_unix_ms: 3,
+            })
+            .expect("request"),
+    );
+    let terminal = persisted(
+        policy
+            .apply(SessionCommand::RecordToolTerminal {
+                record_id: record_id("record-terminal-replay-result"),
+                turn_id,
+                result: ToolResult {
+                    schema_version: SchemaVersion,
+                    call_id: ToolCallId::new("call-terminal-replay").expect("call"),
+                    tool_name: "read_file".to_owned(),
+                    status: ToolTerminalStatus::Failed,
+                    code: "preflight_denied".to_owned(),
+                    output: None,
+                },
+                now_unix_ms: 4,
+            })
+            .expect("terminal"),
+    );
+    let mut store = RuntimeStore::open(project.path()).expect("open");
+    for record in [create, start, requested, terminal.clone()] {
+        store.append(record).expect("append");
+    }
+    let before = std::fs::read(store.journal_path()).expect("before replay");
+    store.append(terminal).expect("identical replay");
+    assert_eq!(
+        std::fs::read(store.journal_path()).expect("after replay"),
+        before
+    );
 }

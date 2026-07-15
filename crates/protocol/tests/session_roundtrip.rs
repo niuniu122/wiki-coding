@@ -3,9 +3,10 @@ use std::collections::BTreeMap;
 use minimax_protocol::{
     CompactionId, CompactionRecentTurn, CompactionRecord, JournalRecord, MessageRole, ModelBinding,
     ModelId, ProviderId, ProviderProtocolKind, RecordId, RequestId, RuntimeErrorCode,
-    RuntimeFailure, RuntimeTerminalOutcome, SessionId, SessionRecord, SessionRecordV1,
-    SessionStatus, TraceCode, TraceEntry, TurnId, TurnReceipt, TurnRecord, TurnStatus,
-    VisibleMessage, parse_session_record_v1,
+    RuntimeFailure, RuntimeTerminalOutcome, SchemaVersion, SessionId, SessionRecord,
+    SessionRecordV1, SessionStatus, ToolCall, ToolCallId, ToolDecision, ToolDecisionKind,
+    ToolEffect, ToolInvocation, ToolResult, ToolTerminalStatus, TraceCode, TraceEntry, TurnId,
+    TurnReceipt, TurnRecord, TurnStatus, VisibleMessage, parse_session_record_v1,
 };
 
 fn binding() -> ModelBinding {
@@ -40,7 +41,21 @@ fn turn() -> TurnRecord {
         assistant_message: None,
         usage: None,
         receipt: None,
+        tool_invocations: Vec::new(),
     }
+}
+
+fn invocation() -> ToolInvocation {
+    ToolInvocation::new(
+        ToolCall::new(
+            ToolCallId::new("call-1").expect("call"),
+            "read_file",
+            r#"{"path":"README.md"}"#,
+        )
+        .expect("tool call"),
+        ToolEffect::Read,
+    )
+    .expect("invocation")
 }
 
 fn round_trip(record: JournalRecord, suffix: &str) {
@@ -112,6 +127,54 @@ fn every_session_record_variant_round_trips_strictly() {
             completed_at_unix_ms: 12,
         },
         "terminal",
+    );
+    round_trip(
+        JournalRecord::ToolRequested {
+            session_id: session_id(),
+            turn_id: turn_id(),
+            invocation: invocation(),
+            requested_at_unix_ms: 12,
+        },
+        "tool-requested",
+    );
+    round_trip(
+        JournalRecord::ToolDecisionRecorded {
+            session_id: session_id(),
+            turn_id: turn_id(),
+            decision: ToolDecision {
+                schema_version: SchemaVersion,
+                call_id: ToolCallId::new("call-1").expect("call"),
+                decision: ToolDecisionKind::Approved,
+                code: "approved".to_owned(),
+            },
+            recorded_at_unix_ms: 13,
+        },
+        "tool-decision",
+    );
+    round_trip(
+        JournalRecord::ToolStarted {
+            session_id: session_id(),
+            turn_id: turn_id(),
+            call_id: ToolCallId::new("call-1").expect("call"),
+            started_at_unix_ms: 14,
+        },
+        "tool-started",
+    );
+    round_trip(
+        JournalRecord::ToolTerminal {
+            session_id: session_id(),
+            turn_id: turn_id(),
+            result: ToolResult {
+                schema_version: SchemaVersion,
+                call_id: ToolCallId::new("call-1").expect("call"),
+                tool_name: "read_file".to_owned(),
+                status: ToolTerminalStatus::Succeeded,
+                code: "ok".to_owned(),
+                output: Some("contents".to_owned()),
+            },
+            completed_at_unix_ms: 15,
+        },
+        "tool-terminal",
     );
     round_trip(
         JournalRecord::RecoveryApplied {

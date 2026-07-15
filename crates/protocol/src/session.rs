@@ -5,7 +5,8 @@ use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{
     MessageRole, ModelId, ProviderId, ProviderProtocolKind, RequestId, RuntimeErrorCode,
-    RuntimeTerminalOutcome, SchemaVersion, SessionId, TurnId, TurnReceipt, Usage,
+    RuntimeTerminalOutcome, SchemaVersion, SessionId, ToolCallId, ToolDecision, ToolInvocation,
+    ToolResult, TurnId, TurnReceipt, Usage,
 };
 
 macro_rules! session_id_type {
@@ -103,6 +104,25 @@ pub struct TurnRecord {
     pub usage: Option<Usage>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub receipt: Option<TurnReceipt>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tool_invocations: Vec<ToolInvocationRecord>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ToolInvocationRecord {
+    pub invocation: ToolInvocation,
+    pub requested_at_unix_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision: Option<ToolDecision>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub decision_at_unix_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at_unix_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_result: Option<ToolResult>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terminal_at_unix_ms: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -193,6 +213,30 @@ pub enum JournalRecord {
         receipt: TurnReceipt,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         assistant_message: Option<VisibleMessage>,
+        completed_at_unix_ms: u64,
+    },
+    ToolRequested {
+        session_id: SessionId,
+        turn_id: TurnId,
+        invocation: ToolInvocation,
+        requested_at_unix_ms: u64,
+    },
+    ToolDecisionRecorded {
+        session_id: SessionId,
+        turn_id: TurnId,
+        decision: ToolDecision,
+        recorded_at_unix_ms: u64,
+    },
+    ToolStarted {
+        session_id: SessionId,
+        turn_id: TurnId,
+        call_id: ToolCallId,
+        started_at_unix_ms: u64,
+    },
+    ToolTerminal {
+        session_id: SessionId,
+        turn_id: TurnId,
+        result: ToolResult,
         completed_at_unix_ms: u64,
     },
     RecoveryApplied {

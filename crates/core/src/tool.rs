@@ -35,6 +35,9 @@ pub enum InvocationInput {
     PreflightDenied {
         result: ToolResult,
     },
+    PreStartFailed {
+        result: ToolResult,
+    },
     Decision {
         decision: ToolDecision,
         permission_mode: PermissionMode,
@@ -123,6 +126,9 @@ impl InvocationMachine {
             (InvocationState::Requested, InvocationInput::PreflightDenied { result }) => {
                 self.terminate_preflight(result)
             }
+            (InvocationState::Approved { .. }, InvocationInput::PreStartFailed { result }) => {
+                self.terminate_preflight(result)
+            }
             (
                 InvocationState::AwaitingDecision,
                 InvocationInput::Decision {
@@ -180,7 +186,7 @@ impl InvocationMachine {
             schema_version: SchemaVersion,
             call_id: self.invocation.call.call_id.clone(),
             decision: ToolDecisionKind::Approved,
-            code: "full_access_approved".to_owned(),
+            code: "policy_approved".to_owned(),
         };
         self.record_decision(decision, PermissionMode::FullAccess)
     }

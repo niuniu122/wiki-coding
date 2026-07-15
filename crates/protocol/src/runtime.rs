@@ -270,6 +270,7 @@ pub enum RuntimeErrorCode {
     WorkspaceBusy,
     Recovery,
     ToolUnavailable,
+    AgentBudgetExhausted,
 }
 
 impl fmt::Display for RuntimeErrorCode {

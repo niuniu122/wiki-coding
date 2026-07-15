@@ -300,3 +300,34 @@ fn registry_and_all_four_budgets_fail_before_an_extra_effect() {
         ToolTerminalStatus::Failed
     );
 }
+
+#[test]
+fn a_pre_start_budget_failure_is_terminal_without_started_or_execute_effects() {
+    let (mut machine, _) = InvocationMachine::request(invocation("call-budget"));
+    machine
+        .apply(InvocationInput::PreflightAllowed {
+            permission_mode: PermissionMode::FullAccess,
+        })
+        .expect("approved");
+    let failure = result(
+        "call-budget",
+        ToolTerminalStatus::Failed,
+        "tool_call_budget_exhausted",
+    );
+    let effects = machine
+        .apply(InvocationInput::PreStartFailed {
+            result: failure.clone(),
+        })
+        .expect("budget terminal");
+    assert_eq!(
+        effects,
+        vec![
+            InvocationEffect::PersistTerminal(failure.clone()),
+            InvocationEffect::PublishTerminal(failure),
+        ]
+    );
+    assert!(effects.iter().all(|effect| !matches!(
+        effect,
+        InvocationEffect::PersistStarted(_) | InvocationEffect::Execute(_)
+    )));
+}

@@ -3,7 +3,7 @@ mod journal;
 mod lease;
 mod recovery;
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -13,7 +13,7 @@ use minimax_protocol::{RecordId, RuntimeErrorCode, SessionRecordV1};
 use self::index::RuntimeIndex;
 use self::journal::{JournalLoad, RuntimeJournal};
 use self::lease::WorkspaceLease;
-use self::recovery::recover_abandoned_turns;
+use self::recovery::{recover_abandoned_invocations, recover_abandoned_turns};
 
 pub const RUNTIME_DIRECTORY: &str = ".minimax/runtime/v1";
 
@@ -50,7 +50,7 @@ pub struct RuntimeStore {
     _lease: WorkspaceLease,
     journal: RuntimeJournal,
     machine: SessionMachine,
-    record_ids: BTreeSet<RecordId>,
+    records_by_id: BTreeMap<RecordId, SessionRecordV1>,
     current_index: PathBuf,
 }
 
@@ -61,34 +61,47 @@ impl RuntimeStore {
         let lease = WorkspaceLease::acquire(&runtime_dir)?;
         let mut journal = RuntimeJournal::open(&runtime_dir)?;
         let JournalLoad { records, .. } = journal.load()?;
+        let mut records_by_id = records
+            .iter()
+            .cloned()
+            .map(|record| (record.record_id.clone(), record))
+            .collect::<BTreeMap<_, _>>();
         let mut machine =
             SessionMachine::replay(records).map_err(|_| RuntimeStoreError::Recovery)?;
 
+        for record in recover_abandoned_invocations(&mut machine)? {
+            journal.append(&record)?;
+            records_by_id.insert(record.record_id.clone(), record);
+        }
         for record in recover_abandoned_turns(&mut machine)? {
             journal.append(&record)?;
+            records_by_id.insert(record.record_id.clone(), record);
         }
 
-        let record_ids = journal.record_ids().clone();
         let current_index = RuntimeIndex::ensure(&runtime_dir, &journal, &machine)?;
         Ok(Self {
             runtime_dir,
             _lease: lease,
             journal,
             machine,
-            record_ids,
+            records_by_id,
             current_index,
         })
     }
 
     pub fn append(&mut self, record: SessionRecordV1) -> Result<(), RuntimeStoreError> {
-        if self.record_ids.contains(&record.record_id) {
-            return Ok(());
+        if let Some(existing) = self.records_by_id.get(&record.record_id) {
+            return if existing == &record {
+                Ok(())
+            } else {
+                Err(RuntimeStoreError::Recovery)
+            };
         }
         let mut next = self.machine.clone();
         next.apply(SessionCommand::Replay(record.clone()))
             .map_err(|_| RuntimeStoreError::Recovery)?;
         self.journal.append(&record)?;
-        self.record_ids.insert(record.record_id.clone());
+        self.records_by_id.insert(record.record_id.clone(), record);
         self.machine = next;
         self.current_index = RuntimeIndex::ensure(&self.runtime_dir, &self.journal, &self.machine)?;
         Ok(())

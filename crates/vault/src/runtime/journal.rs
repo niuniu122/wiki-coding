@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{File, OpenOptions};
 use std::io::{BufRead, BufReader, Seek, SeekFrom, Write};
 use std::path::{Path, PathBuf};
@@ -50,7 +50,7 @@ impl RuntimeJournal {
             .map_err(|_| RuntimeStoreError::Io)?;
         let mut reader = BufReader::new(&self.file);
         let mut records = Vec::new();
-        let mut record_ids = BTreeSet::new();
+        let mut records_by_id = BTreeMap::new();
         let mut complete_len = 0_u64;
         let mut hash = FNV_OFFSET;
 
@@ -74,8 +74,12 @@ impl RuntimeJournal {
             let json = std::str::from_utf8(&line[..line.len() - 1])
                 .map_err(|_| RuntimeStoreError::Recovery)?;
             let record = parse_session_record_v1(json).map_err(|_| RuntimeStoreError::Recovery)?;
-            if !record_ids.insert(record.record_id.clone()) {
-                return Err(RuntimeStoreError::Recovery);
+            if let Some(existing) = records_by_id.get(&record.record_id) {
+                if existing != &record {
+                    return Err(RuntimeStoreError::Recovery);
+                }
+            } else {
+                records_by_id.insert(record.record_id.clone(), record.clone());
             }
             hash = hash_bytes(hash, &line);
             complete_len = complete_len
@@ -90,7 +94,7 @@ impl RuntimeJournal {
         self.len = complete_len;
         self.record_count = records.len() as u64;
         self.hash = hash;
-        self.record_ids = record_ids.clone();
+        self.record_ids = records_by_id.into_keys().collect();
         Ok(JournalLoad { records })
     }
 
@@ -175,11 +179,6 @@ impl RuntimeJournal {
     #[must_use]
     pub(crate) const fn hash(&self) -> u64 {
         self.hash
-    }
-
-    #[must_use]
-    pub(crate) fn record_ids(&self) -> &BTreeSet<RecordId> {
-        &self.record_ids
     }
 }
 

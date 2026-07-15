@@ -44,6 +44,7 @@ fn turn(
         }),
         usage: None,
         receipt: None,
+        tool_invocations: Vec::new(),
     }
 }
 

@@ -1,9 +1,11 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 
 use minimax_protocol::{
     JournalRecord, MessageRole, ModelBinding, ModelMessage, OutputSettings, RecordId, RequestId,
     RuntimeErrorCode, RuntimeTerminalOutcome, SessionId, SessionRecord, SessionRecordV1,
-    SessionStatus, TurnId, TurnReceipt, TurnRecord, TurnRequest, TurnStatus, VisibleMessage,
+    SessionStatus, ToolCallId, ToolDecision, ToolDecisionKind, ToolInvocation,
+    ToolInvocationRecord, ToolResult, ToolTerminalStatus, TurnId, TurnReceipt, TurnRecord,
+    TurnRequest, TurnStatus, VisibleMessage,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -62,6 +64,30 @@ pub enum SessionCommand {
         assistant_content: Option<String>,
         now_unix_ms: u64,
     },
+    RecordToolRequested {
+        record_id: RecordId,
+        turn_id: TurnId,
+        invocation: ToolInvocation,
+        now_unix_ms: u64,
+    },
+    RecordToolDecision {
+        record_id: RecordId,
+        turn_id: TurnId,
+        decision: ToolDecision,
+        now_unix_ms: u64,
+    },
+    RecordToolStarted {
+        record_id: RecordId,
+        turn_id: TurnId,
+        call_id: ToolCallId,
+        now_unix_ms: u64,
+    },
+    RecordToolTerminal {
+        record_id: RecordId,
+        turn_id: TurnId,
+        result: ToolResult,
+        now_unix_ms: u64,
+    },
     Recover {
         record_id: RecordId,
         turn_id: TurnId,
@@ -95,7 +121,7 @@ struct StartTurnInput {
 pub struct SessionMachine {
     sessions: BTreeMap<SessionId, SessionRecord>,
     active_session_id: Option<SessionId>,
-    seen_records: BTreeSet<RecordId>,
+    seen_records: BTreeMap<RecordId, SessionRecordV1>,
 }
 
 impl SessionMachine {
@@ -104,7 +130,7 @@ impl SessionMachine {
         Self {
             sessions: BTreeMap::new(),
             active_session_id: None,
-            seen_records: BTreeSet::new(),
+            seen_records: BTreeMap::new(),
         }
     }
 
@@ -285,6 +311,78 @@ impl SessionMachine {
                 );
                 self.persist(record, Some(SessionEffect::Finalized(receipt)))
             }
+            SessionCommand::RecordToolRequested {
+                record_id,
+                turn_id,
+                invocation,
+                now_unix_ms,
+            } => {
+                let session_id = self.running_session_for(&turn_id)?.session_id.clone();
+                let record = SessionRecordV1::new(
+                    record_id,
+                    JournalRecord::ToolRequested {
+                        session_id,
+                        turn_id,
+                        invocation,
+                        requested_at_unix_ms: now_unix_ms,
+                    },
+                );
+                self.persist(record, None)
+            }
+            SessionCommand::RecordToolDecision {
+                record_id,
+                turn_id,
+                decision,
+                now_unix_ms,
+            } => {
+                let session_id = self.running_session_for(&turn_id)?.session_id.clone();
+                let record = SessionRecordV1::new(
+                    record_id,
+                    JournalRecord::ToolDecisionRecorded {
+                        session_id,
+                        turn_id,
+                        decision,
+                        recorded_at_unix_ms: now_unix_ms,
+                    },
+                );
+                self.persist(record, None)
+            }
+            SessionCommand::RecordToolStarted {
+                record_id,
+                turn_id,
+                call_id,
+                now_unix_ms,
+            } => {
+                let session_id = self.running_session_for(&turn_id)?.session_id.clone();
+                let record = SessionRecordV1::new(
+                    record_id,
+                    JournalRecord::ToolStarted {
+                        session_id,
+                        turn_id,
+                        call_id,
+                        started_at_unix_ms: now_unix_ms,
+                    },
+                );
+                self.persist(record, None)
+            }
+            SessionCommand::RecordToolTerminal {
+                record_id,
+                turn_id,
+                result,
+                now_unix_ms,
+            } => {
+                let session_id = self.running_session_for(&turn_id)?.session_id.clone();
+                let record = SessionRecordV1::new(
+                    record_id,
+                    JournalRecord::ToolTerminal {
+                        session_id,
+                        turn_id,
+                        result,
+                        completed_at_unix_ms: now_unix_ms,
+                    },
+                );
+                self.persist(record, None)
+            }
             SessionCommand::Recover {
                 record_id,
                 turn_id,
@@ -304,11 +402,15 @@ impl SessionMachine {
                 self.persist(record, Some(SessionEffect::Finalized(receipt)))
             }
             SessionCommand::Replay(record) => {
-                if self.seen_records.contains(&record.record_id) {
-                    return Ok(Vec::new());
+                if let Some(existing) = self.seen_records.get(&record.record_id) {
+                    return if existing == &record {
+                        Ok(Vec::new())
+                    } else {
+                        Err(RuntimeErrorCode::Recovery)
+                    };
                 }
                 self.apply_record(&record)?;
-                self.seen_records.insert(record.record_id);
+                self.seen_records.insert(record.record_id.clone(), record);
                 Ok(Vec::new())
             }
         }
@@ -358,6 +460,7 @@ impl SessionMachine {
             assistant_message: None,
             usage: None,
             receipt: None,
+            tool_invocations: Vec::new(),
         };
         let record = SessionRecordV1::new(
             record_id,
@@ -368,7 +471,8 @@ impl SessionMachine {
             },
         );
         self.apply_record(&record)?;
-        self.seen_records.insert(record.record_id.clone());
+        self.seen_records
+            .insert(record.record_id.clone(), record.clone());
         let request = self.turn_request(&turn, &binding, max_output_tokens)?;
         Ok(vec![
             SessionEffect::Persist(record),
@@ -381,11 +485,16 @@ impl SessionMachine {
         record: SessionRecordV1,
         after: Option<SessionEffect>,
     ) -> Result<Vec<SessionEffect>, RuntimeErrorCode> {
-        if self.seen_records.contains(&record.record_id) {
-            return Ok(Vec::new());
+        if let Some(existing) = self.seen_records.get(&record.record_id) {
+            return if existing == &record {
+                Ok(Vec::new())
+            } else {
+                Err(RuntimeErrorCode::Recovery)
+            };
         }
         self.apply_record(&record)?;
-        self.seen_records.insert(record.record_id.clone());
+        self.seen_records
+            .insert(record.record_id.clone(), record.clone());
         let mut effects = vec![SessionEffect::Persist(record)];
         if let Some(effect) = after {
             effects.push(effect);
@@ -475,6 +584,112 @@ impl SessionMachine {
                 assistant_message.clone(),
                 *completed_at_unix_ms,
             )?,
+            JournalRecord::ToolRequested {
+                session_id,
+                turn_id,
+                invocation,
+                requested_at_unix_ms,
+            } => {
+                ToolInvocation::new(invocation.call.clone(), invocation.effect)
+                    .map_err(|_| RuntimeErrorCode::Recovery)?;
+                let turn = find_turn_mut(&mut self.sessions, session_id, turn_id)?;
+                if turn.status != TurnStatus::Running
+                    || turn
+                        .tool_invocations
+                        .iter()
+                        .any(|existing| existing.invocation.call.call_id == invocation.call.call_id)
+                {
+                    return Err(RuntimeErrorCode::Recovery);
+                }
+                turn.tool_invocations.push(ToolInvocationRecord {
+                    invocation: invocation.clone(),
+                    requested_at_unix_ms: *requested_at_unix_ms,
+                    decision: None,
+                    decision_at_unix_ms: None,
+                    started_at_unix_ms: None,
+                    terminal_result: None,
+                    terminal_at_unix_ms: None,
+                });
+                self.sessions
+                    .get_mut(session_id)
+                    .ok_or(RuntimeErrorCode::Recovery)?
+                    .updated_at_unix_ms = *requested_at_unix_ms;
+            }
+            JournalRecord::ToolDecisionRecorded {
+                session_id,
+                turn_id,
+                decision,
+                recorded_at_unix_ms,
+            } => {
+                let decision = decision
+                    .clone()
+                    .validate()
+                    .map_err(|_| RuntimeErrorCode::Recovery)?;
+                let invocation =
+                    find_tool_mut(&mut self.sessions, session_id, turn_id, &decision.call_id)?;
+                if invocation.decision.is_some()
+                    || invocation.started_at_unix_ms.is_some()
+                    || invocation.terminal_result.is_some()
+                {
+                    return Err(RuntimeErrorCode::Recovery);
+                }
+                invocation.decision = Some(decision);
+                invocation.decision_at_unix_ms = Some(*recorded_at_unix_ms);
+                self.sessions
+                    .get_mut(session_id)
+                    .ok_or(RuntimeErrorCode::Recovery)?
+                    .updated_at_unix_ms = *recorded_at_unix_ms;
+            }
+            JournalRecord::ToolStarted {
+                session_id,
+                turn_id,
+                call_id,
+                started_at_unix_ms,
+            } => {
+                let invocation = find_tool_mut(&mut self.sessions, session_id, turn_id, call_id)?;
+                if invocation.started_at_unix_ms.is_some()
+                    || invocation.terminal_result.is_some()
+                    || !matches!(
+                        invocation
+                            .decision
+                            .as_ref()
+                            .map(|decision| decision.decision),
+                        Some(ToolDecisionKind::Approved)
+                    )
+                {
+                    return Err(RuntimeErrorCode::Recovery);
+                }
+                invocation.started_at_unix_ms = Some(*started_at_unix_ms);
+                self.sessions
+                    .get_mut(session_id)
+                    .ok_or(RuntimeErrorCode::Recovery)?
+                    .updated_at_unix_ms = *started_at_unix_ms;
+            }
+            JournalRecord::ToolTerminal {
+                session_id,
+                turn_id,
+                result,
+                completed_at_unix_ms,
+            } => {
+                let result = result
+                    .clone()
+                    .validate()
+                    .map_err(|_| RuntimeErrorCode::Recovery)?;
+                let invocation =
+                    find_tool_mut(&mut self.sessions, session_id, turn_id, &result.call_id)?;
+                if invocation.terminal_result.is_some()
+                    || invocation.invocation.call.name != result.tool_name
+                    || !terminal_is_legal(invocation, result.status)
+                {
+                    return Err(RuntimeErrorCode::Recovery);
+                }
+                invocation.terminal_result = Some(result);
+                invocation.terminal_at_unix_ms = Some(*completed_at_unix_ms);
+                self.sessions
+                    .get_mut(session_id)
+                    .ok_or(RuntimeErrorCode::Recovery)?
+                    .updated_at_unix_ms = *completed_at_unix_ms;
+            }
             JournalRecord::RecoveryApplied {
                 session_id,
                 receipt,
@@ -548,7 +763,13 @@ impl SessionMachine {
             return Err(RuntimeErrorCode::Recovery);
         }
         let turn = find_turn_mut(&mut self.sessions, session_id, &receipt.turn_id)?;
-        if turn.status != TurnStatus::Running || turn.request_id != receipt.request_id {
+        if turn.status != TurnStatus::Running
+            || turn.request_id != receipt.request_id
+            || turn
+                .tool_invocations
+                .iter()
+                .any(|invocation| invocation.terminal_result.is_none())
+        {
             return Err(RuntimeErrorCode::Recovery);
         }
         turn.status = status_from_outcome(&receipt.outcome);
@@ -690,6 +911,41 @@ fn find_turn_mut<'a>(
                 .find(|turn| turn.turn_id == *turn_id)
         })
         .ok_or(RuntimeErrorCode::Recovery)
+}
+
+fn find_tool_mut<'a>(
+    sessions: &'a mut BTreeMap<SessionId, SessionRecord>,
+    session_id: &SessionId,
+    turn_id: &TurnId,
+    call_id: &ToolCallId,
+) -> Result<&'a mut ToolInvocationRecord, RuntimeErrorCode> {
+    let turn = find_turn_mut(sessions, session_id, turn_id)?;
+    if turn.status != TurnStatus::Running {
+        return Err(RuntimeErrorCode::Recovery);
+    }
+    turn.tool_invocations
+        .iter_mut()
+        .find(|invocation| invocation.invocation.call.call_id == *call_id)
+        .ok_or(RuntimeErrorCode::Recovery)
+}
+
+fn terminal_is_legal(invocation: &ToolInvocationRecord, status: ToolTerminalStatus) -> bool {
+    match status {
+        ToolTerminalStatus::Succeeded => invocation.started_at_unix_ms.is_some(),
+        ToolTerminalStatus::Failed => true,
+        ToolTerminalStatus::Rejected => {
+            invocation.started_at_unix_ms.is_none()
+                && !matches!(
+                    invocation
+                        .decision
+                        .as_ref()
+                        .map(|decision| decision.decision),
+                    Some(ToolDecisionKind::Approved)
+                )
+        }
+        ToolTerminalStatus::Cancelled => invocation.started_at_unix_ms.is_none(),
+        ToolTerminalStatus::Indeterminate => invocation.started_at_unix_ms.is_some(),
+    }
 }
 
 fn partial_message(content: Option<String>) -> Option<VisibleMessage> {

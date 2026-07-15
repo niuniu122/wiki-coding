@@ -145,7 +145,9 @@ export function validateCompatFixtures(fixtures: CompatFixtures): void {
       .sort(),
     [
       "duplicate_terminal",
+      "duplicate_tool_call_id",
       "event_after_terminal",
+      "invalid_tool_arguments",
       "malformed_json",
       "missing_call_id",
       "premature_eof"

@@ -1,8 +1,9 @@
 use minimax_core::{SessionCommand, SessionEffect, SessionMachine};
 use minimax_protocol::{
     ConversationItem, MessageRole, ModelBinding, ModelId, ProviderId, ProviderProtocolKind,
-    RecordId, RequestId, RuntimeTerminalOutcome, SessionId, SessionStatus, TurnId, TurnReceipt,
-    TurnStatus,
+    RecordId, RequestId, RuntimeErrorCode, RuntimeTerminalOutcome, SchemaVersion, SessionId,
+    SessionRecordV1, SessionStatus, ToolCall, ToolCallId, ToolDecision, ToolDecisionKind,
+    ToolEffect, ToolInvocation, ToolResult, ToolTerminalStatus, TurnId, TurnReceipt, TurnStatus,
 };
 
 fn record_id(value: &str) -> RecordId {
@@ -60,6 +61,43 @@ fn persisted(effects: &[SessionEffect]) -> minimax_protocol::SessionRecordV1 {
             _ => None,
         })
         .expect("persist effect")
+}
+
+fn invocation(call_id: &str) -> ToolInvocation {
+    ToolInvocation::new(
+        ToolCall::new(
+            ToolCallId::new(call_id).expect("call"),
+            "read_file",
+            r#"{"path":"README.md"}"#,
+        )
+        .expect("tool call"),
+        ToolEffect::Read,
+    )
+    .expect("invocation")
+}
+
+fn decision(call_id: &str, kind: ToolDecisionKind) -> ToolDecision {
+    ToolDecision {
+        schema_version: SchemaVersion,
+        call_id: ToolCallId::new(call_id).expect("call"),
+        decision: kind,
+        code: match kind {
+            ToolDecisionKind::Approved => "approved",
+            ToolDecisionKind::Rejected => "rejected",
+        }
+        .to_owned(),
+    }
+}
+
+fn result(call_id: &str, status: ToolTerminalStatus) -> ToolResult {
+    ToolResult {
+        schema_version: SchemaVersion,
+        call_id: ToolCallId::new(call_id).expect("call"),
+        tool_name: "read_file".to_owned(),
+        status,
+        code: "done".to_owned(),
+        output: (status == ToolTerminalStatus::Succeeded).then(|| "contents".to_owned()),
+    }
 }
 
 #[test]
@@ -260,5 +298,153 @@ fn concurrent_turn_and_terminal_mutation_fail_closed() {
             now_unix_ms: 3,
         }),
         Err(minimax_protocol::RuntimeErrorCode::WorkspaceBusy)
+    );
+}
+
+#[test]
+fn tool_records_project_request_decision_start_and_terminal_in_order() {
+    let mut machine = SessionMachine::new();
+    create(&mut machine, "tools");
+    start(&mut machine, "turn-tools", "record-turn-tools");
+    let turn_id = TurnId::new("turn-tools").expect("turn");
+
+    machine
+        .apply(SessionCommand::RecordToolRequested {
+            record_id: record_id("record-tool-request"),
+            turn_id: turn_id.clone(),
+            invocation: invocation("call-tools"),
+            now_unix_ms: 3,
+        })
+        .expect("request");
+    assert_eq!(
+        machine.apply(SessionCommand::RecordToolStarted {
+            record_id: record_id("record-tool-early-start"),
+            turn_id: turn_id.clone(),
+            call_id: ToolCallId::new("call-tools").expect("call"),
+            now_unix_ms: 4,
+        }),
+        Err(RuntimeErrorCode::Recovery)
+    );
+    machine
+        .apply(SessionCommand::RecordToolDecision {
+            record_id: record_id("record-tool-decision"),
+            turn_id: turn_id.clone(),
+            decision: decision("call-tools", ToolDecisionKind::Approved),
+            now_unix_ms: 5,
+        })
+        .expect("decision");
+    machine
+        .apply(SessionCommand::RecordToolStarted {
+            record_id: record_id("record-tool-start"),
+            turn_id: turn_id.clone(),
+            call_id: ToolCallId::new("call-tools").expect("call"),
+            now_unix_ms: 6,
+        })
+        .expect("started");
+
+    let session_id = machine.active_session().expect("active").session_id.clone();
+    let receipt = TurnReceipt {
+        session_id,
+        turn_id: turn_id.clone(),
+        request_id: RequestId::new("request-turn-tools").expect("request"),
+        outcome: RuntimeTerminalOutcome::Completed,
+        usage: None,
+    };
+    assert_eq!(
+        machine.apply(SessionCommand::Finalize {
+            record_id: record_id("record-tool-early-final"),
+            receipt: receipt.clone(),
+            assistant_content: Some("too early".to_owned()),
+            now_unix_ms: 7,
+        }),
+        Err(RuntimeErrorCode::Recovery)
+    );
+    machine
+        .apply(SessionCommand::RecordToolTerminal {
+            record_id: record_id("record-tool-terminal"),
+            turn_id: turn_id.clone(),
+            result: result("call-tools", ToolTerminalStatus::Succeeded),
+            now_unix_ms: 8,
+        })
+        .expect("terminal");
+    machine
+        .apply(SessionCommand::Finalize {
+            record_id: record_id("record-tool-final"),
+            receipt,
+            assistant_content: Some("answer".to_owned()),
+            now_unix_ms: 9,
+        })
+        .expect("finalize");
+
+    let projected = &machine.active_session().expect("active").turns[0].tool_invocations[0];
+    assert_eq!(projected.requested_at_unix_ms, 3);
+    assert_eq!(projected.decision_at_unix_ms, Some(5));
+    assert_eq!(projected.started_at_unix_ms, Some(6));
+    assert_eq!(projected.terminal_at_unix_ms, Some(8));
+    assert_eq!(
+        projected.terminal_result.as_ref().map(|value| value.status),
+        Some(ToolTerminalStatus::Succeeded)
+    );
+}
+
+#[test]
+fn tool_records_reject_wrong_turn_call_duplicate_identity_and_conflicting_replay() {
+    let mut machine = SessionMachine::new();
+    create(&mut machine, "tool-errors");
+    start(&mut machine, "turn-tool-errors", "record-turn-tool-errors");
+    let turn_id = TurnId::new("turn-tool-errors").expect("turn");
+    let effects = machine
+        .apply(SessionCommand::RecordToolRequested {
+            record_id: record_id("record-request-stable"),
+            turn_id: turn_id.clone(),
+            invocation: invocation("call-stable"),
+            now_unix_ms: 3,
+        })
+        .expect("request");
+    let original = persisted(&effects);
+
+    assert_eq!(
+        machine.apply(SessionCommand::RecordToolRequested {
+            record_id: record_id("record-request-duplicate-call"),
+            turn_id: turn_id.clone(),
+            invocation: invocation("call-stable"),
+            now_unix_ms: 4,
+        }),
+        Err(RuntimeErrorCode::Recovery)
+    );
+    assert_eq!(
+        machine.apply(SessionCommand::RecordToolDecision {
+            record_id: record_id("record-wrong-call"),
+            turn_id: turn_id.clone(),
+            decision: decision("call-other", ToolDecisionKind::Approved),
+            now_unix_ms: 4,
+        }),
+        Err(RuntimeErrorCode::Recovery)
+    );
+    assert_eq!(
+        machine.apply(SessionCommand::RecordToolTerminal {
+            record_id: record_id("record-wrong-turn"),
+            turn_id: TurnId::new("turn-other").expect("turn"),
+            result: result("call-stable", ToolTerminalStatus::Failed),
+            now_unix_ms: 4,
+        }),
+        Err(RuntimeErrorCode::Recovery)
+    );
+    assert!(
+        machine
+            .apply(SessionCommand::Replay(original.clone()))
+            .expect("identical replay")
+            .is_empty()
+    );
+    let mut conflicting: SessionRecordV1 = original;
+    conflicting.record = minimax_protocol::JournalRecord::ToolRequested {
+        session_id: machine.active_session().expect("active").session_id.clone(),
+        turn_id,
+        invocation: invocation("call-conflict"),
+        requested_at_unix_ms: 99,
+    };
+    assert_eq!(
+        machine.apply(SessionCommand::Replay(conflicting)),
+        Err(RuntimeErrorCode::Recovery)
     );
 }

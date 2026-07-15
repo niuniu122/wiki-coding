@@ -61,7 +61,9 @@ pub fn exit_for_error(error: &DriverError) -> ExitClass {
     match error {
         DriverError::Runtime(code) => exit_for_code(*code),
         DriverError::Store(RuntimeStoreError::Command(code)) => exit_for_code(*code),
-        DriverError::Store(_) | DriverError::Compaction(_) => ExitClass::Workspace,
+        DriverError::Store(_) | DriverError::Compaction(_) | DriverError::Invocation(_) => {
+            ExitClass::Workspace
+        }
     }
 }
 
@@ -88,6 +90,7 @@ const fn exit_for_code(code: RuntimeErrorCode) -> ExitClass {
         | RuntimeErrorCode::ProtocolDuplicateTerminal
         | RuntimeErrorCode::ProtocolEventAfterTerminal
         | RuntimeErrorCode::ProtocolUnknownEvent
-        | RuntimeErrorCode::ToolUnavailable => ExitClass::Provider,
+        | RuntimeErrorCode::ToolUnavailable
+        | RuntimeErrorCode::AgentBudgetExhausted => ExitClass::Provider,
     }
 }
