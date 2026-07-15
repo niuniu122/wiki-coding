@@ -2,8 +2,9 @@ use std::collections::BTreeSet;
 use std::fs;
 
 use minimax_compat_harness::{
-    ManifestError, ParityStatus, build_report, load_compat_manifests, report_json, repository_root,
-    validate_report,
+    ArchitectureError, ArchitectureGraph, ArchitecturePackage, ManifestError, ParityStatus,
+    build_report, load_cargo_architecture, load_compat_manifests, report_json, repository_root,
+    validate_architecture, validate_report,
 };
 
 #[test]
@@ -66,4 +67,98 @@ fn compat_report_rejects_matched_item_without_evidence() {
             "matched item requires evidence: {id}"
         )))
     );
+}
+
+#[test]
+fn architecture_real_cargo_metadata_passes() {
+    let root = repository_root();
+    let graph = load_cargo_architecture(&root).expect("locked Cargo metadata");
+    validate_architecture(&graph).expect("valid workspace architecture");
+}
+
+#[test]
+fn architecture_rejects_core_to_vault() {
+    let graph = synthetic_graph(&[("minimax-core", &["minimax-vault"])]);
+    assert_eq!(
+        validate_architecture(&graph),
+        Err(ArchitectureError::Violation(
+            "forbidden local dependency: minimax-core -> minimax-vault".to_owned()
+        ))
+    );
+}
+
+#[test]
+fn architecture_rejects_production_to_harness() {
+    let graph = synthetic_graph(&[("minimax-provider", &["minimax-compat-harness"])]);
+    assert_eq!(
+        validate_architecture(&graph),
+        Err(ArchitectureError::Violation(
+            "production package must not depend on compat harness: minimax-provider -> minimax-compat-harness"
+                .to_owned()
+        ))
+    );
+}
+
+#[test]
+fn architecture_rejects_local_cycle() {
+    let graph = synthetic_graph(&[
+        ("minimax-core", &["minimax-protocol"]),
+        ("minimax-protocol", &["minimax-core"]),
+    ]);
+    assert_eq!(
+        validate_architecture(&graph),
+        Err(ArchitectureError::Violation(
+            "local dependency cycle involving: minimax-core, minimax-protocol".to_owned()
+        ))
+    );
+
+    let graph = synthetic_graph(&[
+        ("minimax-cli", &["minimax-provider"]),
+        ("minimax-provider", &["minimax-core"]),
+        ("minimax-core", &["minimax-protocol"]),
+        ("minimax-protocol", &[]),
+    ]);
+    validate_architecture(&graph).expect("acyclic control graph");
+}
+
+#[test]
+fn architecture_rejects_database_package() {
+    let mut graph = synthetic_graph(&[("minimax-protocol", &[])]);
+    graph.packages.push(ArchitecturePackage {
+        name: "rusqlite".to_owned(),
+        local: false,
+        dependencies: Vec::new(),
+    });
+    assert_eq!(
+        validate_architecture(&graph),
+        Err(ArchitectureError::Violation(
+            "database dependency denied: rusqlite".to_owned()
+        ))
+    );
+}
+
+fn synthetic_graph(edges: &[(&str, &[&str])]) -> ArchitectureGraph {
+    let mut packages = std::collections::BTreeMap::new();
+    for (name, dependencies) in edges {
+        packages.insert(
+            (*name).to_owned(),
+            dependencies
+                .iter()
+                .map(|dependency| (*dependency).to_owned())
+                .collect::<Vec<_>>(),
+        );
+        for dependency in *dependencies {
+            packages.entry((*dependency).to_owned()).or_default();
+        }
+    }
+    ArchitectureGraph {
+        packages: packages
+            .iter()
+            .map(|(name, dependencies)| ArchitecturePackage {
+                name: name.clone(),
+                local: true,
+                dependencies: dependencies.clone(),
+            })
+            .collect(),
+    }
 }

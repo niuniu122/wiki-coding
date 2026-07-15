@@ -3,9 +3,14 @@
 //! This non-published crate may observe all production crates in order to prove
 //! behavioral parity with the existing TypeScript implementation.
 
+pub mod architecture;
 pub mod manifest;
 pub mod report;
 
+pub use architecture::{
+    ArchitectureError, ArchitectureGraph, ArchitecturePackage, load_cargo_architecture,
+    validate_architecture,
+};
 pub use manifest::{
     BaselineStatus, CommandManifest, CompatManifests, ManifestError, ParityStatus,
     ProviderManifest, StatusItem, load_compat_manifests, repository_root,
