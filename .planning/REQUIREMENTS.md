@@ -7,8 +7,8 @@
 
 ### Architecture
 
-- [ ] **ARCH-01**: Maintainer can build one Cargo workspace containing protocol, core, provider, tools, retrieval, vault, tui, cli, and dev-only compat harness crates on Windows and Linux.
-- [ ] **ARCH-02**: Automated dependency checks prove core has no dependency on UI, HTTP, Markdown paths, or concrete tool adapters.
+- [x] **ARCH-01**: Maintainer can build one Cargo workspace containing protocol, core, provider, tools, retrieval, vault, tui, cli, and dev-only compat harness crates on Windows and Linux.
+- [x] **ARCH-02**: Automated dependency checks prove core has no dependency on UI, HTTP, Markdown paths, or concrete tool adapters.
 - [ ] **ARCH-03**: All agent operations and observable state changes use typed commands/events with exactly one legal terminal outcome.
 - [ ] **ARCH-04**: Deterministic clock, ID, mock Provider, and replay fixtures make runtime behavior reproducible offline.
 
@@ -102,8 +102,8 @@
 
 | Requirement | Phase | Status |
 |-------------|-------|--------|
-| ARCH-01 | Phase 1 | Pending |
-| ARCH-02 | Phase 1 | Pending |
+| ARCH-01 | Phase 1 | Complete |
+| ARCH-02 | Phase 1 | Complete |
 | ARCH-03 | Phase 1 | Pending |
 | ARCH-04 | Phase 1 | Pending |
 | COMP-01 | Phase 1 | Complete |

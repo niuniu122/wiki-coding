@@ -32,14 +32,14 @@ The milestone proceeds as six vertical, verifiable boundaries: freeze compatibil
 Plans:
 
 - [x] 01-01-PLAN.md
-- [ ] 01-02-PLAN.md
+- [x] 01-02-PLAN.md
 - [ ] 01-03-PLAN.md
 - [ ] 01-04-PLAN.md
 
 **Wave 1**
 
 - [x] 01-01: Freeze TypeScript compatibility manifests and offline fixtures
-- [ ] 01-02: Scaffold Cargo workspace and typed protocol/core boundaries
+- [x] 01-02: Scaffold Cargo workspace and typed protocol/core boundaries
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
