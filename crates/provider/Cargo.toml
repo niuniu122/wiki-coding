@@ -21,5 +21,14 @@ tokio-util.workspace = true
 [target.'cfg(not(target_abi = "llvm"))'.dependencies]
 reqwest = { workspace = true, features = ["rustls"] }
 
+[target.'cfg(windows)'.dependencies]
+keyring = { workspace = true, features = ["windows-native"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+keyring = { workspace = true, features = ["linux-native"] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+keyring = { workspace = true, features = ["apple-native"] }
+
 [lints]
 workspace = true
