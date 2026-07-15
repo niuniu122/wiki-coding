@@ -6,10 +6,20 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
+futures-util.workspace = true
 minimax-core = { path = "../core" }
 minimax-protocol = { path = "../protocol" }
+reqwest.workspace = true
+secrecy.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tokio.workspace = true
+tokio-util.workspace = true
+
+# The unsupported local windows-gnullvm fallback lacks Windows SDK import
+# libraries. Supported Windows/MSVC and Linux builds retain rustls HTTPS.
+[target.'cfg(not(target_abi = "llvm"))'.dependencies]
+reqwest = { workspace = true, features = ["rustls"] }
 
 [lints]
 workspace = true
