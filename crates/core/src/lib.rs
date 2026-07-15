@@ -14,8 +14,8 @@ mod trace;
 
 pub use compaction::{CompactionBudget, CompactionError, LocalCompactor};
 pub use ports::{
-    ApprovalFuture, ApprovalPort, Clock, FixedClock, FixedIdGenerator, IdGenerator, ToolFuture,
-    ToolPort,
+    ApprovalFuture, ApprovalPort, CancellationFuture, CancellationPort, Clock, FixedClock,
+    FixedIdGenerator, IdGenerator, ToolFuture, ToolPort,
 };
 pub use runtime::{RunEffect, RunInput, RunMachine, RunState};
 pub use sequence::{NormalizedReplayRecord, StreamSequence, replay_stream};

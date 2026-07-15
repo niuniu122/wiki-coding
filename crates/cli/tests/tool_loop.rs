@@ -5,7 +5,9 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use minimax_cli::{DriverIds, ProviderPort, RuntimeDriver};
-use minimax_core::{ApprovalFuture, ApprovalPort, PermissionMode, ToolFuture, ToolPort};
+use minimax_core::{
+    ApprovalFuture, ApprovalPort, CancellationPort, PermissionMode, ToolFuture, ToolPort,
+};
 use minimax_protocol::{
     AgentLimits, ConversationItem, JournalRecord, ModelBinding, ModelId, ProviderId,
     ProviderProtocolKind, RuntimeErrorCode, RuntimeFailure, SchemaVersion, StreamEvent,
@@ -134,11 +136,19 @@ struct CancellingTool {
 }
 
 impl ToolPort for CancellingTool {
-    fn preflight(&self, _invocation: &ToolInvocation) -> Result<(), ToolResult> {
+    fn preflight(
+        &self,
+        _invocation: &ToolInvocation,
+        _cancellation: &dyn CancellationPort,
+    ) -> Result<(), ToolResult> {
         Ok(())
     }
 
-    fn execute<'a>(&'a self, invocation: &'a ToolInvocation) -> ToolFuture<'a> {
+    fn execute<'a>(
+        &'a self,
+        invocation: &'a ToolInvocation,
+        cancellation: &'a dyn CancellationPort,
+    ) -> ToolFuture<'a> {
         Box::pin(async move {
             self.execute_calls
                 .lock()
@@ -150,13 +160,23 @@ impl ToolPort for CancellingTool {
                 .as_ref()
                 .expect("driver cancellation token")
                 .cancel();
-            std::future::pending::<ToolResult>().await
+            cancellation.cancelled().await;
+            result_for(
+                invocation,
+                ToolTerminalStatus::Indeterminate,
+                "effect_unknown",
+                None,
+            )
         })
     }
 }
 
 impl ToolPort for ToolSpy {
-    fn preflight(&self, invocation: &ToolInvocation) -> Result<(), ToolResult> {
+    fn preflight(
+        &self,
+        invocation: &ToolInvocation,
+        _cancellation: &dyn CancellationPort,
+    ) -> Result<(), ToolResult> {
         self.preflight_calls
             .lock()
             .expect("preflight calls")
@@ -173,7 +193,11 @@ impl ToolPort for ToolSpy {
         }
     }
 
-    fn execute<'a>(&'a self, invocation: &'a ToolInvocation) -> ToolFuture<'a> {
+    fn execute<'a>(
+        &'a self,
+        invocation: &'a ToolInvocation,
+        _cancellation: &'a dyn CancellationPort,
+    ) -> ToolFuture<'a> {
         Box::pin(async move {
             self.execute_calls
                 .lock()

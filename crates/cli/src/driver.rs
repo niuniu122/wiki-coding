@@ -6,10 +6,10 @@ use std::pin::Pin;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use minimax_core::{
-    AgentBudget, ApprovalPort, CompactionBudget, CompactionError, InvocationEffect,
-    InvocationError, InvocationInput, InvocationMachine, InvocationRegistry, InvocationState,
-    LocalCompactor, PermissionMode, RunEffect, RunInput, RunMachine, RunState, SessionCommand,
-    SessionEffect, SessionSummary, ToolPort,
+    AgentBudget, ApprovalPort, CancellationFuture, CancellationPort, CompactionBudget,
+    CompactionError, InvocationEffect, InvocationError, InvocationInput, InvocationMachine,
+    InvocationRegistry, InvocationState, LocalCompactor, PermissionMode, RunEffect, RunInput,
+    RunMachine, RunState, SessionCommand, SessionEffect, SessionSummary, ToolPort,
 };
 use minimax_protocol::{
     AgentLimits, AssistantToolCallBatch, CompactionId, CompactionRecord, ConversationItem,
@@ -82,7 +82,11 @@ impl ApprovalPort for ApprovalUnavailable {
 struct ToolUnavailable;
 
 impl ToolPort for ToolUnavailable {
-    fn preflight(&self, invocation: &ToolInvocation) -> Result<(), ToolResult> {
+    fn preflight(
+        &self,
+        invocation: &ToolInvocation,
+        _cancellation: &dyn CancellationPort,
+    ) -> Result<(), ToolResult> {
         Err(ToolResult {
             schema_version: SchemaVersion,
             call_id: invocation.call.call_id.clone(),
@@ -93,7 +97,11 @@ impl ToolPort for ToolUnavailable {
         })
     }
 
-    fn execute<'a>(&'a self, invocation: &'a ToolInvocation) -> minimax_core::ToolFuture<'a> {
+    fn execute<'a>(
+        &'a self,
+        invocation: &'a ToolInvocation,
+        _cancellation: &'a dyn CancellationPort,
+    ) -> minimax_core::ToolFuture<'a> {
         Box::pin(async move {
             ToolResult {
                 schema_version: SchemaVersion,
@@ -104,6 +112,18 @@ impl ToolPort for ToolUnavailable {
                 output: None,
             }
         })
+    }
+}
+
+struct DriverCancellation<'a>(&'a CancellationToken);
+
+impl CancellationPort for DriverCancellation<'_> {
+    fn is_cancelled(&self) -> bool {
+        self.0.is_cancelled()
+    }
+
+    fn cancelled<'a>(&'a self) -> CancellationFuture<'a> {
+        Box::pin(self.0.cancelled())
     }
 }
 
@@ -633,7 +653,8 @@ impl<P: ProviderPort> RuntimeDriver<P> {
                 .apply(InvocationInput::Cancel)
                 .map_err(DriverError::Invocation)?
         } else {
-            match self.tools.preflight(&invocation) {
+            let cancellation = DriverCancellation(cancellation);
+            match self.tools.preflight(&invocation, &cancellation) {
                 Ok(()) => machine
                     .apply(InvocationInput::PreflightAllowed {
                         permission_mode: self.permission_mode,
@@ -724,17 +745,8 @@ impl<P: ProviderPort> RuntimeDriver<P> {
                         );
                         continue;
                     }
-                    let result = tokio::select! {
-                        result = self.tools.execute(&invocation) => result,
-                        () = cancellation.cancelled() => {
-                            pending.extend(
-                                machine
-                                    .apply(InvocationInput::Cancel)
-                                    .map_err(DriverError::Invocation)?,
-                            );
-                            continue;
-                        }
-                    };
+                    let cancellation = DriverCancellation(cancellation);
+                    let result = self.tools.execute(&invocation, &cancellation).await;
                     let result = normalize_execution_result(&invocation, result);
                     let result_bytes = serde_json::to_vec(&result)
                         .map_err(|_| DriverError::Runtime(RuntimeErrorCode::Recovery))?

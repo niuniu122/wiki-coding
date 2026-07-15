@@ -8,7 +8,9 @@
     { "name": "protected_runtime", "tool": "write_file", "arguments": { "path": ".minimax/state", "mode": "create", "content": "x" }, "code": "protected_path" },
     { "name": "secret_filename", "tool": "read_file", "arguments": { "path": ".env" }, "code": "secret_path" },
     { "name": "secret_content", "tool": "write_file", "arguments": { "path": "safe.txt", "mode": "create", "content": "password=abcdefghijklmnop" }, "code": "secret_content" },
-    { "name": "wrong_effect", "tool": "read_file", "arguments": { "path": "safe.txt" }, "effect": "write", "code": "effect_mismatch" }
+    { "name": "wrong_effect", "tool": "read_file", "arguments": { "path": "safe.txt" }, "effect": "write", "code": "effect_mismatch" },
+    { "name": "unknown_diagnostic", "tool": "run_diagnostic", "arguments": { "action": "shell" }, "code": "invalid_arguments" },
+    { "name": "process_extra_field", "tool": "git_status", "arguments": { "revision": "HEAD" }, "code": "invalid_arguments" }
   ],
   "permission_modes": ["confirm", "full-access"],
   "preflight_uses_permission_mode": false

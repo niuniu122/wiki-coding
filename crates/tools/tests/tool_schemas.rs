@@ -1,3 +1,4 @@
+use minimax_core::{CancellationFuture, CancellationPort};
 use minimax_protocol::{ToolCall, ToolEffect, ToolInvocation, V1_TOOL_NAMES};
 use minimax_tools::{NeverCancelled, Preflight, ToolRegistry};
 use serde_json::{Value, json};
@@ -118,11 +119,23 @@ fn cancellation_and_secret_markers_stop_before_dispatch() {
         "secret_content"
     );
     assert_eq!(
-        must_error(Preflight::check(&invocation, &true))
+        must_error(Preflight::check(&invocation, &AlwaysCancelled))
             .code()
             .as_str(),
         "cancelled"
     );
+}
+
+struct AlwaysCancelled;
+
+impl CancellationPort for AlwaysCancelled {
+    fn is_cancelled(&self) -> bool {
+        true
+    }
+
+    fn cancelled<'a>(&'a self) -> CancellationFuture<'a> {
+        Box::pin(std::future::ready(()))
+    }
 }
 
 fn invocation(name: &str, effect: ToolEffect, arguments: Value) -> ToolInvocation {

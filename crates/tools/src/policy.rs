@@ -1,3 +1,4 @@
+use minimax_core::{CancellationFuture, CancellationPort};
 use minimax_protocol::{
     MAX_TOOL_ARGUMENT_BYTES, MAX_TOOL_RESULT_BYTES, ToolDefinition, ToolEffect, ToolInvocation,
     ToolValidationError, V1_TOOL_NAMES,
@@ -7,22 +8,16 @@ use serde_json::{Value, json};
 use crate::error::{ToolDenial, ToolDenialCode};
 use crate::path::validate_relative_path;
 
-pub trait CancellationSignal: Send + Sync {
-    fn is_cancelled(&self) -> bool;
-}
-
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NeverCancelled;
 
-impl CancellationSignal for NeverCancelled {
+impl CancellationPort for NeverCancelled {
     fn is_cancelled(&self) -> bool {
         false
     }
-}
 
-impl CancellationSignal for bool {
-    fn is_cancelled(&self) -> bool {
-        *self
+    fn cancelled<'a>(&'a self) -> CancellationFuture<'a> {
+        Box::pin(std::future::pending())
     }
 }
 
@@ -62,7 +57,7 @@ pub struct Preflight;
 impl Preflight {
     pub fn check(
         invocation: &ToolInvocation,
-        cancellation: &dyn CancellationSignal,
+        cancellation: &dyn CancellationPort,
     ) -> Result<ToolSpec, ToolDenial> {
         if cancellation.is_cancelled() {
             return Err(ToolDenial::cancelled());
@@ -110,11 +105,36 @@ impl Preflight {
         if output.contains('\0') {
             return Err(ToolDenial::failed(ToolDenialCode::BinaryFile));
         }
-        if contains_secret(output) {
+        if contains_secret(output) || contains_sensitive_path_reference(output) {
             return Err(ToolDenial::rejected(ToolDenialCode::SecretContent));
         }
         Ok(())
     }
+}
+
+fn contains_sensitive_path_reference(value: &str) -> bool {
+    let normalized = value.to_ascii_lowercase().replace('\\', "/");
+    normalized
+        .split(|character: char| {
+            character.is_whitespace()
+                || matches!(character, '\"' | '\'' | ',' | ':' | '[' | ']' | '{' | '}')
+        })
+        .map(|token| token.trim_matches(['/', '+', '-']))
+        .any(|token| {
+            token == ".env"
+                || token.starts_with(".env.")
+                || token.contains("/.env")
+                || token.contains("/.git/")
+                || token.starts_with(".git/")
+                || token.contains("/.minimax/")
+                || token.starts_with(".minimax/")
+                || token.contains("/.obsidian/")
+                || token.starts_with(".obsidian/")
+                || token.ends_with("credentials.json")
+                || token.ends_with("secrets.json")
+                || token.ends_with("id_rsa")
+                || token.ends_with("id_ed25519")
+        })
 }
 
 pub(crate) fn ensure_public_path(path: &str) -> Result<(), ToolDenial> {

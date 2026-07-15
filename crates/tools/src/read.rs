@@ -1,6 +1,7 @@
 use std::fs::File;
 use std::io::Read as _;
 
+use minimax_core::CancellationPort;
 use minimax_protocol::{
     MAX_TOOL_RESULT_BYTES, SchemaVersion, ToolInvocation, ToolResult, ToolTerminalStatus,
 };
@@ -8,7 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::WorkspaceRoot;
 use crate::error::{ToolDenial, ToolDenialCode, io_denial};
-use crate::policy::{CancellationSignal, Preflight, ensure_public_path};
+use crate::policy::{Preflight, ensure_public_path};
 use crate::write::sha256_hex;
 
 const MAX_READ_BYTES: usize = 64 * 1_024;
@@ -21,7 +22,7 @@ impl ReadFileTool {
     pub fn execute(
         workspace: &WorkspaceRoot,
         invocation: &ToolInvocation,
-        cancellation: &dyn CancellationSignal,
+        cancellation: &dyn CancellationPort,
     ) -> ToolResult {
         match Self::try_execute(workspace, invocation, cancellation) {
             Ok(output) => success(invocation, output),
@@ -32,7 +33,7 @@ impl ReadFileTool {
     fn try_execute(
         workspace: &WorkspaceRoot,
         invocation: &ToolInvocation,
-        cancellation: &dyn CancellationSignal,
+        cancellation: &dyn CancellationPort,
     ) -> Result<String, ToolDenial> {
         Preflight::check(invocation, cancellation)?;
         let arguments: PathArguments = parse_arguments(invocation)?;
@@ -85,7 +86,7 @@ impl ListDirectoryTool {
     pub fn execute(
         workspace: &WorkspaceRoot,
         invocation: &ToolInvocation,
-        cancellation: &dyn CancellationSignal,
+        cancellation: &dyn CancellationPort,
     ) -> ToolResult {
         match Self::try_execute(workspace, invocation, cancellation) {
             Ok(output) => success(invocation, output),
@@ -96,7 +97,7 @@ impl ListDirectoryTool {
     fn try_execute(
         workspace: &WorkspaceRoot,
         invocation: &ToolInvocation,
-        cancellation: &dyn CancellationSignal,
+        cancellation: &dyn CancellationPort,
     ) -> Result<String, ToolDenial> {
         Preflight::check(invocation, cancellation)?;
         let arguments: PathArguments = parse_arguments(invocation)?;

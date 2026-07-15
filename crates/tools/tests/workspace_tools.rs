@@ -2,6 +2,7 @@ use std::fmt::Write as _;
 use std::fs;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
+use minimax_core::CancellationFuture;
 use minimax_protocol::{ToolCall, ToolEffect, ToolInvocation, ToolTerminalStatus};
 use minimax_tools::{
     ApplyPatchTool, CancellationSignal, ListDirectoryTool, NeverCancelled, ReadFileTool,
@@ -429,6 +430,10 @@ impl CancelOnCall {
 impl CancellationSignal for CancelOnCall {
     fn is_cancelled(&self) -> bool {
         self.calls.fetch_add(1, Ordering::SeqCst) + 1 >= self.cancel_on
+    }
+
+    fn cancelled<'a>(&'a self) -> CancellationFuture<'a> {
+        Box::pin(std::future::pending())
     }
 }
 

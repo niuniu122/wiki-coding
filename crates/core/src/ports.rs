@@ -4,15 +4,31 @@ use std::pin::Pin;
 use minimax_protocol::{ToolDecision, ToolInvocation, ToolResult};
 
 pub type ApprovalFuture<'a> = Pin<Box<dyn Future<Output = ToolDecision> + Send + 'a>>;
+pub type CancellationFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
 pub type ToolFuture<'a> = Pin<Box<dyn Future<Output = ToolResult> + Send + 'a>>;
 
 pub trait ApprovalPort: Send + Sync {
     fn decide<'a>(&'a self, invocation: &'a ToolInvocation) -> ApprovalFuture<'a>;
 }
 
+/// Run-scoped cancellation visible to effect adapters without coupling core to
+/// a particular async runtime.
+pub trait CancellationPort: Send + Sync {
+    fn is_cancelled(&self) -> bool;
+    fn cancelled<'a>(&'a self) -> CancellationFuture<'a>;
+}
+
 pub trait ToolPort: Send + Sync {
-    fn preflight(&self, invocation: &ToolInvocation) -> Result<(), ToolResult>;
-    fn execute<'a>(&'a self, invocation: &'a ToolInvocation) -> ToolFuture<'a>;
+    fn preflight(
+        &self,
+        invocation: &ToolInvocation,
+        cancellation: &dyn CancellationPort,
+    ) -> Result<(), ToolResult>;
+    fn execute<'a>(
+        &'a self,
+        invocation: &'a ToolInvocation,
+        cancellation: &'a dyn CancellationPort,
+    ) -> ToolFuture<'a>;
 }
 
 /// Supplies time to core workflows without consulting the system clock directly.

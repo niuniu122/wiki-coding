@@ -25,6 +25,12 @@ pub enum ToolDenialCode {
     AlreadyExists,
     IoDenied,
     IoFailed,
+    SpawnFailed,
+    ProcessIo,
+    NonzeroExit,
+    TimedOut,
+    UnsafeScript,
+    CleanupUnknown,
 }
 
 impl ToolDenialCode {
@@ -52,6 +58,12 @@ impl ToolDenialCode {
             Self::AlreadyExists => "already_exists",
             Self::IoDenied => "io_denied",
             Self::IoFailed => "io_failed",
+            Self::SpawnFailed => "spawn_failed",
+            Self::ProcessIo => "process_io",
+            Self::NonzeroExit => "nonzero_exit",
+            Self::TimedOut => "timed_out",
+            Self::UnsafeScript => "unsafe_script",
+            Self::CleanupUnknown => "cleanup_unknown",
         }
     }
 }

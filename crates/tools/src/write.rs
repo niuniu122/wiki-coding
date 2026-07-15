@@ -3,13 +3,14 @@ use std::fs::File;
 use std::io::{Read as _, Write as _};
 use std::path::Path;
 
+use minimax_core::CancellationPort;
 use minimax_protocol::{SchemaVersion, ToolInvocation, ToolResult, ToolTerminalStatus};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest as _, Sha256};
 use tempfile::Builder;
 
 use crate::error::{ToolDenial, ToolDenialCode, io_denial};
-use crate::policy::{CancellationSignal, Preflight};
+use crate::policy::Preflight;
 use crate::{ResolvedToolPath, WorkspaceRoot};
 
 const MAX_FILE_BYTES: usize = 64 * 1_024;
@@ -21,7 +22,7 @@ impl ApplyPatchTool {
     pub fn execute(
         workspace: &WorkspaceRoot,
         invocation: &ToolInvocation,
-        cancellation: &dyn CancellationSignal,
+        cancellation: &dyn CancellationPort,
     ) -> ToolResult {
         match Self::try_execute(workspace, invocation, cancellation) {
             Ok(output) => success(invocation, output),
@@ -32,7 +33,7 @@ impl ApplyPatchTool {
     fn try_execute(
         workspace: &WorkspaceRoot,
         invocation: &ToolInvocation,
-        cancellation: &dyn CancellationSignal,
+        cancellation: &dyn CancellationPort,
     ) -> Result<String, ToolDenial> {
         Preflight::check(invocation, cancellation)?;
         let arguments: ApplyPatchArguments = parse_arguments(invocation)?;
@@ -76,7 +77,7 @@ impl WriteFileTool {
     pub fn execute(
         workspace: &WorkspaceRoot,
         invocation: &ToolInvocation,
-        cancellation: &dyn CancellationSignal,
+        cancellation: &dyn CancellationPort,
     ) -> ToolResult {
         match Self::try_execute(workspace, invocation, cancellation) {
             Ok(output) => success(invocation, output),
@@ -87,7 +88,7 @@ impl WriteFileTool {
     fn try_execute(
         workspace: &WorkspaceRoot,
         invocation: &ToolInvocation,
-        cancellation: &dyn CancellationSignal,
+        cancellation: &dyn CancellationPort,
     ) -> Result<String, ToolDenial> {
         Preflight::check(invocation, cancellation)?;
         let arguments: WriteFileArguments = parse_arguments(invocation)?;
@@ -240,7 +241,7 @@ fn atomic_persist(
     mode: PersistMode,
     permissions: Option<std::fs::Permissions>,
     expected_sha256: Option<&str>,
-    cancellation: &dyn CancellationSignal,
+    cancellation: &dyn CancellationPort,
 ) -> Result<(), ToolDenial> {
     if cancellation.is_cancelled() {
         return Err(ToolDenial::cancelled());
