@@ -1,0 +1,4 @@
+docs:
+  - path: docs/superpowers/specs/2026-07-15-rust-vault-rewrite-design.md
+    type: SPEC
+    precedence: 0
