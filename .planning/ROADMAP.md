@@ -8,7 +8,7 @@ The milestone proceeds as six vertical, verifiable boundaries: freeze compatibil
 
 - [x] **Phase 1: Contract Foundation** - Compile the Rust workspace and prove typed protocol/parity contracts offline. (completed 2026-07-15)
 - [x] **Phase 2: Usable Rust Agent Shell** - Run, stream, resume, compact, diagnose, and operate through TUI or headless CLI. (completed 2026-07-15)
-- [ ] **Phase 3: Safe Tool Completion** - Execute the v1 tool set under exactly two permission modes.
+- [x] **Phase 3: Safe Tool Completion** - Execute the v1 tool set under exactly two permission modes. (completed 2026-07-15)
 - [ ] **Phase 4: Vault and Main-Model Wiki** - Persist raw evidence and maintain recoverable Obsidian knowledge through the pinned main model.
 - [ ] **Phase 5: Retrieval and Project Discovery** - Serve three isolated indexes and preserve BM25-first project finding with truthful embedding.
 - [ ] **Phase 6: Migration, Release, and Cutover** - Import safely, meet release gates, and switch the default entry only after parity.
@@ -99,7 +99,7 @@ Plans:
   3. Read/list, patch/write, bounded shell, Git status/diff, and npm diagnostics complete the Provider tool loop with stable call IDs.
   4. Rejection, cancellation, schema failure, path escape, secret detection, and unknown side effects remain hard-gated in both modes.
 
-**Plans**: 2 plans
+**Plans**: 2/2 plans executed
 
 Plans:
 **Wave 1**
@@ -108,7 +108,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 03-02: Implement and verify the bounded v1 tool adapters
+- [x] 03-02: Implement and verify the bounded v1 tool adapters
 
 ### Phase 4: Vault and Main-Model Wiki
 
@@ -178,7 +178,7 @@ Plans:
 |-------|----------------|--------|-----------|
 | 1. Contract Foundation | 4/4 | Complete    | 2026-07-15 |
 | 2. Usable Rust Agent Shell | 3/3 | Complete   | 2026-07-15 |
-| 3. Safe Tool Completion | 1/2 | In progress | - |
+| 3. Safe Tool Completion | 2/2 | Complete | 2026-07-15 |
 | 4. Vault and Main-Model Wiki | 0/3 | Not started | - |
 | 5. Retrieval and Project Discovery | 0/3 | Not started | - |
 | 6. Migration, Release, and Cutover | 0/3 | Not started | - |

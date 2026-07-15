@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 3
-current_phase_name: Safe Tool Completion
-status: executing
-stopped_at: Phase 3 Plan 01 complete; ready for Plan 02
-last_updated: "2026-07-15T13:55:22Z"
+current_phase: 4
+current_phase_name: Vault and Main-Model Wiki
+status: ready_to_plan
+stopped_at: Phase 3 complete; ready for Phase 4 planning
+last_updated: "2026-07-15T15:18:45Z"
 last_activity: 2026-07-15
-last_activity_desc: Phase 3 Plan 01 native tool runtime completed
+last_activity_desc: Phase 3 bounded v1 tools and hosted verification completed
 progress:
   total_phases: 6
-  completed_phases: 2
+  completed_phases: 3
   total_plans: 9
-  completed_plans: 8
-  percent: 33
+  completed_plans: 9
+  percent: 50
 ---
 
 # Project State
@@ -24,24 +24,24 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-15)
 
 **Core value:** A non-programmer can safely find the right open-source capability or project and complete work in one recoverable local CLI.
-**Current focus:** Phase 3 — Safe Tool Completion
+**Current focus:** Phase 4 — Vault and Main-Model Wiki
 
 ## Current Position
 
-Phase: 3 (Safe Tool Completion) — EXECUTING
-Plan: 2 of 2
-Status: Executing Phase 3
-Last activity: 2026-07-15 — Phase 3 Plan 01 completed
+Phase: 4 (Vault and Main-Model Wiki) — READY TO PLAN
+Plan: Not started
+Status: Phase 3 complete; ready for Phase 4 planning
+Last activity: 2026-07-15 — Phase 3 completed with Windows/Linux hosted CI
 
-Progress: [███░░░░░░░] 33%
+Progress: [█████░░░░░] 50%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 8
-- Average duration: 29 min
-- Total execution time: 229 min
+- Total plans completed: 9
+- Average duration: 35 min
+- Total execution time: 312 min
 
 **By Phase:**
 
@@ -52,6 +52,7 @@ Progress: [███░░░░░░░] 33%
 | Phase 2 P02 | 27 min | 3 tasks | 22 files |
 | Phase 2 P03 | 44 min | 3 tasks | 21 files |
 | Phase 3 P01 | 73 min | 3 tasks | 37 files |
+| Phase 3 P02 | 83 min | 3 tasks | 41 files |
 
 ## Accumulated Context
 
@@ -74,6 +75,9 @@ Progress: [███░░░░░░░] 33%
 - The npm product entry remains TypeScript until Phase 6 even though the Rust development shell is now usable.
 - Native tool calls use typed Provider history, durable request/decision/start/terminal facts, and serial bounded execution.
 - Restart closes pre-start work as cancelled and post-start work as indeterminate without automatic replay.
+- The bounded v1 inventory is exactly eight strict tools behind one shared permission-independent preflight.
+- Full access skips only the prompt for the current process; confirm requires exact yes for one visible call ID.
+- Shell-free finite diagnostics, Git inspection, and safe existing npm diagnostics use bounded kill-and-wait supervision.
 
 ### Pending Todos
 
@@ -82,7 +86,7 @@ None outside the roadmap.
 ### Blockers/Concerns
 
 - Embedding model download and real Provider spend are not authorized; tests must use fixtures until separately approved.
-- No destructive migration or PR is authorized. Branch push was authorized for hosted CI verification.
+- No destructive migration or PR is authorized. The existing branch was pushed only for hosted CI verification.
 - This Windows 10 20H2 host cannot install the current MSVC Build Tools; local Rust gates use official 1.97.0 gnullvm, and Plan 01-04 must preserve supported Windows/MSVC runner evidence.
 
 ## Deferred Items
@@ -94,6 +98,6 @@ None outside the roadmap.
 
 ## Session Continuity
 
-Last session: 2026-07-15T13:55:22Z
-Stopped at: Phase 3 Plan 01 complete; ready for Plan 02
-Resume file: .planning/phases/MMX-03-safe-tool-completion/03-CONTEXT.md
+Last session: 2026-07-15T15:18:45Z
+Stopped at: Phase 3 complete; ready for Phase 4 planning
+Resume file: .planning/ROADMAP.md

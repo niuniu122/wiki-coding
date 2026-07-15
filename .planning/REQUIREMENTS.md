@@ -39,8 +39,8 @@
 - [x] **TOOL-01**: Each model tool request has a stable call ID, normalized arguments, durable result, and correct Provider round-trip ordering.
 - [x] **TOOL-02**: `confirm` asks before every external tool invocation and returns a structured rejection when declined.
 - [x] **TOOL-03**: `full-access` auto-approves allowed tools only for the current process and resets to `confirm` on restart.
-- [ ] **TOOL-04**: Rust v1 implements read/list, patch/write, bounded shell, Git status/diff, and npm diagnostics.
-- [ ] **TOOL-05**: Both modes enforce path, schema, secret, destructive-operation, cancellation, and unknown-side-effect hard gates.
+- [x] **TOOL-04**: Rust v1 implements read/list, patch/write, bounded shell, Git status/diff, and npm diagnostics.
+- [x] **TOOL-05**: Both modes enforce path, schema, secret, destructive-operation, cancellation, and unknown-side-effect hard gates.
 
 ### Vault
 
@@ -122,8 +122,8 @@
 | TOOL-01 | Phase 3 | Complete |
 | TOOL-02 | Phase 3 | Complete |
 | TOOL-03 | Phase 3 | Complete |
-| TOOL-04 | Phase 3 | Pending |
-| TOOL-05 | Phase 3 | In Progress |
+| TOOL-04 | Phase 3 | Complete |
+| TOOL-05 | Phase 3 | Complete |
 | VAULT-01 | Phase 4 | Pending |
 | VAULT-02 | Phase 4 | Pending |
 | VAULT-03 | Phase 4 | Pending |
@@ -156,4 +156,4 @@
 
 ---
 *Requirements defined: 2026-07-15*
-*Last updated: 2026-07-15 after canonical SPEC ingest and final decision lock*
+*Last updated: 2026-07-15 after Phase 3 bounded-tool completion*
