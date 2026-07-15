@@ -1,0 +1,20 @@
+[package]
+name = "minimax-compat-harness"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish = false
+
+[dependencies]
+minimax-core = { path = "../core" }
+minimax-protocol = { path = "../protocol" }
+minimax-provider = { path = "../provider" }
+minimax-retrieval = { path = "../retrieval" }
+minimax-tools = { path = "../tools" }
+minimax-tui = { path = "../tui" }
+minimax-vault = { path = "../vault" }
+serde_json.workspace = true
+
+[lints]
+workspace = true

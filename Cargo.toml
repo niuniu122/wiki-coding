@@ -1,0 +1,35 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/protocol",
+  "crates/core",
+  "crates/provider",
+  "crates/tools",
+  "crates/retrieval",
+  "crates/vault",
+  "crates/tui",
+  "crates/cli",
+  "crates/compat-harness",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.97"
+license = "MIT OR Apache-2.0"
+
+[workspace.dependencies]
+serde = { version = "=1.0.228", features = ["derive"] }
+serde_json = "=1.0.150"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+unused_must_use = "deny"
+unreachable_pub = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+unwrap_used = "warn"

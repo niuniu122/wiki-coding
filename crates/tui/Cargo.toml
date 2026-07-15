@@ -1,0 +1,13 @@
+[package]
+name = "minimax-tui"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+minimax-core = { path = "../core" }
+minimax-protocol = { path = "../protocol" }
+
+[lints]
+workspace = true

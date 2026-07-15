@@ -1,0 +1,12 @@
+[package]
+name = "minimax-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+
+[dependencies]
+minimax-protocol = { path = "../protocol" }
+
+[lints]
+workspace = true
