@@ -38,6 +38,7 @@ dependencies = [
  "minimax-tools",
  "minimax-tui",
  "minimax-vault",
+ "serde",
  "serde_json",
 ]
 

@@ -37,8 +37,13 @@
     },
     {
       "id": "rust.provider_protocols",
-      "status": "pending",
-      "evidence": []
+      "status": "matched",
+      "evidence": [
+        "crates/provider/tests/provider_fixtures.rs",
+        "fixtures/compat/provider-streams/chat-completions.valid.jsonl",
+        "fixtures/compat/provider-streams/invalid-cases.v1.json",
+        "fixtures/compat/provider-streams/responses.valid.jsonl"
+      ]
     },
     {
       "id": "rust.permission_modes",

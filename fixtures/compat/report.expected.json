@@ -1,0 +1,58 @@
+{
+  "schemaVersion": 1,
+  "baselineCommit": "84784f5",
+  "entries": [
+    {
+      "id": "rust.permission_modes",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "rust.product_entry",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "rust.provider_profiles",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "rust.provider_protocols",
+      "status": "matched",
+      "evidence": [
+        "crates/provider/tests/provider_fixtures.rs",
+        "fixtures/compat/provider-streams/chat-completions.valid.jsonl",
+        "fixtures/compat/provider-streams/invalid-cases.v1.json",
+        "fixtures/compat/provider-streams/responses.valid.jsonl"
+      ]
+    },
+    {
+      "id": "rust.public_commands",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "typescript.provider_profiles",
+      "status": "matched",
+      "evidence": [
+        "test/model-profile-registry.test.ts",
+        "test/provider-conformance.test.ts"
+      ]
+    },
+    {
+      "id": "typescript.provider_protocols",
+      "status": "matched",
+      "evidence": [
+        "test/provider-conformance.test.ts"
+      ]
+    },
+    {
+      "id": "typescript.public_commands",
+      "status": "matched",
+      "evidence": [
+        "test/chat-input-policy.test.ts"
+      ]
+    }
+  ]
+}
