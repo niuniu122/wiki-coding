@@ -7,10 +7,12 @@
 mod ports;
 mod runtime;
 mod sequence;
+mod session;
 
 pub use ports::{Clock, FixedClock, FixedIdGenerator, IdGenerator};
 pub use runtime::{RunEffect, RunInput, RunMachine, RunState};
 pub use sequence::{NormalizedReplayRecord, StreamSequence, replay_stream};
+pub use session::{SessionCommand, SessionEffect, SessionMachine, SessionSummary};
 
 /// Human-readable boundary used by architecture checks and documentation.
 pub const CRATE_ROLE: &str = "runtime orchestration and policy without concrete adapters";
