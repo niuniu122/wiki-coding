@@ -21,7 +21,7 @@
 
 ### Runtime
 
-- [ ] **RUN-01**: One-shot and interactive runs stream visible output, support cancellation, and persist one terminal result.
+- [x] **RUN-01**: One-shot and interactive runs stream visible output, support cancellation, and persist one terminal result.
 - [ ] **RUN-02**: Users can create, list, resume, continue, interrupt, retry, and finalize sessions after a process restart.
 - [ ] **RUN-03**: Local deterministic compaction produces a stable short summary without an extra model call and reports retained context.
 - [ ] **RUN-04**: A single-writer lease, controlled shutdown, and startup recovery prevent concurrent or half-finalized workspace state.
@@ -110,7 +110,7 @@
 | COMP-02 | Phase 1 | Complete |
 | COMP-03 | Phase 1 | Complete |
 | COMP-04 | Phase 1 | Complete |
-| RUN-01 | Phase 2 | Pending |
+| RUN-01 | Phase 2 | Complete |
 | RUN-02 | Phase 2 | Pending |
 | RUN-03 | Phase 2 | Pending |
 | RUN-04 | Phase 2 | Pending |
