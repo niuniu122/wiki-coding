@@ -2,8 +2,8 @@ use std::collections::BTreeMap;
 
 use minimax_core::StreamSequence;
 use minimax_protocol::{
-    ProtocolErrorCode, ProviderProtocolKind, StreamEvent, TerminalOutcome, ToolCallFragment,
-    ToolCallId, Usage,
+    ProtocolErrorCode, ProviderProtocolKind, StreamEvent, TerminalOutcome, ToolCall,
+    ToolCallFragment, ToolCallId, ToolValidationError, Usage,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -59,16 +59,20 @@ pub fn parse_responses_event(raw: &str) -> Result<Vec<StreamEvent>, ProtocolErro
                 .to_owned(),
         }]),
         "response.function_call_arguments.delta" => {
-            let call_id = string_at(&value, &["item_id"])
-                .or_else(|| string_at(&value, &["call_id"]))
+            let stream_id = string_at(&value, &["item_id"]).map(str::to_owned);
+            let call_id = string_at(&value, &["call_id"])
+                .map(str::to_owned)
+                .or_else(|| stream_id.as_ref().map(|value| format!("stream:{value}")))
                 .ok_or(ProtocolErrorCode::MissingToolCallId)?;
             Ok(vec![StreamEvent::ToolCallFragments {
                 fragments: vec![ToolCallFragment {
                     call_id: ToolCallId::new(call_id)?,
+                    stream_id,
                     name: None,
                     arguments_delta: Some(
                         string_at(&value, &["delta"]).unwrap_or_default().to_owned(),
                     ),
+                    arguments_complete: false,
                     index: None,
                 }],
             }])
@@ -87,8 +91,13 @@ pub fn parse_responses_event(raw: &str) -> Result<Vec<StreamEvent>, ProtocolErro
             Ok(vec![StreamEvent::ToolCallFragments {
                 fragments: vec![ToolCallFragment {
                     call_id: ToolCallId::new(call_id)?,
+                    stream_id: string_at(item, &["id"]).map(str::to_owned),
                     name: Some(name),
-                    arguments_delta: string_at(item, &["arguments"]).map(str::to_owned),
+                    arguments_delta: (event_type == "response.output_item.done")
+                        .then(|| string_at(item, &["arguments"]).map(str::to_owned))
+                        .flatten(),
+                    arguments_complete: event_type == "response.output_item.done"
+                        && string_at(item, &["arguments"]).is_some(),
                     index: None,
                 }],
             }])
@@ -150,8 +159,10 @@ pub fn parse_chat_completions_event(raw: &str) -> Result<Vec<StreamEvent>, Proto
                 let call_id = string_at(call, &["id"]).unwrap_or(&provisional);
                 Ok(ToolCallFragment {
                     call_id: ToolCallId::new(call_id)?,
+                    stream_id: None,
                     name: string_at(call, &["function", "name"]).map(str::to_owned),
                     arguments_delta: string_at(call, &["function", "arguments"]).map(str::to_owned),
+                    arguments_complete: false,
                     index: Some(index),
                 })
             })
@@ -187,7 +198,7 @@ pub fn replay_fixture<'a>(
             }
             sequence.accept(event.clone())?;
             match &event {
-                StreamEvent::ToolCallFragments { fragments } => tools.accept(fragments),
+                StreamEvent::ToolCallFragments { fragments } => tools.accept(fragments)?,
                 _ => compatibility_events.push(project_event(&event)),
             }
             stream_events.push(event);
@@ -206,16 +217,19 @@ pub fn replay_fixture<'a>(
 struct ToolAccumulator {
     by_id: BTreeMap<String, ToolAssembly>,
     id_by_index: BTreeMap<u32, String>,
+    id_by_stream: BTreeMap<String, String>,
+    order: Vec<String>,
 }
 
 #[derive(Default)]
 struct ToolAssembly {
     name: Option<String>,
     arguments: String,
+    index: Option<u32>,
 }
 
 impl ToolAccumulator {
-    fn accept(&mut self, fragments: &[ToolCallFragment]) {
+    fn accept(&mut self, fragments: &[ToolCallFragment]) -> Result<(), ProtocolErrorCode> {
         for fragment in fragments {
             let raw_id = fragment.call_id.as_str();
             let actual_id = if raw_id.starts_with("index:") {
@@ -223,41 +237,135 @@ impl ToolAccumulator {
                     .index
                     .and_then(|index| self.id_by_index.get(&index).cloned())
                     .unwrap_or_else(|| raw_id.to_owned())
+            } else if raw_id.starts_with("stream:") {
+                fragment
+                    .stream_id
+                    .as_ref()
+                    .and_then(|stream_id| self.id_by_stream.get(stream_id).cloned())
+                    .or_else(|| {
+                        fragment
+                            .stream_id
+                            .as_ref()
+                            .filter(|stream_id| self.by_id.contains_key(*stream_id))
+                            .cloned()
+                    })
+                    .unwrap_or_else(|| raw_id.to_owned())
             } else {
                 if let Some(index) = fragment.index {
-                    self.id_by_index.insert(index, raw_id.to_owned());
-                    if let Some(provisional) = self.by_id.remove(&format!("index:{index}")) {
-                        self.by_id.insert(raw_id.to_owned(), provisional);
-                    }
+                    register_alias(&mut self.id_by_index, index, raw_id)?;
+                    self.promote(&format!("index:{index}"), raw_id)?;
+                }
+                if let Some(stream_id) = &fragment.stream_id {
+                    register_alias(&mut self.id_by_stream, stream_id.clone(), raw_id)?;
+                    self.promote(&format!("stream:{stream_id}"), raw_id)?;
                 }
                 raw_id.to_owned()
             };
+            if !self.by_id.contains_key(&actual_id) {
+                self.order.push(actual_id.clone());
+            }
             let assembly = self.by_id.entry(actual_id).or_default();
+            if assembly.index.is_some()
+                && fragment.index.is_some()
+                && assembly.index != fragment.index
+            {
+                return Err(ProtocolErrorCode::DuplicateToolCallId);
+            }
+            assembly.index = fragment.index.or(assembly.index);
             if let Some(name) = &fragment.name {
+                if assembly.name.is_some() && !fragment.arguments_complete {
+                    return Err(ProtocolErrorCode::DuplicateToolCallId);
+                }
                 assembly.name = Some(name.clone());
             }
             if let Some(arguments) = &fragment.arguments_delta {
-                assembly.arguments.push_str(arguments);
+                if fragment.arguments_complete {
+                    assembly.arguments.clone_from(arguments);
+                } else {
+                    assembly.arguments.push_str(arguments);
+                }
             }
         }
+        Ok(())
     }
 
     fn flush(&mut self) -> Result<Vec<CompatibilityEvent>, ProtocolErrorCode> {
         let pending = std::mem::take(&mut self.by_id);
         self.id_by_index.clear();
-        pending
+        self.id_by_stream.clear();
+        let order = std::mem::take(&mut self.order);
+        order
             .into_iter()
-            .map(|(call_id, assembly)| {
-                if call_id.starts_with("index:") {
+            .map(|call_id| {
+                let assembly = pending
+                    .get(&call_id)
+                    .ok_or(ProtocolErrorCode::InvalidToolArguments)?;
+                if call_id.starts_with("index:") || call_id.starts_with("stream:") {
                     return Err(ProtocolErrorCode::MissingToolCallId);
                 }
+                let name = assembly
+                    .name
+                    .clone()
+                    .ok_or(ProtocolErrorCode::MalformedJson)?;
+                let call = ToolCall::new(
+                    ToolCallId::new(call_id)?,
+                    name.clone(),
+                    assembly.arguments.clone(),
+                )
+                .map_err(protocol_error_from_tool_validation)?;
                 Ok(CompatibilityEvent::ToolCall {
-                    call_id: ToolCallId::new(call_id)?,
-                    name: assembly.name.ok_or(ProtocolErrorCode::MalformedJson)?,
-                    arguments_json: assembly.arguments,
+                    call_id: call.call_id,
+                    name,
+                    arguments_json: call.arguments_json,
                 })
             })
             .collect()
+    }
+
+    fn promote(&mut self, provisional: &str, actual: &str) -> Result<(), ProtocolErrorCode> {
+        if provisional == actual {
+            return Ok(());
+        }
+        if let Some(assembly) = self.by_id.remove(provisional) {
+            if self.by_id.contains_key(actual) {
+                return Err(ProtocolErrorCode::DuplicateToolCallId);
+            }
+            self.by_id.insert(actual.to_owned(), assembly);
+            if let Some(position) = self.order.iter().position(|value| value == provisional) {
+                self.order[position] = actual.to_owned();
+            }
+        }
+        Ok(())
+    }
+}
+
+fn register_alias<K: Ord + Clone>(
+    aliases: &mut BTreeMap<K, String>,
+    key: K,
+    call_id: &str,
+) -> Result<(), ProtocolErrorCode> {
+    if aliases
+        .get(&key)
+        .is_some_and(|existing| existing != call_id)
+    {
+        return Err(ProtocolErrorCode::DuplicateToolCallId);
+    }
+    aliases.insert(key, call_id.to_owned());
+    Ok(())
+}
+
+fn protocol_error_from_tool_validation(error: ToolValidationError) -> ProtocolErrorCode {
+    match error {
+        ToolValidationError::ArgumentsTooLarge => ProtocolErrorCode::ToolArgumentsTooLarge,
+        ToolValidationError::ArgumentsNotObject => ProtocolErrorCode::InvalidToolArguments,
+        ToolValidationError::EmptyName
+        | ToolValidationError::InvalidName
+        | ToolValidationError::DescriptionTooLarge
+        | ToolValidationError::InvalidParametersSchema
+        | ToolValidationError::UnknownArgument
+        | ToolValidationError::MissingArgument
+        | ToolValidationError::InvalidCode
+        | ToolValidationError::ResultTooLarge => ProtocolErrorCode::MalformedJson,
     }
 }
 

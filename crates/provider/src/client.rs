@@ -5,8 +5,8 @@ use std::time::Duration;
 use futures_util::StreamExt as _;
 use minimax_core::StreamSequence;
 use minimax_protocol::{
-    ProviderProtocolKind, RuntimeErrorCode, RuntimeFailure, StreamEvent, ToolCallFragment,
-    ToolCallId, TurnRequest,
+    ProviderProtocolKind, RuntimeErrorCode, RuntimeFailure, StreamEvent, ToolCall,
+    ToolCallFragment, ToolCallId, TurnRequest,
 };
 use reqwest::redirect::Policy;
 use secrecy::{ExposeSecret as _, SecretString};
@@ -159,7 +159,7 @@ where
 
     for event in events {
         if let StreamEvent::ToolCallFragments { fragments } = event {
-            tools.accept(&fragments);
+            tools.accept(&fragments)?;
             continue;
         }
         flush_tools(tools, sequence, publish).await?;
@@ -219,6 +219,8 @@ fn endpoint_with_path(endpoint: &reqwest::Url, path: &str) -> Result<reqwest::Ur
 struct ToolAssembler {
     by_id: BTreeMap<String, ToolAssembly>,
     id_by_index: BTreeMap<u32, String>,
+    id_by_stream: BTreeMap<String, String>,
+    order: Vec<String>,
 }
 
 #[derive(Default)]
@@ -229,7 +231,7 @@ struct ToolAssembly {
 }
 
 impl ToolAssembler {
-    fn accept(&mut self, fragments: &[ToolCallFragment]) {
+    fn accept(&mut self, fragments: &[ToolCallFragment]) -> Result<(), RuntimeFailure> {
         for fragment in fragments {
             let raw_id = fragment.call_id.as_str();
             let actual_id = if raw_id.starts_with("index:") {
@@ -237,48 +239,137 @@ impl ToolAssembler {
                     .index
                     .and_then(|index| self.id_by_index.get(&index).cloned())
                     .unwrap_or_else(|| raw_id.to_owned())
+            } else if raw_id.starts_with("stream:") {
+                fragment
+                    .stream_id
+                    .as_ref()
+                    .and_then(|stream_id| self.id_by_stream.get(stream_id).cloned())
+                    .or_else(|| {
+                        fragment
+                            .stream_id
+                            .as_ref()
+                            .filter(|stream_id| self.by_id.contains_key(*stream_id))
+                            .cloned()
+                    })
+                    .unwrap_or_else(|| raw_id.to_owned())
             } else {
                 if let Some(index) = fragment.index {
-                    self.id_by_index.insert(index, raw_id.to_owned());
-                    if let Some(provisional) = self.by_id.remove(&format!("index:{index}")) {
-                        self.by_id.insert(raw_id.to_owned(), provisional);
-                    }
+                    self.register_index(index, raw_id)?;
+                    self.promote(&format!("index:{index}"), raw_id)?;
+                }
+                if let Some(stream_id) = &fragment.stream_id {
+                    self.register_stream(stream_id, raw_id)?;
+                    self.promote(&format!("stream:{stream_id}"), raw_id)?;
                 }
                 raw_id.to_owned()
             };
+            if !self.by_id.contains_key(&actual_id) {
+                self.order.push(actual_id.clone());
+            }
             let assembly = self.by_id.entry(actual_id).or_default();
+            if assembly.index.is_some()
+                && fragment.index.is_some()
+                && assembly.index != fragment.index
+            {
+                return Err(protocol_failure());
+            }
             assembly.index = fragment.index.or(assembly.index);
             if let Some(name) = &fragment.name {
+                if assembly.name.is_some() && !fragment.arguments_complete {
+                    return Err(protocol_failure());
+                }
                 assembly.name = Some(name.clone());
             }
             if let Some(arguments) = &fragment.arguments_delta {
-                assembly.arguments.push_str(arguments);
+                if fragment.arguments_complete {
+                    assembly.arguments.clone_from(arguments);
+                } else {
+                    assembly.arguments.push_str(arguments);
+                }
             }
         }
+        Ok(())
     }
 
     fn flush(&mut self) -> Result<Vec<StreamEvent>, RuntimeFailure> {
         let pending = std::mem::take(&mut self.by_id);
         self.id_by_index.clear();
-        pending
+        self.id_by_stream.clear();
+        let order = std::mem::take(&mut self.order);
+        order
             .into_iter()
-            .map(|(call_id, assembly)| {
-                if call_id.starts_with("index:") || assembly.name.is_none() {
-                    return Err(RuntimeFailure::new(RuntimeErrorCode::ProtocolMalformedJson));
+            .map(|call_id| {
+                let assembly = pending.get(&call_id).ok_or_else(protocol_failure)?;
+                if call_id.starts_with("index:") || call_id.starts_with("stream:") {
+                    return Err(protocol_failure());
                 }
+                let name = assembly.name.clone().ok_or_else(protocol_failure)?;
+                let call = ToolCall::new(
+                    ToolCallId::new(call_id)
+                        .map_err(RuntimeErrorCode::from)
+                        .map_err(RuntimeFailure::new)?,
+                    name.clone(),
+                    assembly.arguments.clone(),
+                )
+                .map_err(|_| protocol_failure())?;
                 Ok(StreamEvent::ToolCallFragments {
                     fragments: vec![ToolCallFragment {
-                        call_id: ToolCallId::new(call_id)
-                            .map_err(RuntimeErrorCode::from)
-                            .map_err(RuntimeFailure::new)?,
-                        name: assembly.name,
-                        arguments_delta: Some(assembly.arguments),
+                        call_id: call.call_id,
+                        stream_id: None,
+                        name: Some(name),
+                        arguments_delta: Some(call.arguments_json),
+                        arguments_complete: true,
                         index: assembly.index,
                     }],
                 })
             })
             .collect()
     }
+
+    fn register_index(&mut self, index: u32, call_id: &str) -> Result<(), RuntimeFailure> {
+        if self
+            .id_by_index
+            .get(&index)
+            .is_some_and(|existing| existing != call_id)
+        {
+            return Err(protocol_failure());
+        }
+        self.id_by_index.insert(index, call_id.to_owned());
+        Ok(())
+    }
+
+    fn register_stream(&mut self, stream_id: &str, call_id: &str) -> Result<(), RuntimeFailure> {
+        if self
+            .id_by_stream
+            .get(stream_id)
+            .is_some_and(|existing| existing != call_id)
+        {
+            return Err(protocol_failure());
+        }
+        self.id_by_stream
+            .insert(stream_id.to_owned(), call_id.to_owned());
+        Ok(())
+    }
+
+    fn promote(&mut self, provisional: &str, actual: &str) -> Result<(), RuntimeFailure> {
+        if provisional == actual {
+            return Ok(());
+        }
+        if let Some(assembly) = self.by_id.remove(provisional) {
+            if self.by_id.contains_key(actual) {
+                return Err(protocol_failure());
+            }
+            self.by_id.insert(actual.to_owned(), assembly);
+            if let Some(position) = self.order.iter().position(|value| value == provisional) {
+                self.order[position] = actual.to_owned();
+            }
+        }
+        Ok(())
+    }
+}
+
+fn protocol_failure() -> RuntimeFailure {
+    RuntimeFailure::new(RuntimeErrorCode::ProtocolMalformedJson)
 }
 
 #[cfg(test)]

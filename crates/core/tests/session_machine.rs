@@ -1,7 +1,8 @@
 use minimax_core::{SessionCommand, SessionEffect, SessionMachine};
 use minimax_protocol::{
-    MessageRole, ModelBinding, ModelId, ProviderId, ProviderProtocolKind, RecordId, RequestId,
-    RuntimeTerminalOutcome, SessionId, SessionStatus, TurnId, TurnReceipt, TurnStatus,
+    ConversationItem, MessageRole, ModelBinding, ModelId, ProviderId, ProviderProtocolKind,
+    RecordId, RequestId, RuntimeTerminalOutcome, SessionId, SessionStatus, TurnId, TurnReceipt,
+    TurnStatus,
 };
 
 fn record_id(value: &str) -> RecordId {
@@ -45,10 +46,10 @@ fn start(machine: &mut SessionMachine, turn: &str, record: &str) {
     let SessionEffect::StartTurn(request) = &effects[1] else {
         panic!("start effect expected");
     };
-    assert_eq!(
-        request.messages.last().map(|message| message.role),
-        Some(MessageRole::User)
-    );
+    assert!(matches!(
+        request.messages.last(),
+        Some(ConversationItem::Message(message)) if message.role == MessageRole::User
+    ));
 }
 
 fn persisted(effects: &[SessionEffect]) -> minimax_protocol::SessionRecordV1 {

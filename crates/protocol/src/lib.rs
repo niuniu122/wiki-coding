@@ -6,6 +6,7 @@
 mod event;
 mod runtime;
 mod session;
+mod tool;
 
 pub use event::{
     ProtocolErrorCode, ProviderProtocolKind, SCHEMA_VERSION, SchemaVersion, SessionId, StreamEvent,
@@ -13,14 +14,20 @@ pub use event::{
     parse_stream_event_v1,
 };
 pub use runtime::{
-    DiagnosticCode, MessageRole, ModelId, ModelMessage, OutputSettings, ProviderId, RequestId,
-    RuntimeErrorCode, RuntimeEvent, RuntimeEventV1, RuntimeFailure, RuntimeTerminalOutcome,
-    TurnReceipt, TurnRequest, parse_runtime_event_v1,
+    AgentLimits, AssistantToolCallBatch, ConversationItem, DiagnosticCode, MessageRole, ModelId,
+    ModelMessage, OutputSettings, ProviderId, RequestId, RuntimeErrorCode, RuntimeEvent,
+    RuntimeEventV1, RuntimeFailure, RuntimeTerminalOutcome, ToolResultMessage, TurnReceipt,
+    TurnRequest, parse_runtime_event_v1,
 };
 pub use session::{
     CompactionId, CompactionPointer, CompactionRecentTurn, CompactionRecord, JournalRecord,
     ModelBinding, RecordId, RecoveryRecord, SessionRecord, SessionRecordV1, SessionStatus,
     TraceCode, TraceEntry, TurnRecord, TurnStatus, VisibleMessage, parse_session_record_v1,
+};
+pub use tool::{
+    MAX_TOOL_ARGUMENT_BYTES, MAX_TOOL_CODE_BYTES, MAX_TOOL_DESCRIPTION_BYTES, MAX_TOOL_NAME_BYTES,
+    MAX_TOOL_RESULT_BYTES, ToolCall, ToolDecision, ToolDecisionKind, ToolDefinition, ToolEffect,
+    ToolInvocation, ToolResult, ToolTerminalStatus, ToolValidationError, validate_unique_call_ids,
 };
 
 /// Human-readable boundary used by architecture checks and documentation.

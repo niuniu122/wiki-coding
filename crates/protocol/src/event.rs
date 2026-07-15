@@ -42,7 +42,7 @@ macro_rules! validated_id {
         impl $name {
             pub fn new(value: impl Into<String>) -> Result<Self, ProtocolErrorCode> {
                 let value = value.into();
-                if value.trim().is_empty() {
+                if value.trim().is_empty() || value.len() > 256 {
                     return Err(ProtocolErrorCode::MalformedJson);
                 }
                 Ok(Self(value))
@@ -89,6 +89,9 @@ pub enum ProtocolErrorCode {
     DuplicateTerminal,
     EventAfterTerminal,
     UnknownEvent,
+    DuplicateToolCallId,
+    InvalidToolArguments,
+    ToolArgumentsTooLarge,
 }
 
 impl fmt::Display for ProtocolErrorCode {
@@ -121,9 +124,13 @@ pub struct Usage {
 pub struct ToolCallFragment {
     pub call_id: ToolCallId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub arguments_delta: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub arguments_complete: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub index: Option<u32>,
 }

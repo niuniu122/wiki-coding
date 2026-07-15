@@ -22,8 +22,10 @@ fn every_public_event_variant_round_trips_through_schema_one() {
     round_trip(StreamEvent::ToolCallFragments {
         fragments: vec![ToolCallFragment {
             call_id: ToolCallId::new("call-1").expect("valid ID"),
+            stream_id: None,
             name: Some("read_file".to_owned()),
             arguments_delta: Some("{}".to_owned()),
+            arguments_complete: true,
             index: Some(0),
         }],
     });

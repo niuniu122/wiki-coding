@@ -576,26 +576,35 @@ impl SessionMachine {
                 continue;
             }
             if previous.status == TurnStatus::Completed {
-                messages.push(ModelMessage {
-                    role: MessageRole::User,
-                    content: previous.user_message.content.clone(),
-                });
+                messages.push(
+                    ModelMessage {
+                        role: MessageRole::User,
+                        content: previous.user_message.content.clone(),
+                    }
+                    .into(),
+                );
                 if let Some(assistant) = previous
                     .assistant_message
                     .as_ref()
                     .filter(|message| !message.partial)
                 {
-                    messages.push(ModelMessage {
-                        role: MessageRole::Assistant,
-                        content: assistant.content.clone(),
-                    });
+                    messages.push(
+                        ModelMessage {
+                            role: MessageRole::Assistant,
+                            content: assistant.content.clone(),
+                        }
+                        .into(),
+                    );
                 }
             }
         }
-        messages.push(ModelMessage {
-            role: MessageRole::User,
-            content: turn.user_message.content.clone(),
-        });
+        messages.push(
+            ModelMessage {
+                role: MessageRole::User,
+                content: turn.user_message.content.clone(),
+            }
+            .into(),
+        );
         TurnRequest {
             session_id: session.session_id.clone(),
             turn_id: turn.turn_id.clone(),
@@ -604,6 +613,8 @@ impl SessionMachine {
             model_id: binding.model_id.clone(),
             protocol: binding.protocol,
             messages,
+            tools: Vec::new(),
+            agent_limits: None,
             output: OutputSettings::new(max_output_tokens)?,
         }
         .validate()

@@ -20,10 +20,15 @@ fn request(protocol: ProviderProtocolKind) -> TurnRequest {
         provider_id: ProviderId::new("provider:test").expect("valid provider"),
         model_id: ModelId::new("model-test").expect("valid model"),
         protocol,
-        messages: vec![ModelMessage {
-            role: MessageRole::User,
-            content: "hello".to_owned(),
-        }],
+        messages: vec![
+            ModelMessage {
+                role: MessageRole::User,
+                content: "hello".to_owned(),
+            }
+            .into(),
+        ],
+        tools: Vec::new(),
+        agent_limits: None,
         output: OutputSettings::new(128).expect("valid output"),
     }
 }
@@ -233,6 +238,71 @@ async fn malformed_premature_duplicate_and_after_terminal_streams_fail_truthfull
             .expect_err("invalid stream should fail");
         assert_eq!(error.code, expected);
     }
+}
+
+#[tokio::test]
+async fn complete_tool_calls_are_validated_and_keep_provider_order() {
+    let cases = [
+        (
+            ProviderProtocolKind::Responses,
+            concat!(
+                "data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\",\"id\":\"item-z\",\"call_id\":\"call-z\",\"name\":\"read_file\"}}\n\n",
+                "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"item-z\",\"delta\":\"{}\"}\n\n",
+                "data: {\"type\":\"response.output_item.added\",\"item\":{\"type\":\"function_call\",\"id\":\"item-a\",\"call_id\":\"call-a\",\"name\":\"list_directory\"}}\n\n",
+                "data: {\"type\":\"response.function_call_arguments.delta\",\"item_id\":\"item-a\",\"delta\":\"{}\"}\n\n",
+                "data: {\"type\":\"response.completed\"}\n\n"
+            ),
+        ),
+        (
+            ProviderProtocolKind::ChatCompletions,
+            concat!(
+                "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call-z\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{}\"}},{\"index\":1,\"id\":\"call-a\",\"function\":{\"name\":\"list_directory\",\"arguments\":\"{}\"}}]}}]}\n\n",
+                "data: [DONE]\n\n"
+            ),
+        ),
+    ];
+
+    for (protocol, body) in cases {
+        let (endpoint, _) =
+            fixture_server(200, vec![body.as_bytes().to_vec()], Duration::ZERO).await;
+        let client =
+            HttpProviderClient::new(&endpoint, Some(Duration::from_secs(2))).expect("valid client");
+        let events = client
+            .stream_collect(&request(protocol), &secret(), &CancellationToken::new())
+            .await
+            .expect("complete calls");
+        let calls = events
+            .iter()
+            .filter_map(|event| match event {
+                StreamEvent::ToolCallFragments { fragments } => fragments.first(),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(calls.len(), 2);
+        assert_eq!(calls[0].call_id.as_str(), "call-z");
+        assert_eq!(calls[1].call_id.as_str(), "call-a");
+        assert!(calls.iter().all(|call| call.arguments_complete));
+    }
+}
+
+#[tokio::test]
+async fn malformed_complete_tool_arguments_never_reach_runtime() {
+    let body = concat!(
+        "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"function_call\",\"id\":\"item-1\",\"call_id\":\"call-1\",\"name\":\"read_file\",\"arguments\":\"[]\"}}\n\n",
+        "data: {\"type\":\"response.completed\"}\n\n"
+    );
+    let (endpoint, _) = fixture_server(200, vec![body.as_bytes().to_vec()], Duration::ZERO).await;
+    let client =
+        HttpProviderClient::new(&endpoint, Some(Duration::from_secs(2))).expect("valid client");
+    let error = client
+        .stream_collect(
+            &request(ProviderProtocolKind::Responses),
+            &secret(),
+            &CancellationToken::new(),
+        )
+        .await
+        .expect_err("non-object arguments must fail");
+    assert_eq!(error.code, RuntimeErrorCode::ProtocolMalformedJson);
 }
 
 #[test]

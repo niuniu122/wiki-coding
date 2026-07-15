@@ -4,7 +4,8 @@ use serde::de::Error as _;
 use serde::{Deserialize, Deserializer, Serialize};
 
 use crate::{
-    ProtocolErrorCode, ProviderProtocolKind, SchemaVersion, SessionId, ToolCallId, TurnId, Usage,
+    ProtocolErrorCode, ProviderProtocolKind, SchemaVersion, SessionId, ToolCall, ToolCallId,
+    ToolDefinition, ToolResult, TurnId, Usage,
 };
 
 macro_rules! validated_runtime_id {
@@ -59,6 +60,89 @@ pub struct ModelMessage {
     pub content: String,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AssistantToolCallBatch {
+    pub tool_calls: Vec<ToolCall>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolResultMessage {
+    pub tool_result: ToolResult,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(untagged)]
+pub enum ConversationItem {
+    Message(ModelMessage),
+    AssistantToolCalls(AssistantToolCallBatch),
+    ToolResult(ToolResultMessage),
+}
+
+impl From<ModelMessage> for ConversationItem {
+    fn from(value: ModelMessage) -> Self {
+        Self::Message(value)
+    }
+}
+
+impl ConversationItem {
+    #[must_use]
+    pub fn byte_len(&self) -> usize {
+        match self {
+            Self::Message(message) => message.content.len(),
+            Self::AssistantToolCalls(batch) => batch
+                .tool_calls
+                .iter()
+                .map(|call| call.name.len() + call.arguments_json.len())
+                .sum(),
+            Self::ToolResult(message) => message.tool_result.output.as_ref().map_or(0, String::len),
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct AgentLimits {
+    pub max_provider_rounds: u16,
+    pub max_tool_calls: u16,
+    pub max_elapsed_ms: u64,
+    pub max_tool_result_bytes: u64,
+}
+
+impl Default for AgentLimits {
+    fn default() -> Self {
+        Self {
+            max_provider_rounds: 8,
+            max_tool_calls: 64,
+            max_elapsed_ms: 5 * 60 * 1_000,
+            max_tool_result_bytes: 1024 * 1024,
+        }
+    }
+}
+
+impl AgentLimits {
+    pub const MAX_PROVIDER_ROUNDS: u16 = 64;
+    pub const MAX_TOOL_CALLS: u16 = 256;
+    pub const MAX_ELAPSED_MS: u64 = 3_600_000;
+    pub const MAX_TOOL_RESULT_BYTES: u64 = 16 * 1_024 * 1_024;
+
+    pub fn validate(self) -> Result<Self, RuntimeErrorCode> {
+        if self.max_provider_rounds == 0
+            || self.max_provider_rounds > Self::MAX_PROVIDER_ROUNDS
+            || self.max_tool_calls == 0
+            || self.max_tool_calls > Self::MAX_TOOL_CALLS
+            || self.max_elapsed_ms == 0
+            || self.max_elapsed_ms > Self::MAX_ELAPSED_MS
+            || self.max_tool_result_bytes == 0
+            || self.max_tool_result_bytes > Self::MAX_TOOL_RESULT_BYTES
+        {
+            return Err(RuntimeErrorCode::Configuration);
+        }
+        Ok(self)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct OutputSettings {
@@ -89,7 +173,11 @@ pub struct TurnRequest {
     pub provider_id: ProviderId,
     pub model_id: ModelId,
     pub protocol: ProviderProtocolKind,
-    pub messages: Vec<ModelMessage>,
+    pub messages: Vec<ConversationItem>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub tools: Vec<ToolDefinition>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent_limits: Option<AgentLimits>,
     pub output: OutputSettings,
 }
 
@@ -103,9 +191,61 @@ impl TurnRequest {
             || self
                 .messages
                 .iter()
-                .any(|message| message.content.len() > Self::MAX_MESSAGE_BYTES)
+                .any(|message| message.byte_len() > Self::MAX_MESSAGE_BYTES)
         {
             return Err(RuntimeErrorCode::Configuration);
+        }
+        let mut definitions = std::collections::BTreeMap::new();
+        for tool in self.tools.iter().cloned() {
+            let tool = tool
+                .validate()
+                .map_err(|_| RuntimeErrorCode::Configuration)?;
+            if definitions.insert(tool.name.clone(), tool).is_some() {
+                return Err(RuntimeErrorCode::Configuration);
+            }
+        }
+        let mut call_names = std::collections::BTreeMap::new();
+        let mut result_ids = std::collections::BTreeSet::new();
+        for message in &self.messages {
+            match message {
+                ConversationItem::Message(_) => {}
+                ConversationItem::AssistantToolCalls(batch) => {
+                    if batch.tool_calls.is_empty() {
+                        return Err(RuntimeErrorCode::Configuration);
+                    }
+                    for call in batch.tool_calls.iter().cloned() {
+                        let call = call
+                            .validate()
+                            .map_err(|_| RuntimeErrorCode::Configuration)?;
+                        definitions
+                            .get(&call.name)
+                            .ok_or(RuntimeErrorCode::Configuration)?
+                            .validate_call(&call)
+                            .map_err(|_| RuntimeErrorCode::Configuration)?;
+                        if call_names.insert(call.call_id, call.name.clone()).is_some() {
+                            return Err(RuntimeErrorCode::Configuration);
+                        }
+                    }
+                }
+                ConversationItem::ToolResult(message) => {
+                    let result = message
+                        .tool_result
+                        .clone()
+                        .validate()
+                        .map_err(|_| RuntimeErrorCode::Configuration)?;
+                    if call_names.get(&result.call_id) != Some(&result.tool_name)
+                        || !result_ids.insert(result.call_id)
+                    {
+                        return Err(RuntimeErrorCode::Configuration);
+                    }
+                }
+            }
+        }
+        if (!self.tools.is_empty() || !call_names.is_empty()) && self.agent_limits.is_none() {
+            return Err(RuntimeErrorCode::Configuration);
+        }
+        if let Some(limits) = self.agent_limits {
+            limits.validate()?;
         }
         self.output.validate()?;
         Ok(self)
@@ -154,6 +294,9 @@ impl From<ProtocolErrorCode> for RuntimeErrorCode {
             ProtocolErrorCode::DuplicateTerminal => Self::ProtocolDuplicateTerminal,
             ProtocolErrorCode::EventAfterTerminal => Self::ProtocolEventAfterTerminal,
             ProtocolErrorCode::UnknownEvent => Self::ProtocolUnknownEvent,
+            ProtocolErrorCode::DuplicateToolCallId
+            | ProtocolErrorCode::InvalidToolArguments
+            | ProtocolErrorCode::ToolArgumentsTooLarge => Self::ProtocolMalformedJson,
         }
     }
 }

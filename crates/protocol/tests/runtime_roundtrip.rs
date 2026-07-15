@@ -74,10 +74,15 @@ fn request_and_receipt_are_strict_and_bounded() {
         provider_id: ProviderId::new("provider:minimax/official").expect("valid provider"),
         model_id: ModelId::new("MiniMax-M2").expect("valid model"),
         protocol: ProviderProtocolKind::Responses,
-        messages: vec![ModelMessage {
-            role: MessageRole::User,
-            content: "hello".to_owned(),
-        }],
+        messages: vec![
+            ModelMessage {
+                role: MessageRole::User,
+                content: "hello".to_owned(),
+            }
+            .into(),
+        ],
+        tools: Vec::new(),
+        agent_limits: None,
         output: OutputSettings::new(512).expect("valid output settings"),
     }
     .validate()

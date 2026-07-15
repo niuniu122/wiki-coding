@@ -14,10 +14,15 @@ fn request() -> TurnRequest {
         provider_id: ProviderId::new("provider:test").expect("provider"),
         model_id: ModelId::new("model-test").expect("model"),
         protocol: ProviderProtocolKind::Responses,
-        messages: vec![ModelMessage {
-            role: MessageRole::User,
-            content: "hello".to_owned(),
-        }],
+        messages: vec![
+            ModelMessage {
+                role: MessageRole::User,
+                content: "hello".to_owned(),
+            }
+            .into(),
+        ],
+        tools: Vec::new(),
+        agent_limits: None,
         output: OutputSettings::new(64).expect("output"),
     }
 }
@@ -162,8 +167,10 @@ fn observed_tool_call_is_persisted_but_never_executed() {
         .apply(RunInput::ProviderEvent(StreamEvent::ToolCallFragments {
             fragments: vec![ToolCallFragment {
                 call_id: ToolCallId::new("call-1").expect("call"),
+                stream_id: None,
                 name: Some("read_file".to_owned()),
                 arguments_delta: Some("{\"path\":\"README.md\"}".to_owned()),
+                arguments_complete: true,
                 index: Some(0),
             }],
         }))
