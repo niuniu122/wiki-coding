@@ -11,10 +11,13 @@
     "build": "tsc -p tsconfig.json",
     "start": "node dist/cli.js",
     "check": "tsc -p tsconfig.json --noEmit",
+    "check:rust": "cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked -- -D warnings",
     "test": "tsx test/run-tests.ts",
+    "test:rust": "cargo test --workspace --locked",
     "eval:retrieval": "tsx src/eval/capability-retrieval-report.ts",
     "eval:provider": "tsx src/eval/provider-conformance.ts",
     "verify:agent": "npm run eval:retrieval && npm run eval:provider",
+    "verify:rust-contracts": "cargo run -p minimax-compat-harness --locked -- verify",
     "smoke:provider": "tsx src/smoke/provider-smoke.ts"
   },
   "dependencies": {

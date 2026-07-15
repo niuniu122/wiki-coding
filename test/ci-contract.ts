@@ -20,9 +20,13 @@ export interface CiValidationResult {
 }
 
 const REQUIRED_RUN_COMMANDS = [
+  "rustup toolchain install 1.97.0 --profile minimal --component rustfmt --component clippy",
   "npm ci",
   "npm run check",
   "npm test",
+  "npm run check:rust",
+  "npm run test:rust",
+  "npm run verify:rust-contracts",
   "npm run build",
   "npm run eval:retrieval",
   "npm run eval:provider"
@@ -228,8 +232,8 @@ function validateSteps(
   errors: string[]
 ): void {
   const steps = parseSteps(lines, stepsHeader, errors);
-  if (steps.length !== 8) {
-    errors.push("jobs.verify steps must contain exactly eight allowlisted steps.");
+  if (steps.length !== 12) {
+    errors.push("jobs.verify steps must contain exactly twelve allowlisted steps.");
     return;
   }
 

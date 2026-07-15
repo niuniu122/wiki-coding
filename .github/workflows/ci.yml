@@ -21,9 +21,13 @@ jobs:
         with:
           node-version: 20
           cache: npm
+      - run: rustup toolchain install 1.97.0 --profile minimal --component rustfmt --component clippy
       - run: npm ci
       - run: npm run check
       - run: npm test
+      - run: npm run check:rust
+      - run: npm run test:rust
+      - run: npm run verify:rust-contracts
       - run: npm run build
       - run: npm run eval:retrieval
       - run: npm run eval:provider
