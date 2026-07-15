@@ -46,6 +46,8 @@ name = "minimax-core"
 version = "0.1.0"
 dependencies = [
  "minimax-protocol",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
