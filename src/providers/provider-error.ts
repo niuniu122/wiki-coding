@@ -1,4 +1,8 @@
 import {TransportError} from "./http-transport.js";
+import {
+  ProviderProtocolError,
+  type ProviderFailureCode
+} from "./provider-protocol.js";
 
 export type ProviderErrorKind =
   | "authentication"
@@ -16,6 +20,7 @@ export interface ProviderErrorOptions {
   kind: ProviderErrorKind;
   status?: number;
   requestId?: string;
+  code?: ProviderFailureCode;
   retryable: boolean;
   cause?: unknown;
 }
@@ -26,6 +31,7 @@ export class ProviderError extends Error {
   readonly kind: ProviderErrorKind;
   readonly status?: number;
   readonly requestId?: string;
+  readonly code?: ProviderFailureCode;
   readonly retryable: boolean;
 
   constructor(message: string, options: ProviderErrorOptions) {
@@ -41,7 +47,31 @@ export class ProviderError extends Error {
     if (options.requestId !== undefined) {
       this.requestId = options.requestId;
     }
+    if (options.code !== undefined) {
+      this.code = options.code;
+    }
   }
+}
+
+export function createStreamProviderError(params: {
+  providerId: string;
+  providerName: string;
+  kind: Extract<ProviderErrorKind, "authentication" | "rate_limit" | "server" | "request" | "protocol">;
+  code: ProviderFailureCode;
+}): ProviderError {
+  return new ProviderError(
+    `${params.providerName}: provider reported ${params.kind} (${params.code}).`,
+    {
+      providerId: params.providerId,
+      providerName: params.providerName,
+      kind: params.kind,
+      code: params.code,
+      retryable:
+        params.kind === "rate_limit" ||
+        params.kind === "server" ||
+        params.kind === "protocol"
+    }
+  );
 }
 
 export function createHttpProviderError(params: {
@@ -81,6 +111,15 @@ export function normalizeProviderError(params: {
 }): ProviderError {
   if (params.error instanceof ProviderError) {
     return params.error;
+  }
+  if (params.error instanceof ProviderProtocolError) {
+    return new ProviderError(`${params.providerName}: ${params.error.message}`, {
+      providerId: params.providerId,
+      providerName: params.providerName,
+      kind: "protocol",
+      retryable: true,
+      cause: params.error
+    });
   }
   if (params.error instanceof TransportError) {
     const kind = params.error.kind;

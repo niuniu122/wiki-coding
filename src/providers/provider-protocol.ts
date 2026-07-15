@@ -1,20 +1,67 @@
 import type {ApiProtocol, ModelContextMessage} from "../types.js";
+import type {ModelToolDefinition} from "../agent/model-action.js";
+
+export interface ProviderUsage {
+  inputTokens?: number;
+  outputTokens?: number;
+  totalTokens?: number;
+}
 
 export type ProviderStreamEvent =
+  | {type: "ignored"}
   | {type: "delta"; delta: string}
   | {type: "reasoning"; content: string}
-  | {type: "usage"; inputTokens?: number; outputTokens?: number; totalTokens?: number};
+  | {
+      type: "tool_call.fragments";
+      fragments: readonly {
+        callId: string;
+        name?: string;
+        argumentsDelta?: string;
+        index?: number;
+      }[];
+    }
+  | ({type: "usage"} & ProviderUsage)
+  | {type: "completed"; usage?: ProviderUsage}
+  | {
+      type: "failed";
+      code: ProviderFailureCode;
+      category: ProviderFailureCategory;
+    };
+
+export type ProviderFailureCategory =
+  | "authentication"
+  | "rate_limit"
+  | "server"
+  | "request"
+  | "protocol";
+
+export type ProviderFailureCode =
+  | "authentication"
+  | "rate_limit"
+  | "server_error"
+  | "invalid_request"
+  | "content_filter"
+  | "response_failed"
+  | "response_incomplete";
+
+export class ProviderProtocolError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "ProviderProtocolError";
+  }
+}
 
 export interface ProviderRequestInput {
   model: string;
   messages: ModelContextMessage[];
   maxOutputTokens: number;
+  tools?: readonly ModelToolDefinition[];
 }
 
 export interface ProviderProtocol {
   readonly path: string;
   buildRequest(input: ProviderRequestInput): Record<string, unknown>;
-  parseEvent(raw: string): ProviderStreamEvent | null;
+  parseEvent(raw: string): ProviderStreamEvent;
 }
 
 class ResponsesProtocol implements ProviderProtocol {
@@ -29,14 +76,46 @@ class ResponsesProtocol implements ProviderProtocol {
       })),
       stream: true,
       max_output_tokens: input.maxOutputTokens,
-      metadata: {prompt_cache_key: "minimax-codex-v1"}
+      metadata: {prompt_cache_key: "minimax-codex-v1"},
+      ...(input.tools?.length ? {tools: input.tools.map((tool) => ({type: "function", name: tool.name, description: tool.description, parameters: tool.inputSchema}))} : {})
     };
   }
 
-  parseEvent(raw: string): ProviderStreamEvent | null {
+  parseEvent(raw: string): ProviderStreamEvent {
+    if (raw === "[DONE]") {
+      return {type: "completed"};
+    }
+
     const json = parseJson(raw);
-    if (!json) {
-      return null;
+    if (json.type === "response.failed") {
+      return classifyFailure(getString(json, ["response", "error", "code"]));
+    }
+    if (json.type === "response.incomplete") {
+      return {
+        type: "failed",
+        code: "response_incomplete",
+        category: "protocol"
+      };
+    }
+    if (json.type === "response.completed") {
+      const usage = readUsage(json);
+      return usage
+        ? {type: "completed", usage: withoutUsageType(usage)}
+        : {type: "completed"};
+    }
+    if (json.type === "response.function_call_arguments.delta") {
+      const callId = getString(json, ["item_id"]) ?? getString(json, ["call_id"]);
+      if (!callId) throw new ProviderProtocolError("Tool-call fragment is missing an ID.");
+      return {type: "tool_call.fragments", fragments: [{callId, argumentsDelta: getString(json, ["delta"]) ?? ""}]};
+    }
+    if (json.type === "response.output_item.added" || json.type === "response.output_item.done") {
+      const item = getValue(json, ["item"]);
+      if (isRecord(item) && item.type === "function_call") {
+        const callId = getString(item, ["call_id"]) ?? getString(item, ["id"]);
+        const name = getString(item, ["name"]);
+        if (!callId || !name) throw new ProviderProtocolError("Tool call is missing identity.");
+        return {type: "tool_call.fragments", fragments: [{callId, name, ...(typeof item.arguments === "string" ? {argumentsDelta: item.arguments} : {})}]};
+      }
     }
 
     const responseDelta = getString(json, ["delta"]);
@@ -52,7 +131,7 @@ class ResponsesProtocol implements ProviderProtocol {
       return {type: "delta", delta: outputDelta};
     }
 
-    return readUsage(json);
+    return readUsage(json) ?? {type: "ignored"};
   }
 }
 
@@ -65,14 +144,19 @@ class ChatCompletionsProtocol implements ProviderProtocol {
       messages: input.messages,
       stream: true,
       stream_options: {include_usage: true},
-      max_tokens: input.maxOutputTokens
+      max_tokens: input.maxOutputTokens,
+      ...(input.tools?.length ? {tools: input.tools.map((tool) => ({type: "function", function: {name: tool.name, description: tool.description, parameters: tool.inputSchema}}))} : {})
     };
   }
 
-  parseEvent(raw: string): ProviderStreamEvent | null {
+  parseEvent(raw: string): ProviderStreamEvent {
+    if (raw === "[DONE]") {
+      return {type: "completed"};
+    }
+
     const json = parseJson(raw);
-    if (!json) {
-      return null;
+    if (isRecord(json.error)) {
+      return classifyFailure(getString(json, ["error", "code"]));
     }
 
     const content = getString(json, ["choices", 0, "delta", "content"]);
@@ -84,27 +168,69 @@ class ChatCompletionsProtocol implements ProviderProtocol {
     if (reasoning) {
       return {type: "reasoning", content: reasoning};
     }
+    const toolCalls = getValue(json, ["choices", 0, "delta", "tool_calls"]);
+    if (Array.isArray(toolCalls) && toolCalls.length) {
+      const fragments = toolCalls.map((value, arrayIndex) => {
+        if (!isRecord(value)) throw new ProviderProtocolError("Malformed tool-call fragment.");
+        const index = typeof value.index === "number" ? value.index : arrayIndex;
+        const callId = getString(value, ["id"]) ?? `index:${index}`;
+        return {
+          callId,
+          index,
+          ...(getString(value, ["function", "name"]) ? {name: getString(value, ["function", "name"])!} : {}),
+          ...(getString(value, ["function", "arguments"]) !== null ? {argumentsDelta: getString(value, ["function", "arguments"])!} : {})
+        };
+      });
+      return {type: "tool_call.fragments", fragments};
+    }
 
-    return readUsage(json);
+    return readUsage(json) ?? {type: "ignored"};
   }
 }
 
 export function createProviderProtocol(protocol: ApiProtocol): ProviderProtocol {
-  return protocol === "responses" ? new ResponsesProtocol() : new ChatCompletionsProtocol();
+  if (protocol === "responses") {
+    return new ResponsesProtocol();
+  }
+  if (protocol === "chat_completions") {
+    return new ChatCompletionsProtocol();
+  }
+  throw new ProviderProtocolError("Unsupported provider protocol.");
 }
 
-function parseJson(raw: string): Record<string, unknown> | null {
+function parseJson(raw: string): Record<string, unknown> {
   try {
     const parsed = JSON.parse(raw) as unknown;
     return typeof parsed === "object" && parsed !== null
       ? (parsed as Record<string, unknown>)
-      : null;
+      : {};
   } catch {
-    return null;
+    throw new ProviderProtocolError("Malformed provider event.");
   }
 }
 
-function readUsage(json: Record<string, unknown>): ProviderStreamEvent | null {
+function classifyFailure(code: string | null): Extract<ProviderStreamEvent, {type: "failed"}> {
+  switch (code) {
+    case "authentication_error":
+    case "invalid_api_key":
+      return {type: "failed", code: "authentication", category: "authentication"};
+    case "rate_limit_exceeded":
+    case "rate_limit_error":
+      return {type: "failed", code: "rate_limit", category: "rate_limit"};
+    case "server_error":
+      return {type: "failed", code: "server_error", category: "server"};
+    case "invalid_request_error":
+      return {type: "failed", code: "invalid_request", category: "request"};
+    case "content_filter":
+      return {type: "failed", code: "content_filter", category: "request"};
+    default:
+      return {type: "failed", code: "response_failed", category: "request"};
+  }
+}
+
+function readUsage(
+  json: Record<string, unknown>
+): Extract<ProviderStreamEvent, {type: "usage"}> | null {
   const usage = (json.usage ?? getValue(json, ["response", "usage"])) as
     | Record<string, unknown>
     | undefined;
@@ -128,6 +254,22 @@ function readUsage(json: Record<string, unknown>): ProviderStreamEvent | null {
     event.totalTokens = totalTokens;
   }
   return event;
+}
+
+function withoutUsageType(
+  usage: Extract<ProviderStreamEvent, {type: "usage"}>
+): ProviderUsage {
+  const result: ProviderUsage = {};
+  if (usage.inputTokens !== undefined) {
+    result.inputTokens = usage.inputTokens;
+  }
+  if (usage.outputTokens !== undefined) {
+    result.outputTokens = usage.outputTokens;
+  }
+  if (usage.totalTokens !== undefined) {
+    result.totalTokens = usage.totalTokens;
+  }
+  return result;
 }
 
 function getString(source: unknown, path: Array<string | number>): string | null {
@@ -156,4 +298,8 @@ function getValue(source: unknown, path: Array<string | number>): unknown {
     current = (current as Record<string, unknown>)[key];
   }
   return current;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

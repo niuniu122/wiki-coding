@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {DEFAULT_CONFIG} from "../src/config/config-manager.js";
 import {ContextManager} from "../src/runtime/context-manager.js";
+import {ContextEngine} from "../src/runtime/context-engine.js";
+import type {TokenEstimator} from "../src/runtime/token-estimator.js";
+import type {ModelContextMessage} from "../src/types.js";
 import type {AppConfig, ContextSummary, ThreadItem} from "../src/types.js";
 
 const NOW = "2026-07-10T00:00:00.000Z";
@@ -168,4 +171,41 @@ test("summary records persist their coverage boundary", () => {
   assert.equal(summary.coveredThroughItemId, "old_assistant");
   assert.equal(summary.content, "bounded summary");
   assert.equal(summary.tokenEstimate > 0, true);
+});
+
+test("ContextEngine exposes the new API while ContextManager keeps legacy callers connected", () => {
+  const engine = new ContextEngine();
+  const built = engine.build({config, items, summaries: [validSummary]});
+
+  assert.equal(built.messages.some((entry) => entry.content.includes("old history summary")), true);
+  assert.equal(engine.compactionBoundary(items), 3);
+  assert.equal(
+    engine.createSummary("thread_1", "new API summary", "old_assistant").coveredThroughItemId,
+    "old_assistant"
+  );
+  assert.equal(manager.buildContext({config, items, summaries: []}).messages.length > 0, true);
+});
+
+test("ContextEngine delegates message and summary estimates to an injected estimator", () => {
+  class RecordingEstimator implements TokenEstimator {
+    messages: ModelContextMessage[] = [];
+
+    estimateText(_text: string): number {
+      return 17;
+    }
+
+    estimateMessages(messages: ModelContextMessage[]): number {
+      this.messages = messages;
+      return 321;
+    }
+  }
+
+  const estimator = new RecordingEstimator();
+  const engine = new ContextEngine(estimator);
+  const built = engine.build({config, items, summaries: []});
+  const summary = engine.createSummary("thread_1", "summary", "old_assistant");
+
+  assert.equal(built.tokenEstimate, 321);
+  assert.deepEqual(estimator.messages, built.messages);
+  assert.equal(summary.tokenEstimate, 17);
 });

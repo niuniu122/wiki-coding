@@ -5,9 +5,9 @@ import {join} from "node:path";
 import test from "node:test";
 import {ConfigManager, DEFAULT_CONFIG} from "../src/config/config-manager.js";
 import {SecretStore} from "../src/config/secret-store.js";
-import {AgentRuntime} from "../src/runtime/agent-runtime.js";
 import type {ModelAdapter, ModelAdapterEvent} from "../src/runtime/model-adapter.js";
 import type {AppConfig, ModelContextMessage} from "../src/types.js";
+import {createKernelTestApplication} from "./kernel-test-utils.js";
 
 class DiagnosticModelAdapter implements ModelAdapter {
   async *streamResponse(_params: {
@@ -32,6 +32,7 @@ class DiagnosticModelAdapter implements ModelAdapter {
 test("runtime persists provider diagnostics through the safe trace boundary", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "minimax-provider-trace-"));
   const stateRoot = join(cwd, ".mini-codex");
+  let runtime: ReturnType<typeof createKernelTestApplication> | undefined;
   const configManager = new ConfigManager(stateRoot);
   const secretStore = new SecretStore(stateRoot, {
     userConfigDir: join(stateRoot, "user-config"),
@@ -40,17 +41,19 @@ test("runtime persists provider diagnostics through the safe trace boundary", as
 
   try {
     await configManager.save(DEFAULT_CONFIG);
-    await secretStore.setApiKey("fake-test-key", "minimax-official");
-    const runtime = new AgentRuntime(
+    await secretStore.setApiKey(
+      "fake-test-key",
+      "minimax-official",
+      secretStore.createPlaintextConsent()
+    );
+    runtime = createKernelTestApplication(
       cwd,
       stateRoot,
-      configManager,
-      secretStore,
       new DiagnosticModelAdapter()
     );
     await runtime.init();
     const events = [];
-    for await (const event of runtime.submitUserInput("hello")) {
+    for await (const event of runtime.dispatch({type: "turn.submit", input: "hello"})) {
       events.push(event);
     }
 
@@ -61,6 +64,7 @@ test("runtime persists provider diagnostics through the safe trace boundary", as
     assert.equal(trace?.type, "trace.event");
     assert.equal(JSON.stringify(trace).includes("RUNTIME_MUST_DROP_THIS"), false);
   } finally {
+    await runtime?.shutdown("user");
     await rm(cwd, {recursive: true, force: true});
   }
 });

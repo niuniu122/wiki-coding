@@ -1,0 +1,83 @@
+{
+  "schemaVersion": 1,
+  "descriptors": [
+    {
+      "schemaVersion": 1,
+      "id": "capability:eval/read-file",
+      "name": "Read workspace file",
+      "description": "Read and inspect a text file in the local project 查看并读取项目文件 README source config",
+      "aliases": ["read file", "查看文件", "读取文件", "open README"],
+      "commands": ["/read"],
+      "safetyClass": "workspace_read",
+      "idempotent": true,
+      "execution": {"kind": "workspace_read", "operation": "read_file"},
+      "facets": {"domain": ["workspace"], "action": ["read", "inspect"], "object": ["file", "README"]}
+    },
+    {
+      "schemaVersion": 1,
+      "id": "capability:eval/search-code",
+      "name": "Search project code",
+      "description": "Search source code and find symbols or text inside the local project 搜索查找代码符号",
+      "aliases": ["search code", "find symbol", "搜索代码", "查找代码"],
+      "commands": ["/search"],
+      "safetyClass": "workspace_read",
+      "idempotent": true,
+      "execution": {"kind": "workspace_read", "operation": "list_files"},
+      "facets": {"domain": ["workspace"], "action": ["search", "find"], "object": ["code", "symbol", "text"]}
+    },
+    {
+      "schemaVersion": 1,
+      "id": "capability:eval/npm-test",
+      "name": "Run project tests",
+      "description": "Run the declared npm test diagnostic and check project tests 运行检查项目测试",
+      "aliases": ["run tests", "npm test", "运行测试", "检查项目测试"],
+      "commands": ["/test"],
+      "safetyClass": "local_diagnostic",
+      "idempotent": false,
+      "execution": {"kind": "npm_script", "script": "test", "argv": []},
+      "facets": {"domain": ["project"], "action": ["test", "check"], "object": ["npm", "tests"]}
+    }
+  ],
+  "caseGroups": [
+    {
+      "expectedIds": ["capability:eval/read-file"],
+      "queries": [
+        "/read", "read file", "查看文件", "读取文件", "open README", "please read file 01", "read the local file 02", "inspect README file 03", "read project config file 04", "show file contents 05",
+        "帮我查看文件 06", "读取项目文件 07", "打开 README 文件 08", "看一下配置文件 09", "检查本地文本文件 10", "read README.md 11", "read src/index.ts 12", "inspect package.json file 13", "open the workspace file 14", "show me the source file 15",
+        "can you read this file 16?", "read-file request 17", "workspace read file 18", "inspect local file 19", "read text from file 20", "请读取 README 21", "查看 package.json 文件 22", "读取 src 文件 23", "帮忙打开文件 24", "查看本地配置 25",
+        "read the file, please 26", "file read operation 27", "inspect a text file 28", "open local README 29", "show workspace file 30", "读取这个文件 31", "查看项目 README 32", "打开文本文件 33", "读一下源文件 34", "显示文件内容 35",
+        "read file path README.md 36", "inspect file safely 37", "workspace file contents 38", "read local config 39", "查看并读取文件 40"
+      ]
+    },
+    {
+      "expectedIds": ["capability:eval/search-code"],
+      "queries": [
+        "/search", "search code", "find symbol", "搜索代码", "查找代码", "please search code 01", "find source symbol 02", "search project text 03", "find function in code 04", "search local source 05",
+        "搜索项目代码 06", "查找函数符号 07", "在源码里搜索 08", "搜索某段文本 09", "查找代码定义 10", "search for class name 11", "find a symbol in src 12", "search TypeScript code 13", "locate function text 14", "find project reference 15",
+        "code search request 16", "search-code operation 17", "workspace search code 18", "find local source 19", "search symbol usage 20", "帮我搜索代码 21", "查找 src 符号 22", "搜索函数调用 23", "定位代码文本 24", "搜索项目源码 25",
+        "search the code, please 26", "find code reference 27", "inspect by code search 28", "locate source symbol 29", "query workspace code 30", "在代码中查找 31", "搜索项目函数 32", "查找变量定义 33", "定位源码符号 34", "搜索本地代码 35",
+        "search code for handler 36", "find symbol safely 37", "workspace source lookup 38", "search local text 39", "搜索并查找代码 40"
+      ]
+    },
+    {
+      "expectedIds": ["capability:eval/npm-test"],
+      "queries": [
+        "/test", "run tests", "npm test", "运行测试", "检查项目测试", "please run tests 01", "run project tests 02", "check npm test 03", "execute declared test 04", "test the local project 05",
+        "运行项目测试 06", "检查 npm 测试 07", "执行测试脚本 08", "跑一下项目测试 09", "检查测试结果 10", "run the test suite 11", "npm test diagnostic 12", "check project tests 13", "execute test suite 14", "run local tests 15",
+        "test command request 16", "project test operation 17", "diagnostic npm test 18", "check test suite 19", "run tests safely 20", "帮我运行测试 21", "检查项目测试脚本 22", "执行 npm test 23", "跑测试套件 24", "验证项目测试 25",
+        "run tests, please 26", "check npm diagnostics 27", "test the project 28", "execute declared tests 29", "project test check 30", "运行本地测试 31", "检查测试套件 32", "执行项目测试 33", "跑一下 npm 测试 34", "验证测试结果 35",
+        "run test script 36", "check tests safely 37", "npm project diagnostics 38", "run local test suite 39", "运行并检查测试 40"
+      ]
+    },
+    {
+      "expectedIds": [],
+      "noMatch": true,
+      "queries": [
+        "quantum banana 01", "book a flight 02", "weather tomorrow 03", "send an email 04", "buy coffee 05", "量子香蕉 06", "预订机票 07", "查询天气 08", "发送邮件 09", "购买咖啡 10",
+        "draw a mountain 11", "play a song 12", "order dinner 13", "translate poetry 14", "stock price 15", "画一座山 16", "播放歌曲 17", "订购晚餐 18", "翻译诗歌 19", "查询股价 20",
+        "unrelated astronomy 21", "garden watering 22", "movie tickets 23", "fitness plan 24", "hotel booking 25", "无关的天文学 26", "花园浇水 27", "电影票 28", "健身计划 29", "酒店预订 30",
+        "compose music 31", "restaurant menu 32", "train schedule 33", "medical appointment 34", "currency exchange 35", "创作音乐 36", "餐厅菜单 37", "火车时刻表 38", "预约医生 39", "货币兑换 40"
+      ]
+    }
+  ]
+}

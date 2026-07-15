@@ -67,6 +67,19 @@ export async function appendJsonl(filePath: string, value: unknown): Promise<voi
   });
 }
 
+export async function writeJsonlFile(filePath: string, values: readonly unknown[]): Promise<void> {
+  const rendered = values.length > 0 ? `${values.map((value) => JSON.stringify(value)).join("\n")}\n` : "";
+  await atomicReplace(filePath, rendered, 0o600);
+}
+
+export async function writeTextFileAtomic(
+  filePath: string,
+  content: string,
+  mode = 0o600
+): Promise<void> {
+  await atomicReplace(filePath, content, mode);
+}
+
 export async function readJsonl<T>(filePath: string): Promise<T[]> {
   const raw = await readTextFile(filePath, "");
   if (!raw) {

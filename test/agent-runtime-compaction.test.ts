@@ -5,10 +5,10 @@ import {join} from "node:path";
 import test from "node:test";
 import {ConfigManager, DEFAULT_CONFIG} from "../src/config/config-manager.js";
 import {SecretStore} from "../src/config/secret-store.js";
-import {AgentRuntime} from "../src/runtime/agent-runtime.js";
 import type {ModelAdapter, ModelAdapterEvent} from "../src/runtime/model-adapter.js";
 import {JsonlStorageProvider} from "../src/storage/jsonl-storage.js";
 import type {AppConfig, ModelContextMessage, ThreadItem, ThreadRecord} from "../src/types.js";
+import {createKernelTestApplication} from "./kernel-test-utils.js";
 
 const NOW = "2026-07-10T00:00:00.000Z";
 
@@ -46,6 +46,7 @@ function item(
 test("automatic compaction rebuilds the model request from the persisted summary", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "minimax-codex-compaction-"));
   const stateRoot = join(cwd, ".mini-codex");
+  let runtime: ReturnType<typeof createKernelTestApplication> | undefined;
 
   try {
     const configManager = new ConfigManager(stateRoot);
@@ -58,8 +59,6 @@ test("automatic compaction rebuilds the model request from the persisted summary
     const config: AppConfig = {
       ...DEFAULT_CONFIG,
       modelProviders: {...DEFAULT_CONFIG.modelProviders},
-      api: {...DEFAULT_CONFIG.api},
-      storage: {...DEFAULT_CONFIG.storage},
       context: {
         ...DEFAULT_CONFIG.context,
         workingContextLimit: 2_000,
@@ -78,7 +77,11 @@ test("automatic compaction rebuilds the model request from the persisted summary
     };
 
     await configManager.save(config);
-    await secretStore.setApiKey("fake-test-key", "minimax-official");
+    await secretStore.setApiKey(
+      "fake-test-key",
+      "minimax-official",
+      secretStore.createPlaintextConsent()
+    );
     await storage.init();
     await storage.createThread(thread);
     await storage.appendItem(
@@ -88,11 +91,14 @@ test("automatic compaction rebuilds the model request from the persisted summary
       item("old_assistant", "turn_old", "assistant", `old oversized assistant ${"y".repeat(8_000)}`)
     );
 
-    const runtime = new AgentRuntime(cwd, stateRoot, configManager, secretStore, modelAdapter);
+    runtime = createKernelTestApplication(cwd, stateRoot, modelAdapter);
     await runtime.init();
 
     const events = [];
-    for await (const event of runtime.submitUserInput("current exact question")) {
+    for await (const event of runtime.dispatch({
+      type: "turn.submit",
+      input: "current exact question"
+    })) {
       events.push(event);
     }
 
@@ -103,7 +109,8 @@ test("automatic compaction rebuilds the model request from the persisted summary
 
     assert.equal(modelText.includes("x".repeat(1_000)), false);
     assert.equal(modelText.includes("y".repeat(1_000)), false);
-    assert.equal(modelText.includes("以下内容代表已覆盖的旧会话"), true);
+    assert.equal(modelText.includes("Original goal:"), true);
+    assert.equal(modelText.includes("Recent exchanges:"), true);
     assert.equal(
       modelAdapter.messages.some(
         (entry) => entry.role === "user" && entry.content === "current exact question"
@@ -118,6 +125,7 @@ test("automatic compaction rebuilds the model request from the persisted summary
       assert.equal(firstUsage.limit, 1_800);
     }
   } finally {
+    await runtime?.shutdown("user");
     await rm(cwd, {recursive: true, force: true});
   }
 });
@@ -125,6 +133,7 @@ test("automatic compaction rebuilds the model request from the persisted summary
 test("an oversized current input fails clearly after compaction without calling the model", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "minimax-codex-input-limit-"));
   const stateRoot = join(cwd, ".mini-codex");
+  let runtime: ReturnType<typeof createKernelTestApplication> | undefined;
 
   try {
     const configManager = new ConfigManager(stateRoot);
@@ -137,8 +146,6 @@ test("an oversized current input fails clearly after compaction without calling 
     const config: AppConfig = {
       ...DEFAULT_CONFIG,
       modelProviders: {...DEFAULT_CONFIG.modelProviders},
-      api: {...DEFAULT_CONFIG.api},
-      storage: {...DEFAULT_CONFIG.storage},
       context: {
         ...DEFAULT_CONFIG.context,
         workingContextLimit: 2_000,
@@ -157,7 +164,11 @@ test("an oversized current input fails clearly after compaction without calling 
     };
 
     await configManager.save(config);
-    await secretStore.setApiKey("fake-test-key", "minimax-official");
+    await secretStore.setApiKey(
+      "fake-test-key",
+      "minimax-official",
+      secretStore.createPlaintextConsent()
+    );
     await storage.init();
     await storage.createThread(thread);
     await storage.appendItem(
@@ -167,11 +178,14 @@ test("an oversized current input fails clearly after compaction without calling 
       item("old_assistant", "turn_old", "assistant", `old oversized assistant ${"y".repeat(8_000)}`)
     );
 
-    const runtime = new AgentRuntime(cwd, stateRoot, configManager, secretStore, modelAdapter);
+    runtime = createKernelTestApplication(cwd, stateRoot, modelAdapter);
     await runtime.init();
 
     const events = [];
-    for await (const event of runtime.submitUserInput(`current oversized ${"z".repeat(10_000)}`)) {
+    for await (const event of runtime.dispatch({
+      type: "turn.submit",
+      input: `current oversized ${"z".repeat(10_000)}`
+    })) {
       events.push(event);
     }
 
@@ -182,6 +196,7 @@ test("an oversized current input fails clearly after compaction without calling 
       assert.match(error.message, /压缩后仍超过上下文安全上限/);
     }
   } finally {
+    await runtime?.shutdown("user");
     await rm(cwd, {recursive: true, force: true});
   }
 });

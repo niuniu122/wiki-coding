@@ -5,7 +5,6 @@ import {join} from "node:path";
 import test from "node:test";
 import {ConfigManager, DEFAULT_CONFIG} from "../src/config/config-manager.js";
 import {SecretStore} from "../src/config/secret-store.js";
-import {AgentRuntime} from "../src/runtime/agent-runtime.js";
 import type {ModelAdapter, ModelAdapterEvent} from "../src/runtime/model-adapter.js";
 import {JsonlStorageProvider} from "../src/storage/jsonl-storage.js";
 import type {
@@ -15,6 +14,7 @@ import type {
   ThreadRecord,
   TurnRecord
 } from "../src/types.js";
+import {collectCommand, createKernelTestApplication} from "./kernel-test-utils.js";
 
 const NOW = "2026-07-10T00:00:00.000Z";
 const LATER = "2026-07-10T01:00:00.000Z";
@@ -61,6 +61,14 @@ function userItem(threadId: string, id: string, content: string): ThreadItem {
     content,
     createdAt: NOW
   };
+}
+
+async function listRuntimeThreads(
+  runtime: ReturnType<typeof createKernelTestApplication>
+): Promise<ThreadRecord[]> {
+  const listed = (await collectCommand(runtime, {type: "thread.list"}))[0];
+  assert.equal(listed?.type, "thread.listed");
+  return listed?.type === "thread.listed" ? listed.threads : [];
 }
 
 test("activating a stored thread leaves exactly one active record in one index transition", async () => {
@@ -125,6 +133,7 @@ test("resuming a thread hydrates only its history, recovers stale turns, and sco
     keytar: null
   });
   const modelAdapter = new CapturingModelAdapter();
+  let runtime: ReturnType<typeof createKernelTestApplication> | undefined;
   const staleTargetTurn: TurnRecord = {
     id: "target_stale_turn",
     threadId: "thread_target",
@@ -135,7 +144,11 @@ test("resuming a thread hydrates only its history, recovers stale turns, and sco
 
   try {
     await configManager.save(DEFAULT_CONFIG);
-    await secretStore.setApiKey("fake-test-key", "minimax-official");
+    await secretStore.setApiKey(
+      "fake-test-key",
+      "minimax-official",
+      secretStore.createPlaintextConsent()
+    );
     await storage.init();
     await storage.createThread(thread("thread_current", "Current", "active", cwd));
     await storage.createThread(thread("thread_target", "Target", "archived", cwd));
@@ -153,13 +166,7 @@ test("resuming a thread hydrates only its history, recovers stale turns, and sco
       NOW
     );
 
-    const runtime = new AgentRuntime(
-      cwd,
-      stateRoot,
-      configManager,
-      secretStore,
-      modelAdapter
-    );
+    runtime = createKernelTestApplication(cwd, stateRoot, modelAdapter);
     const initialEvents = await runtime.init();
     const initialHistory = initialEvents.find((event) => event.type === "history.loaded");
     assert.equal(initialHistory?.type, "history.loaded");
@@ -167,7 +174,10 @@ test("resuming a thread hydrates only its history, recovers stale turns, and sco
       assert.equal(initialHistory.items.some((item) => item.threadId === "thread_target"), false);
     }
 
-    const resumeEvents = await runtime.resumeThread("thread_target");
+    const resumeEvents = await collectCommand(runtime, {
+      type: "thread.resume",
+      threadId: "thread_target"
+    });
     const loaded = resumeEvents.find((event) => event.type === "thread.loaded");
     const history = resumeEvents.find((event) => event.type === "history.loaded");
 
@@ -185,7 +195,10 @@ test("resuming a thread hydrates only its history, recovers stale turns, and sco
       );
     }
 
-    for await (const _event of runtime.submitUserInput("new target question")) {
+    for await (const _event of runtime.dispatch({
+      type: "turn.submit",
+      input: "new target question"
+    })) {
       // Consume the model stream after switching threads.
     }
     const modelText = modelAdapter.messages.map((message) => message.content).join("\n");
@@ -198,20 +211,25 @@ test("resuming a thread hydrates only its history, recovers stale turns, and sco
       "interrupted"
     );
     assert.deepEqual(
-      (await runtime.listThreads())
+      (await listRuntimeThreads(runtime))
         .filter((entry) => entry.status === "active")
         .map((entry) => entry.id),
       ["thread_target"]
     );
 
-    await assert.rejects(runtime.resumeThread("missing_thread"), /不存在/);
+    const missing = await collectCommand(runtime, {
+      type: "thread.resume",
+      threadId: "missing_thread"
+    });
+    assert.equal(missing[0]?.type, "error");
     assert.deepEqual(
-      (await runtime.listThreads())
+      (await listRuntimeThreads(runtime))
         .filter((entry) => entry.status === "active")
         .map((entry) => entry.id),
       ["thread_target"]
     );
   } finally {
+    await runtime?.shutdown("user");
     await rm(cwd, {recursive: true, force: true});
   }
 });
@@ -226,6 +244,7 @@ test("creating a new runtime thread starts empty and preserves the previous thre
     keytar: null
   });
   const oldThread = thread("thread_old", "Old conversation", "active", cwd);
+  let runtime: ReturnType<typeof createKernelTestApplication> | undefined;
 
   try {
     await configManager.save(DEFAULT_CONFIG);
@@ -233,9 +252,9 @@ test("creating a new runtime thread starts empty and preserves the previous thre
     await storage.createThread(oldThread);
     await storage.appendItem(userItem(oldThread.id, "old_user", "old conversation history"));
 
-    const runtime = new AgentRuntime(cwd, stateRoot, configManager, secretStore);
+    runtime = createKernelTestApplication(cwd, stateRoot);
     await runtime.init();
-    const newEvents = await runtime.newThread();
+    const newEvents = await collectCommand(runtime, {type: "thread.new"});
     const loaded = newEvents.find((event) => event.type === "thread.loaded");
     const emptyHistory = newEvents.find((event) => event.type === "history.loaded");
 
@@ -249,18 +268,22 @@ test("creating a new runtime thread starts empty and preserves the previous thre
       assert.deepEqual(emptyHistory.items, []);
     }
 
-    const threadsAfterNew = await runtime.listThreads();
+    const threadsAfterNew = await listRuntimeThreads(runtime);
     assert.equal(threadsAfterNew.length, 2);
     assert.equal(threadsAfterNew.find((entry) => entry.id === oldThread.id)?.status, "archived");
     assert.equal(threadsAfterNew.filter((entry) => entry.status === "active").length, 1);
 
-    const resumeEvents = await runtime.resumeThread(oldThread.id);
+    const resumeEvents = await collectCommand(runtime, {
+      type: "thread.resume",
+      threadId: oldThread.id
+    });
     const oldHistory = resumeEvents.find((event) => event.type === "history.loaded");
     assert.equal(oldHistory?.type, "history.loaded");
     if (oldHistory?.type === "history.loaded") {
       assert.equal(oldHistory.items.some((item) => item.content === "old conversation history"), true);
     }
   } finally {
+    await runtime?.shutdown("user");
     await rm(cwd, {recursive: true, force: true});
   }
 });

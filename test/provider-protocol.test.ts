@@ -30,6 +30,14 @@ test("responses protocol owns its request shape and separates reasoning from vis
     ),
     {type: "reasoning", content: "private reasoning"}
   );
+  assert.deepEqual(
+    protocol.parseEvent(JSON.stringify({type: "response.completed"})),
+    {type: "completed"}
+  );
+  assert.deepEqual(
+    protocol.parseEvent(JSON.stringify({type: "response.unknown"})),
+    {type: "ignored"}
+  );
 });
 
 test("chat completions protocol owns chat request and usage parsing", () => {
@@ -53,5 +61,57 @@ test("chat completions protocol owns chat request and usage parsing", () => {
       JSON.stringify({usage: {prompt_tokens: 10, completion_tokens: 3, total_tokens: 13}})
     ),
     {type: "usage", inputTokens: 10, outputTokens: 3, totalTokens: 13}
+  );
+  assert.deepEqual(protocol.parseEvent("[DONE]"), {type: "completed"});
+  assert.deepEqual(protocol.parseEvent(JSON.stringify({choices: []})), {type: "ignored"});
+});
+
+test("malformed provider JSON is rejected without exposing the frame", () => {
+  const protocol = createProviderProtocol("responses");
+  const secretFrame = "{not-json SECRET_FRAME_CONTENT}";
+
+  assert.throws(
+    () => protocol.parseEvent(secretFrame),
+    (error: unknown) =>
+      error instanceof Error &&
+      /malformed provider event/i.test(error.message) &&
+      !error.message.includes("SECRET_FRAME_CONTENT")
+  );
+});
+
+test("provider-declared failures are normalized without retaining raw details", () => {
+  const responses = createProviderProtocol("responses");
+  const chat = createProviderProtocol("chat_completions");
+
+  assert.deepEqual(
+    responses.parseEvent(
+      JSON.stringify({
+        type: "response.failed",
+        response: {error: {code: "rate_limit_exceeded", message: "SECRET_PROMPT"}}
+      })
+    ),
+    {type: "failed", code: "rate_limit", category: "rate_limit"}
+  );
+  assert.deepEqual(
+    responses.parseEvent(
+      JSON.stringify({
+        type: "response.incomplete",
+        response: {incomplete_details: {reason: "max_output_tokens"}}
+      })
+    ),
+    {type: "failed", code: "response_incomplete", category: "protocol"}
+  );
+  assert.deepEqual(
+    chat.parseEvent(
+      JSON.stringify({error: {code: "invalid_request_error", message: "SECRET_KEY"}})
+    ),
+    {type: "failed", code: "invalid_request", category: "request"}
+  );
+});
+
+test("protocol factory fails closed for an unknown runtime protocol", () => {
+  assert.throws(
+    () => createProviderProtocol("future_protocol" as never),
+    /unsupported provider protocol/i
   );
 });

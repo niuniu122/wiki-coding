@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "protocol": "responses",
+  "successFrames": [
+    {"type": "response.reasoning.delta", "delta": "PRIVATE_REASONING"},
+    {"type": "response.output_text.delta", "delta": "visible"},
+    {"type": "response.completed", "response": {"usage": {"input_tokens": 7, "output_tokens": 2, "total_tokens": 9}}}
+  ],
+  "toolFrames": [
+    {"type": "response.output_item.added", "item": {"type": "function_call", "id": "item-1", "call_id": "call-1", "name": "invoke_local_capability"}},
+    {"type": "response.function_call_arguments.delta", "item_id": "call-1", "delta": "{\"capabilityId\":\"capability:test/read\",\"arguments\":{"},
+    {"type": "response.function_call_arguments.delta", "item_id": "call-1", "delta": "\"path\":\"README.md\"}}"},
+    {"type": "response.completed", "response": {"usage": {"input_tokens": 2, "output_tokens": 3, "total_tokens": 5}}}
+  ],
+  "failureFrames": [
+    {"type": "response.failed", "response": {"error": {"code": "rate_limit_exceeded", "message": "SECRET_PROVIDER_DETAIL"}}}
+  ],
+  "prematureFrames": [
+    {"type": "response.output_text.delta", "delta": "partial"}
+  ],
+  "malformedPayload": "{broken SECRET_FRAME}"
+}

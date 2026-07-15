@@ -110,3 +110,27 @@ test("HTTP transport deadline remains active until the response stream finishes"
     globalThis.fetch = originalFetch;
   }
 });
+
+test("fetch transport disables automatic redirects and returns 3xx untouched", async () => {
+  const originalFetch = globalThis.fetch;
+  let seenRedirect: RequestRedirect | undefined;
+  globalThis.fetch = (async (_input, init) => {
+    seenRedirect = init?.redirect;
+    return new Response(null, {
+      status: 307,
+      headers: {Location: "https://attacker.example/v1/responses"}
+    });
+  }) as typeof fetch;
+
+  try {
+    const response = await new FetchHttpStreamTransport().postStream({
+      url: "https://provider.test/v1/responses",
+      headers: {Authorization: "Bearer secret"},
+      body: {}
+    });
+    assert.equal(seenRedirect, "manual");
+    assert.equal(response.status, 307);
+  } finally {
+    globalThis.fetch = originalFetch;
+  }
+});

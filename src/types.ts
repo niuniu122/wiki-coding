@@ -4,17 +4,27 @@ export type ItemType =
   | "user_message"
   | "assistant_message"
   | "trace_event"
-  | "context_summary"
-  | "compaction"
-  | "api_request"
-  | "api_response"
-  | "error";
+  | "error"
+  | "agent_item";
 
 export type ThreadStatus = "active" | "archived";
 export type TurnStatus = "running" | "completed" | "failed" | "interrupted";
-export type StorageDriver = "jsonl" | "sqlite";
 export type ApiProtocol = "responses" | "chat_completions";
 export type ApiProviderId = string;
+
+declare const providerAdapterIdBrand: unique symbol;
+declare const providerProfileIdBrand: unique symbol;
+declare const modelProfileIdBrand: unique symbol;
+
+export type ProviderAdapterId = string & {
+  readonly [providerAdapterIdBrand]: "ProviderAdapterId";
+};
+export type ProviderProfileId = string & {
+  readonly [providerProfileIdBrand]: "ProviderProfileId";
+};
+export type ModelProfileId = string & {
+  readonly [modelProfileIdBrand]: "ModelProfileId";
+};
 
 export interface ModelProviderConfig {
   name: string;
@@ -23,7 +33,7 @@ export interface ModelProviderConfig {
   envKey?: string;
   defaultModel?: string;
   headers?: Record<string, string>;
-  supportsThinkTags?: boolean;
+  allowInsecureLoopback?: boolean;
 }
 
 export interface ThreadRecord {
@@ -44,6 +54,16 @@ export interface TurnRecord {
   startedAt: string;
   completedAt?: string;
   assistantDraft?: string;
+  modelProvenance?: TurnModelProvenance;
+}
+
+export interface TurnModelProvenance {
+  readonly schemaVersion: 1;
+  readonly adapterId: string;
+  readonly providerProfileId: string;
+  readonly modelProfileId: string;
+  readonly model: string;
+  readonly protocol: ApiProtocol;
 }
 
 export interface ThreadItem {
@@ -55,6 +75,7 @@ export interface ThreadItem {
   content: string;
   createdAt: string;
   metadata?: Record<string, unknown>;
+  agent?: import("./agent/agent-item.js").AgentItemEnvelope;
 }
 
 export type TraceCategory = "lifecycle" | "provider" | "context" | "error";
@@ -90,23 +111,19 @@ export interface ContextSummary {
   coveredThroughItemId?: string;
 }
 
+export interface ContextConfig {
+  workingContextLimit: number;
+  autoCompactRatio: number;
+  maxCompletionTokens: number;
+}
+
 export interface AppConfig {
+  schemaVersion: 1;
   modelProvider: ApiProviderId;
   modelProviders: Record<ApiProviderId, ModelProviderConfig>;
-  api: {
-    provider: "minimax" | "hashsight" | "openai-compatible";
-    protocol: ApiProtocol;
-    baseUrl: string;
-  };
   model: string;
-  storage: {
-    driver: StorageDriver;
-  };
-  context: {
-    workingContextLimit: number;
-    autoCompactRatio: number;
-    maxCompletionTokens: number;
-  };
+  context: ContextConfig;
+  features?: import("./config/feature-flags.js").AgentFeatureFlagConfig;
 }
 
 export interface ModelContextMessage {

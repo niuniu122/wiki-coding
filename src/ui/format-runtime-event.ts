@@ -1,4 +1,4 @@
-import type {RuntimeEvent} from "../protocol.js";
+import type {ModelCatalogView, RuntimeEvent} from "../protocol.js";
 import type {ThreadItem, ThreadRecord} from "../types.js";
 
 type CompactCompletedEvent = Extract<RuntimeEvent, {type: "compact.completed"}>;
@@ -39,6 +39,18 @@ export function formatHistoryMessages(items: ThreadItem[]): DisplayMessage[] {
     if (item.type === "error") {
       return [{id: item.id, role: "system", content: `错误：${item.content}`}];
     }
+    if (item.type === "agent_item" && item.agent) {
+      const payload = item.agent.payload;
+      switch (payload.kind) {
+        case "user": return [{id: item.id, role: "user", content: payload.text}];
+        case "assistant": return [];
+        case "final": return [{id: item.id, role: "assistant", content: payload.text.slice(0, 16_000)}];
+        case "tool_request": return [{id: item.id, role: "system", content: `Agent 请求本机能力：${payload.capabilityId}`}];
+        case "tool_result": return [{id: item.id, role: "system", content: `Agent 本机能力结果：${payload.status}`}];
+        case "checkpoint": return [{id: item.id, role: "system", content: `Agent 检查点：${payload.checkpointId}`}];
+        case "error": return [{id: item.id, role: "system", content: `Agent 停止：${payload.code}`}];
+      }
+    }
     return [];
   });
 }
@@ -55,4 +67,16 @@ export function formatThreadList(threads: ThreadRecord[]): string {
     }),
     "使用 /resume <threadId> 切换会话。"
   ].join("\n");
+}
+
+export function formatModelCatalog(models: readonly ModelCatalogView[]): string {
+  if (models.length === 0) {
+    return "没有已注册的模型。";
+  }
+  return models
+    .map((model) => {
+      const reason = model.reason ? ` | ${model.reason}` : "";
+      return `${model.modelProfileId} | ${model.providerDisplayName} | ${model.availability}${reason}`;
+    })
+    .join("\n");
 }

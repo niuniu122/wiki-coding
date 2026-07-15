@@ -1,22 +1,6 @@
-import "./context-manager.test.js";
-import "./summary-generator.test.js";
-import "./storage-turns.test.js";
-import "./model-adapter-interrupt.test.js";
-import "./agent-runtime-compaction.test.js";
-import "./agent-runtime-recovery.test.js";
-import "./agent-runtime-interrupt.test.js";
-import "./thread-navigation.test.js";
-import "./command-dispatcher.test.js";
-import "./chat-input-policy.test.js";
-import "./ui-status.test.js";
-import "./ui-command-boundary.test.js";
-import "./provider-protocol.test.js";
-import "./provider-model-adapter.test.js";
-import "./trace-recorder.test.js";
-import "./agent-runtime-provider-trace.test.js";
-import "./http-transport.test.js";
-import "./reasoning-filter.test.js";
-import "./file-reliability.test.js";
-import "./config-manager.test.js";
-import "./secret-store.test.js";
-import "./storage-index-recovery.test.js";
+import {dirname} from "node:path";
+import {fileURLToPath} from "node:url";
+import {discoverTestFiles, importTestFiles} from "./test-discovery.js";
+
+const testRoot = dirname(fileURLToPath(import.meta.url));
+await importTestFiles(await discoverTestFiles(testRoot));

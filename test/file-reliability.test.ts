@@ -3,6 +3,7 @@ import {mkdtemp, readFile, rm, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
 import {join} from "node:path";
 import test from "node:test";
+import {ModelStateStore} from "../src/config/model-state-store.js";
 import {
   appendJsonl,
   readJsonFile,
@@ -49,6 +50,31 @@ test("JSON files fail clearly when neither primary nor backup is valid", async (
       readJsonFile(path, {version: 0}, {validate: isVersionFile}),
       /no valid primary or backup/i
     );
+  } finally {
+    await rm(root, {recursive: true, force: true});
+  }
+});
+
+test("model state recovers its last valid backup and restores the primary", async () => {
+  const root = await mkdtemp(join(tmpdir(), "minimax-model-state-recovery-"));
+  const store = new ModelStateStore({userConfigDir: root});
+
+  try {
+    await store.save("model:minimax/minimax-text-01");
+    await store.save("model:openai/gpt-5");
+    await writeFile(store.statePath, "{broken", "utf8");
+
+    assert.deepEqual(await store.load(), {
+      status: "selected",
+      state: {
+        schemaVersion: 1,
+        lastSelectedModelProfileId: "model:minimax/minimax-text-01"
+      }
+    });
+    assert.deepEqual(JSON.parse(await readFile(store.statePath, "utf8")), {
+      schemaVersion: 1,
+      lastSelectedModelProfileId: "model:minimax/minimax-text-01"
+    });
   } finally {
     await rm(root, {recursive: true, force: true});
   }

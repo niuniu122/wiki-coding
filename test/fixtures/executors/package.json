@@ -1,0 +1,9 @@
+{
+  "name": "capability-executor-fixture",
+  "private": true,
+  "scripts": {
+    "diag-ok": "node diag-ok.js",
+    "diag-slow": "node diag-slow.js",
+    "diag-large": "node diag-large.js"
+  }
+}

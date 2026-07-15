@@ -120,3 +120,16 @@ test("thread list formatting makes the active conversation obvious", () => {
     ].join("\n")
   );
 });
+
+test("Agent history formatting omits raw tool output", () => {
+  const item: ThreadItem = {
+    id: "agent-tool-result",
+    threadId: "thread-1",
+    turnId: "turn-1",
+    type: "agent_item",
+    content: "Tool result: completed",
+    createdAt: "2026-07-14T00:00:00.000Z",
+    agent: {schemaVersion: 1, sequence: 2, payload: {kind: "tool_result", invocationId: "inv-1", status: "completed", output: "private raw output"}}
+  };
+  assert.deepEqual(formatHistoryMessages([item]), [{id: "agent-tool-result", role: "system", content: "Agent 本机能力结果：completed"}]);
+});

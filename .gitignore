@@ -1,4 +1,6 @@
 .mini-codex/
+.superpowers/
+.worktrees/
 dist/
 node_modules/
 *.log

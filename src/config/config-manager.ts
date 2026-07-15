@@ -1,6 +1,19 @@
+import {readFile} from "node:fs/promises";
 import {join} from "node:path";
-import type {ApiProviderId, AppConfig, ModelProviderConfig} from "../types.js";
-import {readJsonFile, writeJsonFile} from "../utils/jsonl.js";
+import type {
+  ApiProtocol,
+  ApiProviderId,
+  AppConfig,
+  ContextConfig,
+  ModelProviderConfig
+} from "../types.js";
+import {readJsonFile, writeJsonFile, writeTextFileAtomic} from "../utils/jsonl.js";
+import {
+  assertProviderSecurity,
+  normalizeProviderEndpoint,
+  normalizePublicProviderHeaders
+} from "./provider-security.js";
+import {parseAgentFeatureFlagConfig} from "./feature-flags.js";
 
 export const BUILT_IN_MODEL_PROVIDERS: Record<ApiProviderId, ModelProviderConfig> = {
   "minimax-official": {
@@ -8,31 +21,22 @@ export const BUILT_IN_MODEL_PROVIDERS: Record<ApiProviderId, ModelProviderConfig
     baseUrl: "https://api.minimax.io/v1",
     protocol: "responses",
     envKey: "MINIMAX_API_KEY",
-    defaultModel: "MiniMax-M3",
-    supportsThinkTags: false
+    defaultModel: "MiniMax-M3"
   },
   hashsight: {
     name: "Hashsight OpenAI Compatible",
     baseUrl: "https://www.hashsight.cn/v1",
     protocol: "chat_completions",
     envKey: "HASHSIGHT_API_KEY",
-    defaultModel: "MiniMax-M3",
-    supportsThinkTags: true
+    defaultModel: "MiniMax-M3"
   }
 };
 
 export const DEFAULT_CONFIG: AppConfig = {
+  schemaVersion: 1,
   modelProvider: "minimax-official",
-  modelProviders: BUILT_IN_MODEL_PROVIDERS,
-  api: {
-    provider: "minimax",
-    protocol: "responses",
-    baseUrl: "https://api.minimax.io/v1"
-  },
+  modelProviders: cloneProviders(BUILT_IN_MODEL_PROVIDERS),
   model: "MiniMax-M3",
-  storage: {
-    driver: "jsonl"
-  },
   context: {
     workingContextLimit: 128000,
     autoCompactRatio: 0.9,
@@ -40,97 +44,269 @@ export const DEFAULT_CONFIG: AppConfig = {
   }
 };
 
+interface ParsedConfigFile {
+  config: AppConfig;
+  requiresRewrite: boolean;
+}
+
+interface LegacyApiConfig {
+  provider?: "minimax" | "hashsight" | "openai-compatible";
+  protocol?: ApiProtocol;
+  baseUrl?: string;
+}
+
 export class ConfigManager {
   constructor(private readonly rootDir: string) {}
 
   async load(): Promise<AppConfig> {
-    const loaded = await readJsonFile<Partial<AppConfig>>(this.configPath(), {}, {
+    return this.loadConfig(true);
+  }
+
+  async loadReadOnly(): Promise<AppConfig> {
+    return this.loadConfig(false);
+  }
+
+  private async loadConfig(rewriteLegacy: boolean): Promise<AppConfig> {
+    await rejectExplicitSqlite(this.configPath());
+    const fallback: ParsedConfigFile = {
+      config: cloneConfig(DEFAULT_CONFIG),
+      requiresRewrite: false
+    };
+    const parsed = await readJsonFile(this.configPath(), fallback, {
       parse: parseConfigFile
     });
-    const modelProviders = {
-      ...DEFAULT_CONFIG.modelProviders,
-      ...loaded.modelProviders
-    };
-    const modelProvider = resolveLegacyProviderId(loaded, modelProviders);
-    const activeProvider =
-      modelProviders[modelProvider] ??
-      DEFAULT_CONFIG.modelProviders["minimax-official"] ??
-      BUILT_IN_MODEL_PROVIDERS["minimax-official"];
-    if (!activeProvider) {
-      throw new Error("No model provider configuration is available.");
+    if (rewriteLegacy && parsed.requiresRewrite) {
+      await this.preserveLegacyConfig();
+      await writeJsonFile(this.configPath(), parsed.config);
     }
-    return {
-      ...DEFAULT_CONFIG,
-      ...loaded,
-      modelProvider,
-      modelProviders,
-      api: {
-        ...DEFAULT_CONFIG.api,
-        ...loaded.api,
-        provider: toLegacyProviderName(modelProvider),
-        protocol: activeProvider.protocol,
-        baseUrl: activeProvider.baseUrl
-      },
-      storage: {...DEFAULT_CONFIG.storage, ...loaded.storage},
-      context: {...DEFAULT_CONFIG.context, ...loaded.context}
-    };
+    return cloneConfig(parsed.config);
   }
 
   async save(config: AppConfig): Promise<void> {
-    parseConfigFile(config);
-    await writeJsonFile(this.configPath(), config);
+    const parsed = parseConfigFile(config);
+    await writeJsonFile(this.configPath(), parsed.config);
   }
 
   private configPath(): string {
     return join(this.rootDir, "config.json");
   }
+
+  private async preserveLegacyConfig(): Promise<void> {
+    const raw = await readFile(this.configPath(), "utf8");
+    // Validate the exact bytes being retained, including after primary-file recovery.
+    parseConfigFile(JSON.parse(raw) as unknown);
+    const backupPath = `${this.configPath()}.v0.bak`;
+    try {
+      const existing = await readFile(backupPath, "utf8");
+      if (existing !== raw) {
+        throw new Error(
+          `Legacy configuration backup at ${backupPath} does not match config.json.`
+        );
+      }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
+        throw error;
+      }
+      await writeTextFileAtomic(backupPath, raw, 0o600);
+    }
+  }
 }
 
-function parseConfigFile(value: unknown): Partial<AppConfig> {
+async function rejectExplicitSqlite(filePath: string): Promise<void> {
+  let raw: string;
+  try {
+    raw = await readFile(filePath, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+      return;
+    }
+    throw error;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw) as unknown;
+  } catch {
+    return;
+  }
+  if (
+    isRecord(parsed) &&
+    isRecord(parsed.storage) &&
+    parsed.storage.driver === "sqlite"
+  ) {
+    throw new Error(
+      "SQLite is not supported during configuration migration; use JSONL storage."
+    );
+  }
+}
+
+function parseConfigFile(value: unknown): ParsedConfigFile {
   if (!isRecord(value)) {
     throw new Error("Invalid configuration: root must be a JSON object.");
   }
 
   const issues: string[] = [];
+  if (value.schemaVersion !== undefined && value.schemaVersion !== 1) {
+    issues.push("schemaVersion must be 1");
+  }
   validateOptionalNonEmptyString(value, "modelProvider", issues);
   validateOptionalNonEmptyString(value, "model", issues);
   validateProviders(value.modelProviders, issues);
   validateLegacyApi(value.api, issues);
-  validateStorage(value.storage, issues);
+  validateLegacyStorage(value.storage, issues);
   validateContext(value.context, issues);
-
-  const configuredProvider = value.modelProvider;
-  if (typeof configuredProvider === "string") {
-    const customProviders = isRecord(value.modelProviders)
-      ? Object.keys(value.modelProviders)
-      : [];
-    const available = new Set([...Object.keys(BUILT_IN_MODEL_PROVIDERS), ...customProviders]);
-    if (!available.has(configuredProvider)) {
-      issues.push(`modelProvider references unknown provider: ${configuredProvider}`);
-    }
-  }
-
-  const context = isRecord(value.context) ? value.context : {};
-  const workingContextLimit =
-    typeof context.workingContextLimit === "number"
-      ? context.workingContextLimit
-      : DEFAULT_CONFIG.context.workingContextLimit;
-  const maxCompletionTokens =
-    typeof context.maxCompletionTokens === "number"
-      ? context.maxCompletionTokens
-      : DEFAULT_CONFIG.context.maxCompletionTokens;
-  if (
-    Number.isFinite(workingContextLimit) &&
-    Number.isFinite(maxCompletionTokens) &&
-    maxCompletionTokens >= workingContextLimit
-  ) {
-    issues.push("context.maxCompletionTokens must be smaller than context.workingContextLimit");
-  }
+  let features;
+  try { features = parseAgentFeatureFlagConfig(value.features); }
+  catch (error) { issues.push(errorMessage(error).replace(/^Invalid configuration:\s*/u, "")); }
 
   if (issues.length > 0) {
     throw new Error(`Invalid configuration: ${issues.join("; ")}`);
   }
-  return value as Partial<AppConfig>;
+
+  const providers = mergeProviders(value.modelProviders);
+  const legacyApi = isRecord(value.api) ? (value.api as LegacyApiConfig) : undefined;
+  const modelProvider = resolveProviderId(value.modelProvider, legacyApi, providers);
+  migrateLegacyApi(legacyApi, modelProvider, providers);
+
+  for (const [providerId, provider] of Object.entries(providers)) {
+    try {
+      const baseUrl = normalizeProviderEndpoint(provider.baseUrl);
+      const canonicalProvider = {...provider, baseUrl};
+      assertProviderSecurity(canonicalProvider);
+      const headers = normalizePublicProviderHeaders(provider.headers);
+      providers[providerId] = {
+        ...canonicalProvider,
+        ...(headers ? {headers} : {})
+      };
+    } catch (error) {
+      throw new Error(
+        `Invalid configuration: modelProviders.${providerId}: ${errorMessage(error)}`
+      );
+    }
+  }
+
+  if (!providers[modelProvider]) {
+    throw new Error(
+      `Invalid configuration: modelProvider references unknown provider: ${modelProvider}`
+    );
+  }
+
+  const context = mergeContext(value.context);
+  validateContextBudget(context);
+  const selected = providers[modelProvider];
+  if (!selected) {
+    throw new Error(`No model provider configuration is available for ${modelProvider}.`);
+  }
+
+  const config: AppConfig = {
+    schemaVersion: 1,
+    modelProvider,
+    modelProviders: providers,
+    model:
+      typeof value.model === "string"
+        ? value.model.trim()
+        : selected.defaultModel ?? DEFAULT_CONFIG.model,
+    context,
+    ...(features ? {features} : {})
+  };
+
+  return {
+    config,
+    requiresRewrite: needsCanonicalRewrite(value)
+  };
+}
+
+function mergeProviders(value: unknown): Record<ApiProviderId, ModelProviderConfig> {
+  const custom = isRecord(value)
+    ? (value as Record<ApiProviderId, ModelProviderConfig>)
+    : {};
+  return cloneProviders({...BUILT_IN_MODEL_PROVIDERS, ...custom});
+}
+
+function resolveProviderId(
+  configured: unknown,
+  legacyApi: LegacyApiConfig | undefined,
+  providers: Record<ApiProviderId, ModelProviderConfig>
+): ApiProviderId {
+  if (typeof configured === "string") {
+    if (!providers[configured]) {
+      throw new Error(
+        `Invalid configuration: modelProvider references unknown provider: ${configured}`
+      );
+    }
+    return configured;
+  }
+
+  const legacyId = legacyProviderId(legacyApi?.provider);
+  if (legacyId === "openai-compatible" && !providers[legacyId]) {
+    if (!legacyApi?.baseUrl) {
+      throw new Error(
+        "Invalid configuration: api.baseUrl is required for openai-compatible migration"
+      );
+    }
+    providers[legacyId] = {
+      name: "OpenAI Compatible",
+      baseUrl: legacyApi.baseUrl,
+      protocol: legacyApi.protocol ?? "chat_completions"
+    };
+  }
+  return legacyId ?? DEFAULT_CONFIG.modelProvider;
+}
+
+function migrateLegacyApi(
+  legacyApi: LegacyApiConfig | undefined,
+  modelProvider: ApiProviderId,
+  providers: Record<ApiProviderId, ModelProviderConfig>
+): void {
+  if (!legacyApi) {
+    return;
+  }
+  const provider = providers[modelProvider];
+  if (!provider) {
+    return;
+  }
+  providers[modelProvider] = {
+    ...provider,
+    ...(legacyApi.baseUrl ? {baseUrl: legacyApi.baseUrl} : {}),
+    ...(legacyApi.protocol ? {protocol: legacyApi.protocol} : {})
+  };
+}
+
+function legacyProviderId(
+  provider: LegacyApiConfig["provider"]
+): ApiProviderId | undefined {
+  if (provider === "minimax") {
+    return "minimax-official";
+  }
+  return provider;
+}
+
+function mergeContext(value: unknown): ContextConfig {
+  if (!isRecord(value)) {
+    return {...DEFAULT_CONFIG.context};
+  }
+  return {
+    workingContextLimit:
+      typeof value.workingContextLimit === "number"
+        ? value.workingContextLimit
+        : DEFAULT_CONFIG.context.workingContextLimit,
+    autoCompactRatio:
+      typeof value.autoCompactRatio === "number"
+        ? value.autoCompactRatio
+        : DEFAULT_CONFIG.context.autoCompactRatio,
+    maxCompletionTokens:
+      typeof value.maxCompletionTokens === "number"
+        ? value.maxCompletionTokens
+        : DEFAULT_CONFIG.context.maxCompletionTokens
+  };
+}
+
+function validateContextBudget(context: ContextConfig): void {
+  if (context.maxCompletionTokens >= context.workingContextLimit) {
+    throw new Error(
+      "Invalid configuration: context.maxCompletionTokens must be smaller than context.workingContextLimit"
+    );
+  }
 }
 
 function validateProviders(value: unknown, issues: string[]): void {
@@ -155,8 +331,11 @@ function validateProviders(value: unknown, issues: string[]): void {
     }
     optionalString(provider.envKey, `${path}.envKey`, issues);
     optionalString(provider.defaultModel, `${path}.defaultModel`, issues);
-    if (provider.supportsThinkTags !== undefined && typeof provider.supportsThinkTags !== "boolean") {
-      issues.push(`${path}.supportsThinkTags must be boolean`);
+    if (
+      provider.allowInsecureLoopback !== undefined &&
+      typeof provider.allowInsecureLoopback !== "boolean"
+    ) {
+      issues.push(`${path}.allowInsecureLoopback must be a boolean`);
     }
     if (provider.headers !== undefined) {
       if (!isRecord(provider.headers)) {
@@ -196,7 +375,7 @@ function validateLegacyApi(value: unknown, issues: string[]): void {
   }
 }
 
-function validateStorage(value: unknown, issues: string[]): void {
+function validateLegacyStorage(value: unknown, issues: string[]): void {
   if (value === undefined) {
     return;
   }
@@ -204,8 +383,13 @@ function validateStorage(value: unknown, issues: string[]): void {
     issues.push("storage must be an object");
     return;
   }
-  if (value.driver !== undefined && value.driver !== "jsonl" && value.driver !== "sqlite") {
-    issues.push("storage.driver must be jsonl or sqlite");
+  if (value.driver === "sqlite") {
+    throw new Error(
+      "SQLite is not supported during configuration migration; use JSONL storage."
+    );
+  }
+  if (value.driver !== undefined && value.driver !== "jsonl") {
+    issues.push("storage.driver must be jsonl");
   }
 }
 
@@ -228,6 +412,21 @@ function validateContext(value: unknown, issues: string[]): void {
   ) {
     issues.push("context.autoCompactRatio must be a number between 0 and 1");
   }
+}
+
+function needsCanonicalRewrite(value: Record<string, unknown>): boolean {
+  const canonicalKeys = new Set([
+    "schemaVersion",
+    "modelProvider",
+    "modelProviders",
+    "model",
+    "context",
+    "features"
+  ]);
+  return (
+    value.schemaVersion !== 1 ||
+    Object.keys(value).some((key) => !canonicalKeys.has(key))
+  );
 }
 
 function validateOptionalNonEmptyString(
@@ -276,8 +475,35 @@ function requireHttpUrl(value: unknown, path: string, issues: string[]): void {
   }
 }
 
+function cloneConfig(config: AppConfig): AppConfig {
+  return {
+    ...config,
+    modelProviders: cloneProviders(config.modelProviders),
+    context: {...config.context},
+    ...(config.features ? {features: {...config.features}} : {})
+  };
+}
+
+function cloneProviders(
+  providers: Record<ApiProviderId, ModelProviderConfig>
+): Record<ApiProviderId, ModelProviderConfig> {
+  return Object.fromEntries(
+    Object.entries(providers).map(([id, provider]) => [
+      id,
+      {
+        ...provider,
+        ...(provider.headers ? {headers: {...provider.headers}} : {})
+      }
+    ])
+  );
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 export function resolveActiveProvider(config: AppConfig): ModelProviderConfig & {id: string} {
@@ -286,33 +512,4 @@ export function resolveActiveProvider(config: AppConfig): ModelProviderConfig & 
     throw new Error(`Unknown model provider: ${config.modelProvider}`);
   }
   return {...provider, id: config.modelProvider};
-}
-
-function resolveLegacyProviderId(
-  loaded: Partial<AppConfig>,
-  providers: Record<ApiProviderId, ModelProviderConfig>
-): ApiProviderId {
-  if (loaded.modelProvider && providers[loaded.modelProvider]) {
-    return loaded.modelProvider;
-  }
-
-  if (loaded.api?.provider === "hashsight" && providers.hashsight) {
-    return "hashsight";
-  }
-
-  if (loaded.api?.provider === "minimax" && providers["minimax-official"]) {
-    return "minimax-official";
-  }
-
-  return DEFAULT_CONFIG.modelProvider;
-}
-
-function toLegacyProviderName(providerId: string): "minimax" | "hashsight" | "openai-compatible" {
-  if (providerId === "hashsight") {
-    return "hashsight";
-  }
-  if (providerId === "minimax-official") {
-    return "minimax";
-  }
-  return "openai-compatible";
 }

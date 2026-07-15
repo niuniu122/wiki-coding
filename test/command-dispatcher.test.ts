@@ -1,190 +1,190 @@
 import assert from "node:assert/strict";
+import {readFile} from "node:fs/promises";
+import {fileURLToPath} from "node:url";
 import test from "node:test";
 import type {Command, RuntimeEvent} from "../src/protocol.js";
-import {
-  CommandDispatcher,
-  type RuntimePort
-} from "../src/runtime/command-dispatcher.js";
-import type {ThreadRecord} from "../src/types.js";
+import {CommandDispatcher} from "../src/runtime/command-dispatcher.js";
+import type {RuntimeApplication} from "../src/runtime/runtime-application.js";
 
-const THREAD: ThreadRecord = {
-  id: "thread_1",
-  title: "Dispatcher test",
-  createdAt: "2026-07-10T00:00:00.000Z",
-  updatedAt: "2026-07-10T00:00:00.000Z",
-  model: "MiniMax-M2.1",
-  cwd: "C:/workspace",
-  status: "active"
+const READY: RuntimeEvent = {
+  type: "runtime.ready",
+  hasApiKey: false,
+  providerSummary: "minimax-official | responses | model=MiniMax-M3",
+  recoveredTurns: 0
 };
 
-class FakeRuntime implements RuntimePort {
-  calls: string[] = [];
-  savedApiKey = "";
-  failResume = false;
-  failSetApiKey = false;
+class FakeApplication implements RuntimeApplication {
+  readonly calls: string[] = [];
+  failInit = false;
 
   async init(): Promise<RuntimeEvent[]> {
     this.calls.push("init");
-    return [{type: "thread.loaded", thread: THREAD}, {type: "history.loaded", items: []}];
-  }
-
-  async hasApiKey(): Promise<boolean> {
-    this.calls.push("hasApiKey");
-    return false;
-  }
-
-  getProviderSummary(): string {
-    this.calls.push("getProviderSummary");
-    return "minimax-official | chat_completions | model=MiniMax-M2.1";
-  }
-
-  async setApiKey(apiKey: string): Promise<"keychain" | "user-file"> {
-    this.calls.push("setApiKey");
-    this.savedApiKey = apiKey;
-    if (this.failSetApiKey) {
-      throw new Error(`could not save ${apiKey}`);
+    if (this.failInit) {
+      throw new Error("init failed");
     }
-    return "user-file";
+    return [READY];
   }
 
-  listProviderSummaries(): string[] {
-    this.calls.push("listProviderSummaries");
-    return ["minimax-official (active)", "hashsight (available)"];
+  async *dispatch(command: Command): AsyncGenerator<RuntimeEvent> {
+    this.calls.push(`dispatch:${command.type}`);
+    yield {type: "trace.toggle.requested"};
   }
 
-  async switchProvider(providerId: string): Promise<string> {
-    this.calls.push(`switchProvider:${providerId}`);
-    return `${providerId} selected`;
-  }
-
-  async newThread(): Promise<RuntimeEvent[]> {
-    this.calls.push("newThread");
-    return [{type: "thread.loaded", thread: THREAD}, {type: "history.loaded", items: []}];
-  }
-
-  async listThreads(): Promise<ThreadRecord[]> {
-    this.calls.push("listThreads");
-    return [THREAD];
-  }
-
-  async resumeThread(threadId: string): Promise<RuntimeEvent[]> {
-    this.calls.push(`resumeThread:${threadId}`);
-    if (this.failResume) {
-      throw new Error("resume failed");
-    }
-    return [{type: "thread.loaded", thread: {...THREAD, id: threadId}}];
-  }
-
-  interruptCurrentTurn(): RuntimeEvent {
-    this.calls.push("interruptCurrentTurn");
-    return {type: "turn.interrupt.ignored", reason: "no_active_request"};
-  }
-
-  async compact(_reason: "manual"): Promise<RuntimeEvent[]> {
-    this.calls.push("compact");
-    return [
-      {type: "compact.started", reason: "manual"},
-      {
-        type: "compact.completed",
-        summary: "",
-        compacted: false,
-        beforeTokens: 1,
-        afterTokens: 1
-      }
-    ];
-  }
-
-  async *submitUserInput(input: string): AsyncGenerator<RuntimeEvent> {
-    this.calls.push(`submitUserInput:${input}`);
-    yield {type: "turn.started", turnId: "turn_1", input};
-    yield {type: "assistant.delta", turnId: "turn_1", delta: "ok"};
+  async shutdown(reason: "user" | "signal" | "fatal"): Promise<void> {
+    this.calls.push(`shutdown:${reason}`);
   }
 }
 
-async function collect(
-  dispatcher: CommandDispatcher,
-  command: Command
-): Promise<RuntimeEvent[]> {
+test("dispatcher delegates the complete RuntimeApplication contract", async () => {
+  const application = new FakeApplication();
+  const dispatcher = new CommandDispatcher(application);
+
+  assert.deepEqual(await dispatcher.init(), [READY]);
   const events: RuntimeEvent[] = [];
-  for await (const event of dispatcher.dispatch(command)) {
+  for await (const event of dispatcher.dispatch({type: "thread.new"})) {
     events.push(event);
   }
-  return events;
-}
+  await dispatcher.shutdown("signal");
 
-test("dispatcher initializes the runtime and publishes a ready event", async () => {
-  const runtime = new FakeRuntime();
-  const dispatcher = new CommandDispatcher(runtime);
+  assert.deepEqual(events, [{type: "trace.toggle.requested"}]);
+  assert.deepEqual(application.calls, [
+    "init",
+    "dispatch:thread.new",
+    "shutdown:signal"
+  ]);
+});
+
+test("dispatcher converts initialization failures into typed redacted events", async () => {
+  const application = new FakeApplication();
+  application.failInit = true;
+  const dispatcher = new CommandDispatcher(application);
+
+  assert.deepEqual(await dispatcher.init(), [
+    {type: "runtime.init_failed", message: "init failed"}
+  ]);
+});
+
+test("dispatcher redacts credentials from initialization failures", async () => {
+  class SecretFailureApplication extends FakeApplication {
+    override async init(): Promise<RuntimeEvent[]> {
+      throw new Error(
+        "Could not open C:/workspace/config.json with Bearer sk-super-secret-token-1234567890"
+      );
+    }
+  }
+  const dispatcher = new CommandDispatcher(new SecretFailureApplication());
 
   const events = await dispatcher.init();
 
-  assert.equal(events.at(-1)?.type, "runtime.ready");
-  const ready = events.at(-1);
-  if (ready?.type === "runtime.ready") {
-    assert.equal(ready.hasApiKey, false);
-    assert.equal(ready.providerSummary.includes("minimax-official"), true);
-    assert.equal(ready.recoveredTurns, 0);
+  assert.equal(events[0]?.type, "runtime.init_failed");
+  assert.equal(JSON.stringify(events).includes("sk-super-secret"), false);
+  assert.match(JSON.stringify(events), /C:\/workspace\/config\.json/);
+});
+
+test("dispatcher redacts high-risk standalone tokens from initialization failures", async () => {
+  class TokenFailureApplication extends FakeApplication {
+    override async init(): Promise<RuntimeEvent[]> {
+      throw new Error(
+        "Keychain rejected AKIAABCDEFGHIJKLMNOP and AbCdEf0123456789+/AbCdEf0123456789+/"
+      );
+    }
+  }
+
+  const events = await new CommandDispatcher(new TokenFailureApplication()).init();
+  const rendered = JSON.stringify(events);
+
+  assert.equal(rendered.includes("AKIAABCDEFGHIJKLMNOP"), false);
+  assert.equal(rendered.includes("AbCdEf0123456789"), false);
+});
+
+test("dispatcher fails safe when initialization errors reject introspection", async () => {
+  const marker = "HOSTILE_INIT_MARKER";
+  const secret = "sk-hostile-secret-1234567890";
+  const path = "C:/private/credentials.json";
+  const instanceofTrap = new Proxy({}, {
+    getPrototypeOf() {
+      throw new Error(`${marker} ${secret} ${path}`);
+    },
+    get() {
+      throw new Error(`${marker} ${secret} ${path}`);
+    }
+  });
+  const messageGetterTrap = new Error("unused");
+  Object.defineProperty(messageGetterTrap, "message", {
+    get() {
+      throw new Error(`${marker} ${secret} ${path}`);
+    }
+  });
+  const toStringTrap = {
+    toString() {
+      throw new Error(`${marker} ${secret} ${path}`);
+    }
+  };
+  class HostileFailureApplication extends FakeApplication {
+    constructor(private readonly failure: unknown) {
+      super();
+    }
+
+    override async init(): Promise<RuntimeEvent[]> {
+      throw this.failure;
+    }
+  }
+
+  for (const hostile of [instanceofTrap, messageGetterTrap, toStringTrap]) {
+    const events = await new CommandDispatcher(
+      new HostileFailureApplication(hostile)
+    ).init();
+    const rendered = JSON.stringify(events);
+
+    assert.deepEqual(events, [{
+      type: "runtime.init_failed",
+      message: "Runtime initialization failed."
+    }]);
+    for (const sensitive of [marker, secret, path]) {
+      assert.equal(rendered.includes(sensitive), false, sensitive);
+    }
   }
 });
 
-test("dispatcher routes every Command and never echoes an API key", async () => {
-  const runtime = new FakeRuntime();
-  const dispatcher = new CommandDispatcher(runtime);
-  const secret = "secret-key-must-not-appear";
+test("dispatcher redacts complete labeled credential lines and preserves later diagnostics", async () => {
+  class LabeledFailureApplication extends FakeApplication {
+    override async init(): Promise<RuntimeEvent[]> {
+      throw new Error([
+        "Authorization: Basic first-token second-token",
+        "Authorization =   Bearer bearer-token extra-token",
+        "API_KEY: api first second",
+        "PASSWORD = open sesame phrase",
+        "diagnostic: workspace lease is held"
+      ].join("\n"));
+    }
+  }
 
-  const results = await Promise.all([
-    collect(dispatcher, {type: "thread.new"}),
-    collect(dispatcher, {type: "thread.list"}),
-    collect(dispatcher, {type: "thread.resume", threadId: "thread_2"}),
-    collect(dispatcher, {type: "turn.submit", input: "hello"}),
-    collect(dispatcher, {type: "turn.interrupt"}),
-    collect(dispatcher, {type: "compact.manual"}),
-    collect(dispatcher, {type: "config.api_key.request"}),
-    collect(dispatcher, {type: "config.api_key.set", apiKey: secret}),
-    collect(dispatcher, {type: "provider.list"}),
-    collect(dispatcher, {type: "provider.switch", providerId: "hashsight"}),
-    collect(dispatcher, {type: "trace.toggle"}),
-    collect(dispatcher, {type: "app.exit"})
-  ]);
+  const events = await new CommandDispatcher(new LabeledFailureApplication()).init();
+  const message = events[0]?.type === "runtime.init_failed" ? events[0].message : "";
 
-  assert.equal(runtime.savedApiKey, secret);
-  assert.equal(JSON.stringify(results).includes(secret), false);
-  assert.equal(results[1]?.[0]?.type, "thread.listed");
-  assert.equal(results[3]?.some((event) => event.type === "assistant.delta"), true);
-  assert.equal(results[6]?.[0]?.type, "config.api_key.requested");
-  assert.equal(results[7]?.[0]?.type, "config.api_key.saved");
-  assert.equal(results[8]?.[0]?.type, "provider.listed");
-  assert.equal(results[9]?.[0]?.type, "provider.changed");
-  assert.equal(results[10]?.[0]?.type, "trace.toggle.requested");
-  assert.equal(results[11]?.[0]?.type, "app.exit.requested");
+  for (const secret of [
+    "first-token",
+    "second-token",
+    "bearer-token",
+    "extra-token",
+    "api first second",
+    "open sesame phrase"
+  ]) {
+    assert.equal(message.includes(secret), false, secret);
+  }
+  assert.match(message, /Authorization=\[REDACTED\]/);
+  assert.match(message, /API_KEY=\[REDACTED\]/);
+  assert.match(message, /PASSWORD=\[REDACTED\]/);
+  assert.match(message, /diagnostic: workspace lease is held/);
 });
 
-test("dispatcher converts command failures into error events", async () => {
-  const runtime = new FakeRuntime();
-  runtime.failResume = true;
-  const dispatcher = new CommandDispatcher(runtime);
+test("dispatcher depends only on RuntimeApplication and defaults to ApplicationKernel", async () => {
+  const source = await readFile(
+    fileURLToPath(new URL("../src/runtime/command-dispatcher.ts", import.meta.url)),
+    "utf8"
+  );
 
-  const events = await collect(dispatcher, {
-    type: "thread.resume",
-    threadId: "missing"
-  });
-
-  assert.deepEqual(events, [{type: "error", message: "resume failed"}]);
-});
-
-test("dispatcher redacts an API key even when secret storage echoes it in an error", async () => {
-  const runtime = new FakeRuntime();
-  runtime.failSetApiKey = true;
-  const dispatcher = new CommandDispatcher(runtime);
-  const secret = "super-secret-key";
-
-  const events = await collect(dispatcher, {
-    type: "config.api_key.set",
-    apiKey: secret
-  });
-
-  assert.equal(JSON.stringify(events).includes(secret), false);
-  assert.deepEqual(events, [
-    {type: "error", message: "could not save [REDACTED]"}
-  ]);
+  assert.equal(source.includes("RuntimePort"), false);
+  assert.equal(source.includes("AgentRuntime"), false);
+  assert.equal(source.includes("new ApplicationKernel()"), true);
 });

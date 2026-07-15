@@ -53,6 +53,7 @@ export class FetchHttpStreamTransport implements HttpStreamTransport {
     try {
       const response = await fetch(request.url, {
         method: "POST",
+        redirect: "manual",
         headers: request.headers,
         body: JSON.stringify(request.body),
         signal: controller.signal
