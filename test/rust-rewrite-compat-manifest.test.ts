@@ -158,6 +158,28 @@ export function validateCompatFixtures(fixtures: CompatFixtures): void {
     assert.notEqual(asArray(stream.raw).length, 0);
     assert.notEqual(asArray(stream.expected_events).length, 0);
   }
+  for (const protocol of PROTOCOLS) {
+    const events = fixtures.validStreams
+      .map(asRecord)
+      .filter((stream) => stream.protocol === protocol)
+      .flatMap((stream) => asArray(stream.expected_events).map(asRecord));
+    for (const type of [
+      "text_delta",
+      "reasoning_filtered",
+      "usage",
+      "tool_call",
+      "completed"
+    ]) {
+      assert.equal(
+        events.some((event) => event.type === type),
+        true,
+        `${protocol} fixture is missing ${type}`
+      );
+    }
+    const toolCall = events.find((event) => event.type === "tool_call");
+    assert.equal(toolCall?.call_id, "call-1");
+    assert.equal(toolCall?.name, "invoke_local_capability");
+  }
 
   assertNoSecretMaterial(fixtures);
 }
