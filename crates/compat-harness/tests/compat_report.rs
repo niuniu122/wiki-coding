@@ -30,20 +30,32 @@ fn compat_report_contains_every_baseline_item_exactly_once() {
     let root = repository_root();
     let manifests = load_compat_manifests(&root).expect("strict manifests");
     let report = build_report(&manifests);
-    let baseline_ids = manifests
-        .baseline
-        .items
-        .iter()
-        .map(|item| item.id.as_str())
-        .collect::<BTreeSet<_>>();
+    let mut expected_ids = BTreeSet::from([
+        "rust.permission_modes".to_owned(),
+        "rust.product_entry".to_owned(),
+    ]);
+    for implementation in ["rust", "typescript"] {
+        for command in &manifests.commands.commands {
+            expected_ids.insert(format!("{implementation}.command.{}", command.name));
+            for alias in &command.aliases {
+                expected_ids.insert(format!("{implementation}.command.{alias}"));
+            }
+        }
+        for profile in &manifests.providers.profile_classes {
+            expected_ids.insert(format!("{implementation}.provider_profile.{}", profile.id));
+        }
+        for protocol in &manifests.providers.protocols {
+            expected_ids.insert(format!("{implementation}.provider_protocol.{protocol}"));
+        }
+    }
     let report_ids = report
         .entries
         .iter()
-        .map(|item| item.id.as_str())
+        .map(|item| item.id.clone())
         .collect::<BTreeSet<_>>();
 
-    assert_eq!(report.entries.len(), manifests.baseline.items.len());
-    assert_eq!(report_ids, baseline_ids);
+    assert_eq!(report.entries.len(), expected_ids.len());
+    assert_eq!(report_ids, expected_ids);
     assert_eq!(manifests.commands.commands.len(), 17);
     assert_eq!(manifests.providers.profile_classes.len(), 3);
 }

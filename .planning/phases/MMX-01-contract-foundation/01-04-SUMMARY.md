@@ -34,7 +34,7 @@ patterns-established:
 requirements-completed: [ARCH-02, ARCH-04, COMP-04]
 coverage:
   - id: D1
-    description: "Strict manifests produce a sorted golden report whose second run is byte-identical and whose matched entries require real evidence."
+    description: "Strict manifests expand every command, alias, Provider profile, and protocol into a sorted golden report whose second run is byte-identical and whose matched entries require real evidence."
     requirement: COMP-04
     verification:
       - kind: integration
@@ -79,7 +79,7 @@ status: complete
 
 ## Accomplishments
 
-- Built strict command, Provider, and baseline manifest loading plus a sorted golden compatibility report that remains byte-identical across runs.
+- Built strict command, Provider, and baseline manifest loading plus a sorted golden report with one status for every command, alias, Provider profile, and protocol; it remains byte-identical across runs.
 - Turned crate boundaries into Cargo metadata policy with exact negative tests for core-to-adapter, production-to-harness, cycles, and database packages.
 - Added a dependency-free `minimax-compat-harness verify` command and made both Windows and Linux CI run pinned fmt, Clippy, workspace tests, and contract verification without credentials.
 
@@ -149,7 +149,7 @@ None - verification is fixture-only and CI installs the pinned base toolchain th
 
 - All three task commits and all claimed files exist; the worktree is clean before planning metadata updates.
 - Eight harness tests, four core tests, five protocol tests, and two Provider tests pass under the official Rust 1.97.0 local gnullvm toolchain.
-- Workspace fmt and Clippy with `-D warnings`, locked workspace tests, two aggregate verification runs, and byte-identical 1,398-byte reports pass.
+- Workspace fmt and Clippy with `-D warnings`, locked workspace tests, two aggregate verification runs, and byte-identical 48-entry, 7,159-byte reports pass.
 - `npm run check`, `npm run build`, all 432 TypeScript tests, and `git diff --check` pass; `package.json` still launches `dist/cli.js`.
 
 ---

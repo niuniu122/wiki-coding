@@ -3,6 +3,96 @@
   "baselineCommit": "84784f5",
   "entries": [
     {
+      "id": "rust.command./agent",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "rust.command./api",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "rust.command./capabilities",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "rust.command./chat",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "rust.command./compact",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "rust.command./continue",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "rust.command./exit",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "rust.command./interrupt",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "rust.command./model",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "rust.command./models",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "rust.command./new",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "rust.command./permissions",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "rust.command./provider",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "rust.command./quit",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "rust.command./resume",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "rust.command./retry",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "rust.command./threads",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "rust.command./trace",
+      "status": "pending",
+      "evidence": []
+    },
+    {
       "id": "rust.permission_modes",
       "status": "pending",
       "evidence": []
@@ -13,12 +103,22 @@
       "evidence": []
     },
     {
-      "id": "rust.provider_profiles",
+      "id": "rust.provider_profile.custom_openai_compatible",
       "status": "pending",
       "evidence": []
     },
     {
-      "id": "rust.provider_protocols",
+      "id": "rust.provider_profile.minimax_hashsight",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "rust.provider_profile.minimax_official",
+      "status": "pending",
+      "evidence": []
+    },
+    {
+      "id": "rust.provider_protocol.chat_completions",
       "status": "matched",
       "evidence": [
         "crates/provider/tests/provider_fixtures.rs",
@@ -28,12 +128,143 @@
       ]
     },
     {
-      "id": "rust.public_commands",
-      "status": "pending",
-      "evidence": []
+      "id": "rust.provider_protocol.responses",
+      "status": "matched",
+      "evidence": [
+        "crates/provider/tests/provider_fixtures.rs",
+        "fixtures/compat/provider-streams/chat-completions.valid.jsonl",
+        "fixtures/compat/provider-streams/invalid-cases.v1.json",
+        "fixtures/compat/provider-streams/responses.valid.jsonl"
+      ]
     },
     {
-      "id": "typescript.provider_profiles",
+      "id": "typescript.command./agent",
+      "status": "matched",
+      "evidence": [
+        "test/chat-input-policy.test.ts"
+      ]
+    },
+    {
+      "id": "typescript.command./api",
+      "status": "matched",
+      "evidence": [
+        "test/chat-input-policy.test.ts"
+      ]
+    },
+    {
+      "id": "typescript.command./capabilities",
+      "status": "matched",
+      "evidence": [
+        "test/chat-input-policy.test.ts"
+      ]
+    },
+    {
+      "id": "typescript.command./chat",
+      "status": "matched",
+      "evidence": [
+        "test/chat-input-policy.test.ts"
+      ]
+    },
+    {
+      "id": "typescript.command./compact",
+      "status": "matched",
+      "evidence": [
+        "test/chat-input-policy.test.ts"
+      ]
+    },
+    {
+      "id": "typescript.command./continue",
+      "status": "matched",
+      "evidence": [
+        "test/chat-input-policy.test.ts"
+      ]
+    },
+    {
+      "id": "typescript.command./exit",
+      "status": "matched",
+      "evidence": [
+        "test/chat-input-policy.test.ts"
+      ]
+    },
+    {
+      "id": "typescript.command./interrupt",
+      "status": "matched",
+      "evidence": [
+        "test/chat-input-policy.test.ts"
+      ]
+    },
+    {
+      "id": "typescript.command./model",
+      "status": "matched",
+      "evidence": [
+        "test/chat-input-policy.test.ts"
+      ]
+    },
+    {
+      "id": "typescript.command./models",
+      "status": "matched",
+      "evidence": [
+        "test/chat-input-policy.test.ts"
+      ]
+    },
+    {
+      "id": "typescript.command./new",
+      "status": "matched",
+      "evidence": [
+        "test/chat-input-policy.test.ts"
+      ]
+    },
+    {
+      "id": "typescript.command./permissions",
+      "status": "matched",
+      "evidence": [
+        "test/chat-input-policy.test.ts"
+      ]
+    },
+    {
+      "id": "typescript.command./provider",
+      "status": "matched",
+      "evidence": [
+        "test/chat-input-policy.test.ts"
+      ]
+    },
+    {
+      "id": "typescript.command./quit",
+      "status": "matched",
+      "evidence": [
+        "test/chat-input-policy.test.ts"
+      ]
+    },
+    {
+      "id": "typescript.command./resume",
+      "status": "matched",
+      "evidence": [
+        "test/chat-input-policy.test.ts"
+      ]
+    },
+    {
+      "id": "typescript.command./retry",
+      "status": "matched",
+      "evidence": [
+        "test/chat-input-policy.test.ts"
+      ]
+    },
+    {
+      "id": "typescript.command./threads",
+      "status": "matched",
+      "evidence": [
+        "test/chat-input-policy.test.ts"
+      ]
+    },
+    {
+      "id": "typescript.command./trace",
+      "status": "matched",
+      "evidence": [
+        "test/chat-input-policy.test.ts"
+      ]
+    },
+    {
+      "id": "typescript.provider_profile.custom_openai_compatible",
       "status": "matched",
       "evidence": [
         "test/model-profile-registry.test.ts",
@@ -41,17 +272,33 @@
       ]
     },
     {
-      "id": "typescript.provider_protocols",
+      "id": "typescript.provider_profile.minimax_hashsight",
+      "status": "matched",
+      "evidence": [
+        "test/model-profile-registry.test.ts",
+        "test/provider-conformance.test.ts"
+      ]
+    },
+    {
+      "id": "typescript.provider_profile.minimax_official",
+      "status": "matched",
+      "evidence": [
+        "test/model-profile-registry.test.ts",
+        "test/provider-conformance.test.ts"
+      ]
+    },
+    {
+      "id": "typescript.provider_protocol.chat_completions",
       "status": "matched",
       "evidence": [
         "test/provider-conformance.test.ts"
       ]
     },
     {
-      "id": "typescript.public_commands",
+      "id": "typescript.provider_protocol.responses",
       "status": "matched",
       "evidence": [
-        "test/chat-input-policy.test.ts"
+        "test/provider-conformance.test.ts"
       ]
     }
   ]
