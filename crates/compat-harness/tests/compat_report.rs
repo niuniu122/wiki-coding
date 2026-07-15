@@ -4,8 +4,8 @@ use std::fs;
 use minimax_compat_harness::{
     ArchitectureError, ArchitectureGraph, ArchitecturePackage, ManifestError, ParityStatus,
     build_report, load_cargo_architecture, load_compat_manifests, report_json, repository_root,
-    validate_architecture, validate_core_source_boundary, validate_core_source_text,
-    validate_report,
+    validate_architecture, validate_core_source_boundary, validate_core_source_directory,
+    validate_core_source_text, validate_report,
 };
 
 #[test]
@@ -178,6 +178,32 @@ fn architecture_rejects_markdown_paths_in_core_source() {
             "core source boundary denied: session.rs contains std::path".to_owned()
         ))
     );
+}
+
+#[test]
+fn architecture_recurses_into_nested_core_modules() {
+    let unique = format!(
+        "minimax-core-architecture-{}-{}",
+        std::process::id(),
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_nanos()
+    );
+    let root = std::env::temp_dir().join(unique);
+    let nested = root.join("nested");
+    fs::create_dir_all(&nested).expect("create nested fixture");
+    fs::write(nested.join("adapter.rs"), "use tokio::time::sleep;").expect("write nested fixture");
+
+    let result = validate_core_source_directory(&root);
+    fs::remove_dir_all(&root).expect("remove nested fixture");
+
+    let Err(ArchitectureError::Violation(message)) = result else {
+        panic!("nested forbidden import should fail");
+    };
+    assert!(message.contains("nested"));
+    assert!(message.contains("adapter.rs"));
+    assert!(message.contains("tokio::"));
 }
 
 fn synthetic_graph(edges: &[(&str, &[&str])]) -> ArchitectureGraph {

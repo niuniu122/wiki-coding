@@ -136,35 +136,51 @@ pub fn validate_architecture(graph: &ArchitectureGraph) -> Result<(), Architectu
 }
 
 pub fn validate_core_source_boundary(root: &Path) -> Result<(), ArchitectureError> {
-    let source_root = root.join("crates/core/src");
-    for entry in fs::read_dir(source_root).map_err(|_| ArchitectureError::CoreSourceRead)? {
+    validate_core_source_directory(&root.join("crates/core/src"))
+}
+
+pub fn validate_core_source_directory(source_root: &Path) -> Result<(), ArchitectureError> {
+    validate_core_source_directory_inner(source_root, source_root)
+}
+
+fn validate_core_source_directory_inner(
+    source_root: &Path,
+    directory: &Path,
+) -> Result<(), ArchitectureError> {
+    for entry in fs::read_dir(directory).map_err(|_| ArchitectureError::CoreSourceRead)? {
         let entry = entry.map_err(|_| ArchitectureError::CoreSourceRead)?;
-        if entry
-            .path()
-            .extension()
-            .and_then(|extension| extension.to_str())
-            != Some("rs")
-        {
+        let path = entry.path();
+        if path.is_dir() {
+            validate_core_source_directory_inner(source_root, &path)?;
             continue;
         }
-        let source =
-            fs::read_to_string(entry.path()).map_err(|_| ArchitectureError::CoreSourceRead)?;
-        validate_core_source_text(&entry.file_name().to_string_lossy(), &source)?;
+        if path.extension().and_then(|extension| extension.to_str()) == Some("rs") {
+            let source =
+                fs::read_to_string(&path).map_err(|_| ArchitectureError::CoreSourceRead)?;
+            let relative = path.strip_prefix(source_root).unwrap_or(&path);
+            validate_core_source_text(&relative.to_string_lossy(), &source)?;
+        }
     }
     Ok(())
 }
 
 pub fn validate_core_source_text(file: &str, source: &str) -> Result<(), ArchitectureError> {
-    const DENIED: [&str; 9] = [
+    const DENIED: [&str; 15] = [
         "std::path",
+        "std::fs",
         "PathBuf",
         "Path::",
         ".md",
         "minimax_vault",
         "minimax_tools",
+        "tokio::",
+        "tokio_util",
         "reqwest",
         "hyper::",
         "http::",
+        "crossterm",
+        "keyring",
+        "rusqlite",
     ];
     if let Some(pattern) = DENIED.iter().find(|pattern| source.contains(*pattern)) {
         return Err(ArchitectureError::Violation(format!(
@@ -244,10 +260,13 @@ fn validate_core_dependencies(graph: &ArchitectureGraph) -> Result<(), Architect
 }
 
 fn validate_database_denylist(graph: &ArchitectureGraph) -> Result<(), ArchitectureError> {
-    const DENIED: [&str; 6] = ["sqlite", "sqlx", "diesel", "rusqlite", "orm", "libsqlite"];
     for package in &graph.packages {
         let normalized = package.name.to_ascii_lowercase().replace(['-', '_'], "");
-        if DENIED.iter().any(|denied| normalized.contains(denied)) {
+        if normalized.contains("sqlite")
+            || normalized.starts_with("sqlx")
+            || normalized.starts_with("diesel")
+            || normalized.contains("seaorm")
+        {
             return Err(ArchitectureError::Violation(format!(
                 "database dependency denied: {}",
                 package.name

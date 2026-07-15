@@ -9,7 +9,8 @@ pub mod report;
 
 pub use architecture::{
     ArchitectureError, ArchitectureGraph, ArchitecturePackage, load_cargo_architecture,
-    validate_architecture, validate_core_source_boundary, validate_core_source_text,
+    validate_architecture, validate_core_source_boundary, validate_core_source_directory,
+    validate_core_source_text,
 };
 pub use manifest::{
     BaselineStatus, CommandManifest, CompatManifests, ManifestError, ParityStatus,
