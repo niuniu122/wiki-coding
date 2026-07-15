@@ -9,13 +9,21 @@ mod ports;
 mod runtime;
 mod sequence;
 mod session;
+mod tool;
 mod trace;
 
 pub use compaction::{CompactionBudget, CompactionError, LocalCompactor};
-pub use ports::{Clock, FixedClock, FixedIdGenerator, IdGenerator};
+pub use ports::{
+    ApprovalFuture, ApprovalPort, Clock, FixedClock, FixedIdGenerator, IdGenerator, ToolFuture,
+    ToolPort,
+};
 pub use runtime::{RunEffect, RunInput, RunMachine, RunState};
 pub use sequence::{NormalizedReplayRecord, StreamSequence, replay_stream};
 pub use session::{SessionCommand, SessionEffect, SessionMachine, SessionSummary};
+pub use tool::{
+    AgentBudget, AgentBudgetError, BudgetKind, DecisionSnapshot, InvocationEffect, InvocationError,
+    InvocationInput, InvocationMachine, InvocationRegistry, InvocationState, PermissionMode,
+};
 pub use trace::{FoldedTrace, SafeTraceFact, SafeTraceRecorder};
 
 /// Human-readable boundary used by architecture checks and documentation.

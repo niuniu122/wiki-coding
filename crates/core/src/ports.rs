@@ -1,3 +1,20 @@
+use std::future::Future;
+use std::pin::Pin;
+
+use minimax_protocol::{ToolDecision, ToolInvocation, ToolResult};
+
+pub type ApprovalFuture<'a> = Pin<Box<dyn Future<Output = ToolDecision> + Send + 'a>>;
+pub type ToolFuture<'a> = Pin<Box<dyn Future<Output = ToolResult> + Send + 'a>>;
+
+pub trait ApprovalPort: Send + Sync {
+    fn decide<'a>(&'a self, invocation: &'a ToolInvocation) -> ApprovalFuture<'a>;
+}
+
+pub trait ToolPort: Send + Sync {
+    fn preflight(&self, invocation: &ToolInvocation) -> Result<(), ToolResult>;
+    fn execute<'a>(&'a self, invocation: &'a ToolInvocation) -> ToolFuture<'a>;
+}
+
 /// Supplies time to core workflows without consulting the system clock directly.
 pub trait Clock {
     fn now_unix_ms(&self) -> u64;

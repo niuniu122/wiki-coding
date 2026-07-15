@@ -1,10 +1,12 @@
 use minimax_core::{RunEffect, RunInput, RunMachine, RunState};
 use minimax_protocol::{
-    MessageRole, ModelId, ModelMessage, OutputSettings, ProtocolErrorCode, ProviderId,
-    ProviderProtocolKind, RequestId, RuntimeErrorCode, RuntimeEvent, RuntimeFailure,
-    RuntimeTerminalOutcome, SessionId, StreamEvent, TerminalOutcome, ToolCallFragment, ToolCallId,
-    TurnId, TurnRequest, Usage,
+    AgentLimits, AssistantToolCallBatch, ConversationItem, MessageRole, ModelId, ModelMessage,
+    OutputSettings, ProtocolErrorCode, ProviderId, ProviderProtocolKind, RequestId,
+    RuntimeErrorCode, RuntimeEvent, RuntimeFailure, RuntimeTerminalOutcome, SchemaVersion,
+    SessionId, StreamEvent, TerminalOutcome, ToolCallFragment, ToolCallId, ToolDefinition,
+    ToolResult, ToolResultMessage, ToolTerminalStatus, TurnId, TurnRequest, Usage,
 };
+use serde_json::json;
 
 fn request() -> TurnRequest {
     TurnRequest {
@@ -24,6 +26,40 @@ fn request() -> TurnRequest {
         tools: Vec::new(),
         agent_limits: None,
         output: OutputSettings::new(64).expect("output"),
+    }
+}
+
+fn agent_request() -> TurnRequest {
+    let mut request = request();
+    request.tools = vec![definition("read_file"), definition("list_directory")];
+    request.agent_limits = Some(AgentLimits::default());
+    request
+}
+
+fn definition(name: &str) -> ToolDefinition {
+    ToolDefinition::new(
+        name,
+        "Bounded fixture tool.",
+        json!({
+            "type":"object",
+            "properties":{"path":{"type":"string"}},
+            "required":["path"],
+            "additionalProperties":false
+        }),
+    )
+    .expect("definition")
+}
+
+fn complete_call(id: &str, name: &str, path: &str, index: u32) -> StreamEvent {
+    StreamEvent::ToolCallFragments {
+        fragments: vec![ToolCallFragment {
+            call_id: ToolCallId::new(id).expect("call ID"),
+            stream_id: None,
+            name: Some(name.to_owned()),
+            arguments_delta: Some(format!(r#"{{"path":"{path}"}}"#)),
+            arguments_complete: true,
+            index: Some(index),
+        }],
     }
 }
 
@@ -206,4 +242,144 @@ fn cancel_after_partial_delta_preserves_partial_event_and_interrupts() {
     let terminal = machine.apply(RunInput::Cancel).expect("cancel");
     assert!(matches!(terminal.first(), Some(RunEffect::AbortProvider)));
     assert_persist_before_publish(&terminal);
+}
+
+#[test]
+fn agent_rounds_pause_for_zero_one_or_multiple_complete_calls() {
+    let mut empty = RunMachine::new();
+    empty
+        .apply(RunInput::Begin(agent_request()))
+        .expect("agent begin");
+    let completed = empty
+        .apply(RunInput::ProviderEvent(StreamEvent::Terminal {
+            outcome: TerminalOutcome::Completed,
+        }))
+        .expect("empty round completes");
+    assert!(
+        completed
+            .iter()
+            .any(|effect| matches!(effect, RunEffect::Finalize(_)))
+    );
+
+    for calls in [
+        vec![("call-z", "read_file", "README.md")],
+        vec![
+            ("call-z", "read_file", "README.md"),
+            ("call-a", "list_directory", "crates"),
+        ],
+    ] {
+        let mut machine = RunMachine::new();
+        machine
+            .apply(RunInput::Begin(agent_request()))
+            .expect("agent begin");
+        for (index, (id, name, path)) in calls.iter().enumerate() {
+            machine
+                .apply(RunInput::ProviderEvent(complete_call(
+                    id,
+                    name,
+                    path,
+                    u32::try_from(index).expect("small index"),
+                )))
+                .expect("complete call");
+        }
+        let effects = machine
+            .apply(RunInput::ProviderEvent(StreamEvent::Terminal {
+                outcome: TerminalOutcome::Completed,
+            }))
+            .expect("round terminal");
+        let Some(RunEffect::BeginTools(invocations)) = effects.first() else {
+            panic!("agent must pause for durable tools");
+        };
+        assert_eq!(invocations.len(), calls.len());
+        assert_eq!(invocations[0].call.call_id.as_str(), "call-z");
+        if calls.len() == 2 {
+            assert_eq!(invocations[1].call.call_id.as_str(), "call-a");
+        }
+        assert!(matches!(machine.state(), RunState::AwaitingTools { .. }));
+    }
+}
+
+#[test]
+fn agent_continues_only_after_every_matching_result_is_in_native_history() {
+    let mut machine = RunMachine::new();
+    let initial = agent_request();
+    machine
+        .apply(RunInput::Begin(initial.clone()))
+        .expect("agent begin");
+    for event in [
+        complete_call("call-z", "read_file", "README.md", 0),
+        complete_call("call-a", "list_directory", "crates", 1),
+    ] {
+        machine
+            .apply(RunInput::ProviderEvent(event))
+            .expect("complete call");
+    }
+    let effects = machine
+        .apply(RunInput::ProviderEvent(StreamEvent::Terminal {
+            outcome: TerminalOutcome::Completed,
+        }))
+        .expect("round complete");
+    let RunEffect::BeginTools(invocations) = &effects[0] else {
+        panic!("tool batch");
+    };
+
+    let mut incomplete = initial.clone();
+    incomplete
+        .messages
+        .push(ConversationItem::AssistantToolCalls(
+            AssistantToolCallBatch {
+                tool_calls: invocations
+                    .iter()
+                    .map(|invocation| invocation.call.clone())
+                    .collect(),
+            },
+        ));
+    incomplete
+        .messages
+        .push(ConversationItem::ToolResult(ToolResultMessage {
+            tool_result: ToolResult {
+                schema_version: SchemaVersion,
+                call_id: invocations[0].call.call_id.clone(),
+                tool_name: invocations[0].call.name.clone(),
+                status: ToolTerminalStatus::Rejected,
+                code: "user_rejected".to_owned(),
+                output: None,
+            },
+        }));
+    assert_eq!(
+        machine.apply(RunInput::ContinueAfterTools(incomplete.clone())),
+        Err(RuntimeErrorCode::Recovery)
+    );
+
+    let mut complete = incomplete;
+    complete
+        .messages
+        .push(ConversationItem::ToolResult(ToolResultMessage {
+            tool_result: ToolResult {
+                schema_version: SchemaVersion,
+                call_id: invocations[1].call.call_id.clone(),
+                tool_name: invocations[1].call.name.clone(),
+                status: ToolTerminalStatus::Succeeded,
+                code: "ok".to_owned(),
+                output: Some("protocol".to_owned()),
+            },
+        }));
+    let continuation = machine
+        .apply(RunInput::ContinueAfterTools(complete))
+        .expect("all results durable");
+    assert!(matches!(
+        continuation.as_slice(),
+        [RunEffect::OpenProvider(_)]
+    ));
+    machine
+        .apply(RunInput::ProviderEvent(StreamEvent::VisibleTextDelta {
+            delta: "done".to_owned(),
+        }))
+        .expect("final text");
+    machine
+        .apply(RunInput::ProviderEvent(StreamEvent::Terminal {
+            outcome: TerminalOutcome::Completed,
+        }))
+        .expect("final terminal");
+    assert!(matches!(machine.state(), RunState::Terminal { .. }));
 }
