@@ -6,8 +6,11 @@ rust-version.workspace = true
 license.workspace = true
 
 [dependencies]
-minimax-core = { path = "../core" }
+is-terminal.workspace = true
 minimax-protocol = { path = "../protocol" }
+
+[target.'cfg(not(target_abi = "llvm"))'.dependencies]
+crossterm.workspace = true
 
 [lints]
 workspace = true
