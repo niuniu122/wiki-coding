@@ -162,6 +162,26 @@ pub fn recover_wiki_transaction(
     .roll_forward()
 }
 
+pub(crate) fn transaction_is_committed(
+    vault: &ProjectVault,
+    transaction_id: &TransactionId,
+) -> Result<bool, VaultError> {
+    let transaction_dir = transaction_directory(vault.root(), transaction_id);
+    let manifest = load_manifest(&transaction_dir)?;
+    if manifest.transaction_id != *transaction_id || manifest.state != TransactionState::Committed {
+        return Ok(false);
+    }
+    let receipt_path = vault.root().join(".minimax/receipts").join(format!(
+        "transaction-{}.json",
+        transaction_directory_name(transaction_id)
+    ));
+    let receipt: VaultReceipt = serde_json::from_slice(
+        &std::fs::read(receipt_path).map_err(|_| VaultError::RecoveryRequired)?,
+    )
+    .map_err(|_| VaultError::RecoveryRequired)?;
+    Ok(receipt.operation_id == transaction_id.as_str() && receipt.code == "committed")
+}
+
 fn validate_prepared(
     vault_root: &Path,
     transaction_dir: &Path,

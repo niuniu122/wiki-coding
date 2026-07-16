@@ -40,9 +40,10 @@ pub use tool::{
     validate_unique_call_ids,
 };
 pub use vault::{
-    ContentHash, ProjectId, RawEvidenceKind, RawEvidenceManifest, TransactionId,
-    TransactionManifest, TransactionState, TransactionTarget, VaultManifest, VaultOwnership,
-    VaultReceipt, VaultValidationError, validate_vault_relative_path,
+    ContentHash, InboxImportReceipt, InboxImportStatus, ProjectId, RawEvidenceKind,
+    RawEvidenceManifest, TransactionId, TransactionManifest, TransactionState, TransactionTarget,
+    VaultManifest, VaultOwnership, VaultReceipt, VaultValidationError,
+    validate_vault_relative_path,
 };
 
 /// Human-readable boundary used by architecture checks and documentation.

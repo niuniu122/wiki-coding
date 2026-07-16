@@ -143,6 +143,55 @@ pub struct RawEvidenceManifest {
     pub finalized_at_unix_ms: u64,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InboxImportStatus {
+    ImportedSourceRetained,
+    CompiledSourceRemoved,
+    EvidenceOnly,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct InboxImportReceipt {
+    pub schema_version: SchemaVersion,
+    pub evidence_id: EvidenceId,
+    pub kind: RawEvidenceKind,
+    pub content_hash: ContentHash,
+    pub bytes: u64,
+    pub origin_relative_path: String,
+    pub imported_relative_path: String,
+    pub imported_at_unix_ms: u64,
+    pub status: InboxImportStatus,
+    pub code: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transaction_id: Option<TransactionId>,
+}
+
+impl InboxImportReceipt {
+    pub fn validate(self) -> Result<Self, VaultValidationError> {
+        validate_vault_relative_path(&self.origin_relative_path)?;
+        validate_vault_relative_path(&self.imported_relative_path)?;
+        if !self.origin_relative_path.starts_with("inbox/")
+            || !self.imported_relative_path.starts_with("raw/")
+            || self.code.is_empty()
+            || self.code.len() > 64
+            || !self
+                .code
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'_')
+        {
+            return Err(VaultValidationError::InvalidState);
+        }
+        match (self.kind, self.status, &self.transaction_id) {
+            (RawEvidenceKind::Import, InboxImportStatus::ImportedSourceRetained, None)
+            | (RawEvidenceKind::Import, InboxImportStatus::CompiledSourceRemoved, Some(_))
+            | (RawEvidenceKind::Asset, InboxImportStatus::EvidenceOnly, None) => Ok(self),
+            _ => Err(VaultValidationError::InvalidState),
+        }
+    }
+}
+
 impl RawEvidenceManifest {
     pub fn validate(self) -> Result<Self, VaultValidationError> {
         validate_vault_relative_path(&self.relative_path)?;
