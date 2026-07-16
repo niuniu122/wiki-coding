@@ -567,53 +567,83 @@ fn validate_hosted_release_gate(root: &Path) -> Result<(), BaselineError> {
 }
 
 fn compute_product_fingerprint(root: &Path) -> Result<(String, u64), BaselineError> {
-    let output = Command::new("git")
+    let tracked = Command::new("git")
         .arg("-C")
         .arg(root)
-        .args([
-            "ls-files",
-            "-z",
-            "--cached",
-            "--others",
-            "--exclude-standard",
-        ])
+        .args(["ls-files", "-s", "-z", "--cached"])
         .output()
         .map_err(|_| BaselineError::CutoverEvidence)?;
-    if !output.status.success() {
+    let untracked = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(["ls-files", "-z", "--others", "--exclude-standard"])
+        .output()
+        .map_err(|_| BaselineError::CutoverEvidence)?;
+    if !tracked.status.success() || !untracked.status.success() {
         return Err(BaselineError::CutoverEvidence);
     }
-    let mut paths = output
+    let mut inputs = BTreeMap::new();
+    for record in tracked
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|record| !record.is_empty())
+    {
+        let record = std::str::from_utf8(record).map_err(|_| BaselineError::CutoverEvidence)?;
+        let (metadata, path) = record
+            .split_once('\t')
+            .ok_or(BaselineError::CutoverEvidence)?;
+        let fields = metadata.split_whitespace().collect::<Vec<_>>();
+        if fields.len() != 3
+            || !matches!(fields[0], "100644" | "100755")
+            || !valid_hex(fields[1], 40)
+            || fields[2] != "0"
+        {
+            return Err(BaselineError::CutoverEvidence);
+        }
+        if !excluded_product_path(path) {
+            inputs.insert(path.to_owned(), format!("{}:{}", fields[0], fields[1]));
+        }
+    }
+    for path in untracked
         .stdout
         .split(|byte| *byte == 0)
         .filter(|path| !path.is_empty())
-        .map(|path| String::from_utf8(path.to_vec()))
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| BaselineError::CutoverEvidence)?;
-    paths.retain(|path| {
-        path != "fixtures/compat/release/hosted-gates.v1.json" && !path.starts_with(".planning/")
-    });
-    paths.sort_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
-
-    let mut fingerprint = Sha256::new();
-    fingerprint.update(b"minimax-codex-product-v1\0");
-    for path in &paths {
+    {
+        let path = std::str::from_utf8(path).map_err(|_| BaselineError::CutoverEvidence)?;
+        if excluded_product_path(path) {
+            continue;
+        }
         let absolute = root.join(path);
         let metadata =
             std::fs::symlink_metadata(&absolute).map_err(|_| BaselineError::CutoverEvidence)?;
-        if !metadata.is_file() || metadata.file_type().is_symlink() {
+        if !metadata.is_file() || metadata.file_type().is_symlink() || inputs.contains_key(path) {
             return Err(BaselineError::CutoverEvidence);
         }
         let bytes = std::fs::read(absolute).map_err(|_| BaselineError::CutoverEvidence)?;
+        let content = Sha256::digest(bytes)
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect::<String>();
+        inputs.insert(path.to_owned(), format!("untracked:{content}"));
+    }
+
+    let mut fingerprint = Sha256::new();
+    fingerprint.update(b"minimax-codex-product-v2\0");
+    for (path, content_identity) in &inputs {
         fingerprint.update(path.as_bytes());
         fingerprint.update([0]);
-        fingerprint.update(Sha256::digest(bytes));
+        fingerprint.update(content_identity.as_bytes());
     }
     let encoded = fingerprint
         .finalize()
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
-    Ok((encoded, paths.len() as u64))
+    Ok((encoded, inputs.len() as u64))
+}
+
+fn excluded_product_path(path: &str) -> bool {
+    path == "fixtures/compat/release/hosted-gates.v1.json" || path.starts_with(".planning/")
 }
 
 fn valid_hex(value: &str, length: usize) -> bool {
