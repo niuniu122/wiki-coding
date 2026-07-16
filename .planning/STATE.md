@@ -1,109 +1,73 @@
 ---
 gsd_state_version: 1.0
 milestone: v1.0
-milestone_name: milestone
+milestone_name: Rust rewrite
 current_phase: 7
 current_phase_name: Close Milestone Integration Gaps
-status: executing
-stopped_at: Plan 07-03 complete; running final cross-phase and hosted milestone gates
-last_updated: "2026-07-16T21:45:00Z"
+status: complete
+stopped_at: Milestone audit passed with zero blockers
+last_updated: "2026-07-16T21:20:00+08:00"
 last_activity: 2026-07-16
-last_activity_desc: Automatic BM25-first project discovery and behavioral command evidence completed
+last_activity_desc: Phase 7 and v1.0 milestone completed after final hosted and integration gates
 progress:
   total_phases: 7
-  completed_phases: 6
+  completed_phases: 7
   total_plans: 22
-  completed_plans: 21
-  percent: 95
+  completed_plans: 22
+  percent: 100
 ---
 
 # Project State
 
 ## Project Reference
 
-See: .planning/PROJECT.md (updated 2026-07-15)
+See: `.planning/PROJECT.md` (updated 2026-07-15)
 
 **Core value:** A non-programmer can safely find the right open-source capability or project and complete work in one recoverable local CLI.
-**Current focus:** Phase 7 — Close Milestone Integration Gaps
 
 ## Current Position
 
-Phase: 7 (Close Milestone Integration Gaps) — EXECUTING
-Plan: 07-04 of 4
-Status: Running final cross-phase, hosted, and milestone audit gates
-Last activity: 2026-07-16 — v1.0 integration audit created the closure phase
+Phase 7 and milestone v1.0 are complete.
 
-Progress: [█████████░] 91%
+- Requirements: 45/45
+- Cross-phase integrations: 38/38
+- End-to-end flows: 7/7
+- Plans: 22/22
+- Final audit blockers: 0
 
-## Performance Metrics
+## Final Evidence
 
-**Velocity:**
+- Local TypeScript suite: 438 passed.
+- Rust workspace tests and doc tests: passed.
+- Rust formatting and workspace Clippy with warnings denied: passed.
+- Compatibility, retrieval, Provider, migration, release-package, and milestone-flow gates: passed offline.
+- Hosted CI run `29485975135`: Windows x64 MSVC and Linux x64 GNU passed.
+- Hosted tree: `54b780d09d1a461495120b9987869a073eec5ecb`.
+- Product fingerprint: `ff805ee8d73168b968e0b5834b2e7582bf9cc598b4cb3f35835c004aec577172` across 402 product files.
 
-- Total plans completed: 18
-- Average duration: 35 min
-- Total execution time: 312 min
+## Locked Decisions
 
-**By Phase:**
+- Rust is the default product entry; `minimax-codex-legacy` keeps the explicit TypeScript path for the support window.
+- Permissions are exactly `confirm` and process-scoped `full-access`; all hard safety gates remain active.
+- The product uses one project-bound Obsidian-compatible Vault and no SQLite.
+- Raw terminal sessions finalize before the separate pinned-main-model Wiki workflow.
+- Open-source project discovery is BM25-first; optional verified embedding reranks only BM25 candidates.
+- No embedding weights are bundled or downloaded automatically.
+- Migration is explicit, source-preserving, receipt-bound, verifiable, and narrowly reversible.
 
-| Phase | Plans | Total | Avg/Plan |
-|-------|-------|-------|----------|
-| 1 | 4 | 59 min | 15 min |
-| Phase 2 P01 | 26 min | 3 tasks | 18 files |
-| Phase 2 P02 | 27 min | 3 tasks | 22 files |
-| Phase 2 P03 | 44 min | 3 tasks | 21 files |
-| Phase 3 P01 | 73 min | 3 tasks | 37 files |
-| Phase 3 P02 | 83 min | 3 tasks | 41 files |
+## Non-Blocking Follow-up
 
-## Accumulated Context
-
-### Decisions
-
-- Public permissions are exactly confirm and session-scoped full-access.
-- Project discovery is BM25 candidate recall followed by embedding project matching.
-- The pinned main model runs a separate Wiki synthesis workflow; core validates and Vault writes.
-- No SQLite; one per-project Obsidian-compatible Vault.
-- Command parity is measured over canonical names plus aliases; `/quit` remains the `/exit` alias.
-- Rust behavior remains `pending` until executable Rust evidence exists.
-- Provider streams cross one typed schema-versioned boundary, and core accepts exactly one terminal outcome.
-- Raw Provider reasoning is represented only by a content-free `ReasoningFiltered` marker.
-- Compatibility claims are evidence-backed and deterministic; unimplemented Rust product behavior remains pending.
-- Cargo metadata mechanically rejects dependency reversal, production-to-harness edges, cycles, and database packages.
-- Runtime sessions replay from append-synced project-local JSONL under a non-blocking OS writer lease.
-- Compaction is a deterministic completed-visible-only local reducer; trace accepts only bounded allowlisted facts.
-- Interactive and JSONL output consume the same persisted schema-v1 events; rendering remains outside core.
-- Configuration precedence is defaults, user, project, environment, then CLI; headless credentials are environment-only.
-- The npm product entry is the fixed Rust launcher; TypeScript remains explicit as minimax-codex-legacy during the support window.
-- Native tool calls use typed Provider history, durable request/decision/start/terminal facts, and serial bounded execution.
-- Restart closes pre-start work as cancelled and post-start work as indeterminate without automatic replay.
-- The bounded v1 inventory is exactly eight strict tools behind one shared permission-independent preflight.
-- Full access skips only the prompt for the current process; confirm requires exact yes for one visible call ID.
-- Shell-free finite diagnostics, Git inspection, and safe existing npm diagnostics use bounded kill-and-wait supervision.
-
-### Pending Todos
-
-- Run the final complete local release gate.
-- Record fresh hosted Windows/Linux evidence for the exact product fingerprint.
-- Repeat the milestone integration audit and close only with zero blockers.
-
-### Roadmap Evolution
-
-- Phase 7 added: Close milestone integration gaps found by the v1.0 audit.
-
-### Blockers/Concerns
-
-- Embedding model download and real Provider spend are not authorized; tests must use fixtures until separately approved.
-- No destructive migration or PR is authorized. The existing branch was pushed only for hosted CI verification.
-- This Windows 10 20H2 host uses official 1.97.0 GNU-LLVM development evidence; supported Windows MSVC and Linux GNU evidence passed twice in hosted CI.
+- GitHub reports that `actions/checkout@v4` and `actions/setup-node@v4` still target a deprecated Node 20 action runtime. The hosted runner forced Node 24 for those actions and all gates passed; upgrade the action versions when the upstream replacements are adopted.
+- Installed-package smoke uses a read-only Rust capability command. The complete Provider/Vault/Wiki chain is verified compositionally by Rust integration tests rather than replayed from the extracted package without credentials.
 
 ## Deferred Items
 
-| Category | Item | Status | Deferred At |
-|----------|------|--------|-------------|
-| Platform | macOS support | v2 | Milestone start |
-| Extensions | MCP/plugins/subagents | v2 | Milestone start |
+| Category | Item | Target |
+|----------|------|--------|
+| Platform | macOS support | v2 |
+| Extensions | MCP/plugins/subagents | v2 |
+| Retrieval | Optional separately installed embedding resource distribution | post-v1 |
 
-## Session Continuity
+## Authorization Boundaries Preserved
 
-Last session: 2026-07-15T15:18:45Z
-Stopped at: Phase 7 planned; implementing 07-01
-Resume file: .planning/ROADMAP.md
+No package publication, tag, PR, merge, live Provider request, credential read, embedding model download, SQLite use, source deletion, or real user-data migration was performed.

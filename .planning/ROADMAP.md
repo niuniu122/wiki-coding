@@ -2,7 +2,7 @@
 
 ## Overview
 
-The milestone proceeds as six vertical, verifiable boundaries: freeze compatibility and core contracts, deliver a usable Rust conversation shell, add safe tools, add the per-project Vault and main-model Wiki workflow, restore and complete three-domain hybrid retrieval, then migrate/package/cut over. TypeScript remains the runnable reference until Phase 6 gates pass.
+The milestone proceeds as seven vertical, verifiable boundaries: freeze compatibility and core contracts, deliver a usable Rust conversation shell, add safe tools, add the per-project Vault and main-model Wiki workflow, restore and complete three-domain hybrid retrieval, migrate/package/cut over, then close every cross-phase integration gap found by the milestone audit.
 
 ## Phases
 
@@ -12,6 +12,7 @@ The milestone proceeds as six vertical, verifiable boundaries: freeze compatibil
 - [x] **Phase 4: Vault and Main-Model Wiki** - Persist raw evidence and maintain recoverable Obsidian knowledge through the pinned main model. (completed 2026-07-16)
 - [x] **Phase 5: Retrieval and Project Discovery** - Serve three isolated indexes and preserve BM25-first project finding with truthful embedding. (completed 2026-07-16)
 - [x] **Phase 6: Migration, Release, and Cutover** - Import safely, meet release gates, and switch the default entry only after parity. (completed 2026-07-16)
+- [x] **Phase 7: Close Milestone Integration Gaps** - Wire the product flows, prove the exact final artifacts, and pass the repeated milestone audit. (completed 2026-07-16)
 
 ## Phase Details
 
@@ -198,7 +199,7 @@ Plans:
 | 4. Vault and Main-Model Wiki | 3/3 | Complete   | 2026-07-16 |
 | 5. Retrieval and Project Discovery | 3/3 | Complete   | 2026-07-16 |
 | 6. Migration, Release, and Cutover | 3/3 | Complete | 2026-07-16 |
-| 7. Close Milestone Integration Gaps | 3/4 | In progress | - |
+| 7. Close Milestone Integration Gaps | 4/4 | Complete | 2026-07-16 |
 
 ### Phase 7: Close milestone integration gaps
 
@@ -213,11 +214,11 @@ Plans:
   4. One official npm artifact contains the fixed Rust launcher, native binary, and explicit TypeScript legacy command; its installed default is smoke-tested.
   5. Machine-readable hosted evidence is bound to the cutover product fingerprint and final Windows/Linux jobs.
 
-**Plans:** 3/4 plans complete
+**Plans:** 4/4 plans complete
 
 Plans:
 
 - [x] 07-01: Wire runtime finalization, Vault binding, and the production main-model Wiki workflow
 - [x] 07-02: Restore automatic BM25-first project discovery and executable command contracts
 - [x] 07-03: Build one complete Rust-plus-legacy distribution and bind hosted cutover evidence
-- [ ] 07-04: Run cross-phase chain tests, hosted native gates, and the final milestone audit
+- [x] 07-04: Run cross-phase chain tests, hosted native gates, and the final milestone audit
