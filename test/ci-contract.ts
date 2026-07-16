@@ -29,7 +29,10 @@ const REQUIRED_RUN_COMMANDS = [
   "npm run verify:rust-contracts",
   "npm run build",
   "npm run eval:retrieval",
-  "npm run eval:provider"
+  "npm run eval:provider",
+  "npm run build:rust:release",
+  "npm run package:rust",
+  "npm run verify:rust-release"
 ] as const;
 
 export function validateCiWorkflow(source: string): CiValidationResult {
@@ -232,8 +235,8 @@ function validateSteps(
   errors: string[]
 ): void {
   const steps = parseSteps(lines, stepsHeader, errors);
-  if (steps.length !== 12) {
-    errors.push("jobs.verify steps must contain exactly twelve allowlisted steps.");
+  if (steps.length !== 15) {
+    errors.push("jobs.verify steps must contain exactly fifteen allowlisted steps.");
     return;
   }
 

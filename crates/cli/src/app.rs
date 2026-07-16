@@ -22,6 +22,11 @@ pub enum CliCommand {
     Migrate(MigrateArgs),
     Vault(VaultArgs),
     Index(IndexArgs),
+    #[command(name = "__release-probe", hide = true)]
+    ReleaseProbe {
+        #[arg(long, default_value_t = 2_000, value_parser = clap::value_parser!(u64).range(100..=10_000))]
+        hold_ms: u64,
+    },
 }
 
 #[derive(Clone, Debug, Args)]

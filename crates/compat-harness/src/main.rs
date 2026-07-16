@@ -6,8 +6,9 @@ use std::process::ExitCode;
 use minimax_compat_harness::{
     build_report, load_cargo_architecture, load_compat_manifests, report_json, repository_root,
     validate_architecture, validate_cli_tui_markdown_boundary, validate_core_source_boundary,
-    validate_product_entry, validate_report, validate_rust_command_surface,
-    validate_rust_tool_evidence, validate_rust_vault_evidence, validate_vault_source_boundary,
+    validate_migration_source_boundary, validate_product_entry, validate_report,
+    validate_rust_command_surface, validate_rust_tool_evidence, validate_rust_vault_evidence,
+    validate_vault_source_boundary,
 };
 use minimax_protocol::{ProtocolErrorCode, ProviderProtocolKind, StreamEvent};
 use minimax_provider::{CompatibilityEvent, replay_fixture};
@@ -61,6 +62,7 @@ fn verify_repository(root: &Path) -> Result<(), String> {
     validate_core_source_boundary(root).map_err(|error| error.to_string())?;
     validate_vault_source_boundary(root).map_err(|error| error.to_string())?;
     validate_cli_tui_markdown_boundary(root).map_err(|error| error.to_string())?;
+    validate_migration_source_boundary(root).map_err(|error| error.to_string())?;
 
     let first_report = build_report(&first_manifests);
     validate_report(&first_report, root).map_err(|error| error.to_string())?;

@@ -50,7 +50,17 @@ async fn execute(cli: Cli) -> ExitClass {
         CliCommand::Migrate(args) => execute_migrate(args),
         CliCommand::Vault(args) => execute_vault(args),
         CliCommand::Index(args) => execute_index(args).await,
+        CliCommand::ReleaseProbe { hold_ms } => execute_release_probe(hold_ms),
     }
+}
+
+fn execute_release_probe(hold_ms: u64) -> ExitClass {
+    println!("release-probe-ready:{}", std::process::id());
+    if io::stdout().flush().is_err() {
+        return ExitClass::Workspace;
+    }
+    std::thread::sleep(std::time::Duration::from_millis(hold_ms));
+    ExitClass::Completed
 }
 
 fn execute_migrate(args: MigrateArgs) -> ExitClass {

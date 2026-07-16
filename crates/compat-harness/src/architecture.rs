@@ -160,6 +160,35 @@ pub fn validate_retrieval_source_boundary(root: &Path) -> Result<(), Architectur
     )
 }
 
+pub fn validate_migration_source_boundary(root: &Path) -> Result<(), ArchitectureError> {
+    let path = root.join("crates/cli/src/migration.rs");
+    let source = fs::read_to_string(&path).map_err(|_| ArchitectureError::CoreSourceRead)?;
+    validate_migration_source_text("migration.rs", &source)
+}
+
+pub fn validate_migration_source_text(file: &str, source: &str) -> Result<(), ArchitectureError> {
+    const DENIED: [&str; 12] = [
+        "reqwest",
+        "minimax_provider",
+        "std::env::var(",
+        "std::env::vars(",
+        "Authorization",
+        "Bearer ",
+        "rusqlite",
+        "sqlx",
+        "diesel",
+        "sea_orm",
+        "download_model",
+        "download_resource",
+    ];
+    if let Some(pattern) = DENIED.iter().find(|pattern| source.contains(*pattern)) {
+        return Err(ArchitectureError::Violation(format!(
+            "migration source boundary denied: {file} contains {pattern}"
+        )));
+    }
+    Ok(())
+}
+
 pub fn validate_retrieval_source_text(file: &str, source: &str) -> Result<(), ArchitectureError> {
     const DENIED: [&str; 15] = [
         "reqwest",

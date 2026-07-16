@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "evidenceClass": "development_only",
+  "observedOn": "2026-07-16",
+  "platform": "windows-x86_64-gnullvm-dev",
+  "environment": {
+    "os": "win32",
+    "osRelease": "10.0.19042",
+    "architecture": "x64",
+    "cpuModel": "Intel(R) Core(TM) i3-10100 CPU @ 3.60GHz",
+    "logicalCpuCount": 8,
+    "node": "v24.14.1",
+    "rustcRelease": "1.97.0",
+    "rustcHost": "x86_64-pc-windows-gnullvm"
+  },
+  "package": {
+    "archiveSha256": "a1e8b01a20324a510a51adc5f353134dd969da8f5053c8372054abfc60d4c2a4",
+    "binarySha256": "4ca52d35f26c1d4531fa633657e02b6164526a27f461b939456e6ecf9e99997e",
+    "compressedBytes": 2983900,
+    "embeddingIncluded": false,
+    "supportTier": "development_only"
+  },
+  "licenses": {
+    "packagesChecked": 234,
+    "invalid": 0
+  },
+  "security": {
+    "unsafeFiles": 0,
+    "unsafeWorkspaceLint": "forbid",
+    "databasePackages": 0,
+    "migrationNetworkOrCredentialPaths": 0
+  },
+  "performance": {
+    "coldStartSamplesMs": [22.414, 21.127, 19.834, 19.221, 18.589, 19.015, 18.859, 21.365, 19.958],
+    "coldStartP95Ms": 22.414,
+    "idleRssSamplesBytes": [4788224, 4788224, 4788224, 4788224, 4788224],
+    "idleRssMaximumBytes": 4788224,
+    "wikiBm25P95Ms": 2.17
+  },
+  "offline": true,
+  "providerCalls": 0,
+  "credentialsRead": 0,
+  "modelDownloads": 0
+}

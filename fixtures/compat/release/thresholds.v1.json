@@ -1,0 +1,7 @@
+{
+  "schemaVersion": 1,
+  "coldStartMs": 500,
+  "idleRssBytes": 157286400,
+  "baseCompressedBytes": 52428800,
+  "wikiBm25P95Ms": 100
+}

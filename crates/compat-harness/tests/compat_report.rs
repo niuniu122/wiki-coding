@@ -5,8 +5,9 @@ use minimax_compat_harness::{
     ArchitectureError, ArchitectureGraph, ArchitecturePackage, ManifestError, ParityStatus,
     build_report, load_cargo_architecture, load_compat_manifests, report_json, repository_root,
     validate_architecture, validate_cli_tui_markdown_boundary, validate_core_source_boundary,
-    validate_core_source_directory, validate_core_source_text, validate_product_entry,
-    validate_report, validate_retrieval_source_boundary, validate_retrieval_source_text,
+    validate_core_source_directory, validate_core_source_text, validate_migration_source_boundary,
+    validate_migration_source_text, validate_product_entry, validate_report,
+    validate_retrieval_source_boundary, validate_retrieval_source_text,
     validate_rust_command_surface, validate_rust_retrieval_evidence, validate_rust_tool_evidence,
     validate_rust_vault_evidence, validate_ui_source_text, validate_vault_source_boundary,
     validate_vault_source_text,
@@ -119,6 +120,21 @@ fn architecture_real_cargo_metadata_passes() {
     validate_vault_source_boundary(&root).expect("Provider-free Vault source boundary");
     validate_cli_tui_markdown_boundary(&root).expect("Vault-owned Markdown parsing");
     validate_retrieval_source_boundary(&root).expect("offline retrieval boundary");
+    validate_migration_source_boundary(&root).expect("offline secret-free migration boundary");
+}
+
+#[test]
+fn architecture_rejects_migration_network_database_credentials_and_downloads() {
+    for source in [
+        "use reqwest::Client;",
+        "use minimax_provider::ProviderPort;",
+        "let key = std::env::var(\"API_KEY\");",
+        "use rusqlite::Connection;",
+        "fn download_resource() {}",
+        "let header = \"Authorization\";",
+    ] {
+        assert!(validate_migration_source_text("bad.rs", source).is_err());
+    }
 }
 
 #[test]

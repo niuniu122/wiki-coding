@@ -11,7 +11,8 @@ pub mod report;
 pub use architecture::{
     ArchitectureError, ArchitectureGraph, ArchitecturePackage, load_cargo_architecture,
     validate_architecture, validate_cli_tui_markdown_boundary, validate_core_source_boundary,
-    validate_core_source_directory, validate_core_source_text, validate_retrieval_source_boundary,
+    validate_core_source_directory, validate_core_source_text, validate_migration_source_boundary,
+    validate_migration_source_text, validate_retrieval_source_boundary,
     validate_retrieval_source_text, validate_ui_source_text, validate_vault_source_boundary,
     validate_vault_source_text,
 };

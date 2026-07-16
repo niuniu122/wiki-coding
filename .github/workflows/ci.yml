@@ -31,3 +31,6 @@ jobs:
       - run: npm run build
       - run: npm run eval:retrieval
       - run: npm run eval:provider
+      - run: npm run build:rust:release
+      - run: npm run package:rust
+      - run: npm run verify:rust-release
