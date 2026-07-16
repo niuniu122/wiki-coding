@@ -85,6 +85,35 @@ knowledge_id!(TopicId);
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct KnowledgeEvaluationJob {
+    pub schema_version: SchemaVersion,
+    pub job_id: KnowledgeJobId,
+    pub source_id: EvidenceId,
+    pub source_hash: ContentHash,
+    pub model_binding: ModelBinding,
+    pub prompt_version: u16,
+    pub patch_schema_version: u16,
+    pub max_evidence_bytes: u32,
+    pub max_output_tokens: u32,
+}
+
+impl KnowledgeEvaluationJob {
+    pub fn validate(self) -> Result<Self, KnowledgeValidationError> {
+        if self.prompt_version == 0
+            || self.patch_schema_version != crate::SCHEMA_VERSION
+            || self.max_evidence_bytes == 0
+            || self.max_evidence_bytes > 4 * 1024 * 1024
+            || self.max_output_tokens == 0
+            || self.max_output_tokens > 16_384
+        {
+            return Err(KnowledgeValidationError::InvalidCode);
+        }
+        Ok(self)
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct SourceCitation {
     pub source_id: EvidenceId,
     pub source_hash: ContentHash,

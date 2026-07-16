@@ -1,11 +1,17 @@
 use std::future::Future;
 use std::pin::Pin;
 
-use minimax_protocol::{ToolDecision, ToolInvocation, ToolResult};
+use minimax_protocol::{KnowledgePatch, ToolDecision, ToolInvocation, ToolResult, TransactionId};
+
+use crate::knowledge::{WikiGenerationError, WikiGenerationOutput, WikiGenerationRequest};
 
 pub type ApprovalFuture<'a> = Pin<Box<dyn Future<Output = ToolDecision> + Send + 'a>>;
 pub type CancellationFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
 pub type ToolFuture<'a> = Pin<Box<dyn Future<Output = ToolResult> + Send + 'a>>;
+pub type WikiGenerationFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<WikiGenerationOutput, WikiGenerationError>> + Send + 'a>>;
+pub type KnowledgeCommitFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<TransactionId, KnowledgeCommitError>> + Send + 'a>>;
 
 pub trait ApprovalPort: Send + Sync {
     fn decide<'a>(&'a self, invocation: &'a ToolInvocation) -> ApprovalFuture<'a>;
@@ -29,6 +35,21 @@ pub trait ToolPort: Send + Sync {
         invocation: &'a ToolInvocation,
         cancellation: &'a dyn CancellationPort,
     ) -> ToolFuture<'a>;
+}
+
+pub trait WikiGenerationPort: Send + Sync {
+    fn generate<'a>(&'a self, request: &'a WikiGenerationRequest) -> WikiGenerationFuture<'a>;
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum KnowledgeCommitError {
+    Conflict,
+    Unavailable,
+    Invalid,
+}
+
+pub trait KnowledgePort: Send + Sync {
+    fn commit<'a>(&'a self, patch: &'a KnowledgePatch) -> KnowledgeCommitFuture<'a>;
 }
 
 /// Supplies time to core workflows without consulting the system clock directly.

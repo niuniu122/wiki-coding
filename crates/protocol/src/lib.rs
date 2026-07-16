@@ -16,10 +16,11 @@ pub use event::{
     parse_stream_event_v1,
 };
 pub use knowledge::{
-    EvidenceId, KnowledgeJobId, KnowledgeOperation, KnowledgePage, KnowledgePageStatus,
-    KnowledgePatch, KnowledgeReceipt, KnowledgeReceiptOutcome, KnowledgeValidationError,
-    MAX_KNOWLEDGE_BODY_BYTES, MAX_KNOWLEDGE_OPERATIONS, MAX_KNOWLEDGE_SOURCES, PageId,
-    SourceCitation, TopicId, WikiWorkflowEvent, WikiWorkflowState, WikiWorkflowUsage,
+    EvidenceId, KnowledgeEvaluationJob, KnowledgeJobId, KnowledgeOperation, KnowledgePage,
+    KnowledgePageStatus, KnowledgePatch, KnowledgeReceipt, KnowledgeReceiptOutcome,
+    KnowledgeValidationError, MAX_KNOWLEDGE_BODY_BYTES, MAX_KNOWLEDGE_OPERATIONS,
+    MAX_KNOWLEDGE_SOURCES, PageId, SourceCitation, TopicId, WikiWorkflowEvent, WikiWorkflowState,
+    WikiWorkflowUsage,
 };
 pub use runtime::{
     AgentLimits, AssistantToolCallBatch, ConversationItem, DiagnosticCode, MessageRole, ModelId,
