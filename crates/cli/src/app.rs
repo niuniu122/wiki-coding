@@ -7,7 +7,7 @@ use minimax_provider::ConfigLayer;
 #[command(
     name = "minimax-codex-rust",
     version,
-    about = "Rust development shell for MiniMax Codex"
+    about = "Local Rust agent shell for MiniMax Codex"
 )]
 pub struct Cli {
     #[command(subcommand)]

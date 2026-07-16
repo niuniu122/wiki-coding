@@ -922,6 +922,7 @@ dependencies = [
  "minimax-vault",
  "serde",
  "serde_json",
+ "sha2",
 ]
 
 [[package]]

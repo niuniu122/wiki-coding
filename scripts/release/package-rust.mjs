@@ -1,5 +1,5 @@
 import {createHash} from "node:crypto";
-import {existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync} from "node:fs";
+import {existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, writeFileSync} from "node:fs";
 import {fileURLToPath} from "node:url";
 import {gzipSync} from "node:zlib";
 import {basename, dirname, relative, resolve, sep} from "node:path";
@@ -38,6 +38,23 @@ const launcherBytes = readFileSync(launcher);
 const packageName = `minimax-codex-v${version}-${platform}`;
 const executable = platform.startsWith("windows-") ? "minimax-codex.exe" : "minimax-codex";
 const archive = resolve(output, `${packageName}.tar.gz`);
+const npmArchiveName = `${packageName}-npm.tgz`;
+const npmArchive = resolve(output, npmArchiveName);
+const npmEntries = [
+  {name: "package/", bytes: Buffer.alloc(0), mode: 0o755, type: "5"},
+  {name: "package/bin/", bytes: Buffer.alloc(0), mode: 0o755, type: "5"},
+  {name: "package/bin/minimax-codex.cjs", bytes: launcherBytes, mode: 0o755, type: "0"},
+  {name: `package/${executable}`, bytes: binaryBytes, mode: 0o755, type: "0"},
+  {name: "package/package.json", bytes: readFileSync(resolve(root, "package.json")), mode: 0o644, type: "0"},
+  {name: "package/README.md", bytes: readFileSync(resolve(root, "README.md")), mode: 0o644, type: "0"},
+  {name: "package/LICENSE-APACHE", bytes: readFileSync(resolve(root, "LICENSE-APACHE")), mode: 0o644, type: "0"},
+  {name: "package/LICENSE-MIT", bytes: readFileSync(resolve(root, "LICENSE-MIT")), mode: 0o644, type: "0"},
+  ...treeEntries("dist", "package/dist"),
+  {name: "package/docs/", bytes: Buffer.alloc(0), mode: 0o755, type: "5"},
+  ...treeEntries("docs/release", "package/docs/release")
+];
+const npmArchiveBytes = deterministicTarGzip(npmEntries);
+const npmArchiveSha256 = sha256(npmArchiveBytes);
 const manifest = {
   schemaVersion: 1,
   name: "minimax-codex",
@@ -47,6 +64,9 @@ const manifest = {
   binarySha256: sha256(binaryBytes),
   launcher: "bin/minimax-codex.cjs",
   launcherSha256: sha256(launcherBytes),
+  legacy: "dist/cli.js",
+  npmPackage: npmArchiveName,
+  npmPackageSha256: npmArchiveSha256,
   embeddingIncluded: false,
   supportTier: platform.endsWith("-dev") ? "development_only" : "hosted_release",
   rustToolchain: "1.97.0"
@@ -67,10 +87,33 @@ const entries = [
 ];
 
 mkdirSync(output, {recursive: true});
+writeFileSync(npmArchive, npmArchiveBytes);
+writeFileSync(`${npmArchive}.sha256`, `${npmArchiveSha256}  ${npmArchiveName}\n`, "utf8");
 writeFileSync(archive, deterministicTarGzip(entries));
 const archiveHash = sha256(readFileSync(archive));
 writeFileSync(`${archive}.sha256`, `${archiveHash}  ${basename(archive)}\n`, "utf8");
-process.stdout.write(`${JSON.stringify({schemaVersion: 1, archive, sha256: archiveHash, platform, version})}\n`);
+process.stdout.write(`${JSON.stringify({schemaVersion: 1, archive, sha256: archiveHash, npmArchive, npmSha256: npmArchiveSha256, platform, version})}\n`);
+
+function treeEntries(sourceRelative, targetRelative) {
+  const source = resolve(root, sourceRelative);
+  if (!existsSync(source) || !lstatSync(source).isDirectory() || lstatSync(source).isSymbolicLink()) {
+    fail(`release tree is missing or unsafe: ${sourceRelative}`);
+  }
+  const entries = [{name: `${targetRelative}/`, bytes: Buffer.alloc(0), mode: 0o755, type: "5"}];
+  for (const item of readdirSync(source, {withFileTypes: true}).sort((left, right) => left.name.localeCompare(right.name, "en"))) {
+    const sourcePath = resolve(source, item.name);
+    const targetPath = `${targetRelative}/${item.name}`;
+    if (item.isSymbolicLink()) fail(`release tree contains a symbolic link: ${sourcePath}`);
+    if (item.isDirectory()) {
+      entries.push(...treeEntries(`${sourceRelative}/${item.name}`, targetPath));
+    } else if (item.isFile()) {
+      entries.push({name: targetPath, bytes: readFileSync(sourcePath), mode: 0o644, type: "0"});
+    } else {
+      fail(`release tree contains an unsupported entry: ${sourcePath}`);
+    }
+  }
+  return entries;
+}
 
 function deterministicTarGzip(entriesToWrite) {
   const blocks = [];

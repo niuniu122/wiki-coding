@@ -1,11 +1,12 @@
 import {createHash} from "node:crypto";
-import {existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync} from "node:fs";
+import {chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync} from "node:fs";
 import {arch, cpus, platform as osPlatform, release as osRelease, totalmem} from "node:os";
 import {dirname, join, relative, resolve, sep} from "node:path";
 import {fileURLToPath} from "node:url";
 import {gunzipSync} from "node:zlib";
 import {spawn, spawnSync} from "node:child_process";
 import {performance} from "node:perf_hooks";
+import {computeProductFingerprint} from "./product-fingerprint.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const targetRoot = resolve(root, "target");
@@ -28,9 +29,12 @@ const securityEvidence = verifySecurityBoundary();
 const coldStartMs = measureColdStart(binary, thresholds.coldStartMs);
 const idleRssBytes = await measureIdleRss(binary, thresholds.idleRssBytes);
 const wikiP95Ms = runWikiBenchmark(thresholds.wikiBm25P95Ms);
+const productInputs = computeProductFingerprint(root);
 const report = {
   schemaVersion: 1,
   platform: packageEvidence.platform,
+  productFingerprint: productInputs.fingerprint,
+  productFileCount: productInputs.fileCount,
   environment,
   releaseBinary: binary.replaceAll("\\", "/"),
   package: packageEvidence,
@@ -92,6 +96,7 @@ function verifyPackage(directory, sourceBinary, limits, expectedPlatform) {
   const expectedBinary = manifest.platform.startsWith("windows-") ? "minimax-codex.exe" : "minimax-codex";
   if (manifest.binary !== expectedBinary) fail("release manifest binary name does not match its platform");
   if (manifest.launcher !== "bin/minimax-codex.cjs") fail("release manifest launcher path is invalid");
+  if (manifest.legacy !== "dist/cli.js") fail("release manifest legacy path is invalid");
   const expectedSupportTier = manifest.platform.endsWith("-dev") ? "development_only" : "hosted_release";
   if (manifest.supportTier !== expectedSupportTier) fail("release support tier does not match its platform");
   if (manifest.binarySha256 !== sha256(readFileSync(sourceBinary))) fail("packaged binary hash does not match the release binary");
@@ -121,12 +126,95 @@ function verifyPackage(directory, sourceBinary, limits, expectedPlatform) {
   if (sha256(entries.get(`${rootName}/${manifest.launcher}`).bytes) !== manifest.launcherSha256) {
     fail("launcher inside the release archive does not match the manifest");
   }
+  const npmPackage = verifyNpmPackage(directory, manifest, limits);
   return {
     archive: archive.replaceAll("\\", "/"),
     archiveSha256: actualHash,
     compressedBytes,
     platform: manifest.platform,
-    manifest
+    manifest,
+    npmPackage
+  };
+}
+
+function verifyNpmPackage(directory, manifest, limits) {
+  const archives = readdirSync(directory)
+    .filter((name) => name.startsWith("minimax-codex-v") && name.endsWith("-npm.tgz"))
+    .sort();
+  if (archives.length !== 1) fail(`expected exactly one npm package, found ${archives.length}`);
+  const archiveName = archives[0];
+  if (archiveName !== manifest.npmPackage) fail("npm package name does not match the release manifest");
+  const archive = join(directory, archiveName);
+  const checksumPath = `${archive}.sha256`;
+  if (!existsSync(checksumPath)) fail("npm package checksum sidecar is missing");
+  const bytes = readFileSync(archive);
+  const hash = sha256(bytes);
+  if (hash !== manifest.npmPackageSha256) fail("npm package hash does not match the release manifest");
+  if (readFileSync(checksumPath, "utf8").trim() !== `${hash}  ${archiveName}`) {
+    fail("npm package checksum sidecar is invalid");
+  }
+  if (bytes.length > limits.baseCompressedBytes) fail("npm package exceeds the base artifact budget");
+  const entries = parseTarGzip(bytes);
+  const required = [
+    "package/",
+    "package/bin/",
+    "package/bin/minimax-codex.cjs",
+    `package/${manifest.binary}`,
+    "package/package.json",
+    "package/dist/",
+    "package/dist/cli.js",
+    "package/docs/",
+    "package/docs/release/",
+    "package/README.md",
+    "package/LICENSE-APACHE",
+    "package/LICENSE-MIT"
+  ];
+  for (const name of required) {
+    if (!entries.has(name)) fail(`npm package is missing ${name}`);
+  }
+  for (const name of entries.keys()) {
+    const forbiddenSource = /(?:^|\/)\.planning(?:\/|$)|(?:^|\/)crates(?:\/|$)/u.test(name);
+    const bundledModelResource = /\.(?:onnx|safetensors|gguf|bin)$/iu.test(name)
+      || /(?:^|\/)(?:models?|model-weights?|embedding-resources?)(?:\/|$)/iu.test(name);
+    if (forbiddenSource || bundledModelResource) {
+      fail(`npm package contains a forbidden source or model path: ${name}`);
+    }
+  }
+  const packageJson = JSON.parse(entries.get("package/package.json").bytes.toString("utf8"));
+  if (packageJson.bin?.["minimax-codex"] !== "bin/minimax-codex.cjs"
+      || packageJson.bin?.["minimax-codex-legacy"] !== "dist/cli.js") {
+    fail("npm package does not expose both Rust-default and TypeScript-legacy bins");
+  }
+  if (sha256(entries.get(`package/${manifest.binary}`).bytes) !== manifest.binarySha256
+      || sha256(entries.get("package/bin/minimax-codex.cjs").bytes) !== manifest.launcherSha256) {
+    fail("npm package launcher or native binary hash is invalid");
+  }
+  const smokeRoot = mkdtempSync(join(targetRoot, "release-npm-smoke-"));
+  for (const [name, entry] of entries) {
+    const destination = join(smokeRoot, name);
+    if (entry.type === "5") {
+      mkdirSync(destination, {recursive: true});
+    } else {
+      mkdirSync(dirname(destination), {recursive: true});
+      writeFileSync(destination, entry.bytes);
+    }
+  }
+  const native = join(smokeRoot, "package", manifest.binary);
+  if (process.platform !== "win32") chmodSync(native, 0o755);
+  const smoke = spawnSync(
+    process.execPath,
+    [join(smokeRoot, "package/bin/minimax-codex.cjs"), "index", "capabilities", "status"],
+    {cwd: join(smokeRoot, "package"), encoding: "utf8", shell: false, windowsHide: true, timeout: 10_000}
+  );
+  if (smoke.status !== 0 || !smoke.stdout.includes("domain=capability")) {
+    fail(`installed npm Rust launcher smoke test failed: ${(smoke.stderr || smoke.stdout || "no output").trim()}`);
+  }
+  return {
+    archive: archive.replaceAll("\\", "/"),
+    archiveSha256: hash,
+    compressedBytes: bytes.length,
+    rustDefaultSmoke: true,
+    legacyBin: "dist/cli.js"
   };
 }
 

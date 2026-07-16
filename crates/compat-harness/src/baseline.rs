@@ -1,11 +1,13 @@
 use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
+use std::process::Command;
 
 use minimax_protocol::ProviderProtocolKind;
 use minimax_provider::{ConfigLayer, resolve_config};
 use minimax_tui::{CommandAvailability, CommandIntent, ParsedInput, parse_input};
 use serde::Deserialize;
+use sha2::{Digest as _, Sha256};
 
 use crate::{BaselineStatus, CommandManifest, ParityStatus, ProviderManifest};
 
@@ -296,6 +298,8 @@ struct HostedReleaseGate {
     branch: String,
     head_sha: String,
     tree_sha: String,
+    product_fingerprint: String,
+    product_file_count: u64,
     conclusion: String,
     jobs: Vec<HostedJob>,
     licenses: HostedLicenses,
@@ -468,6 +472,7 @@ fn validate_hosted_release_gate(root: &Path) -> Result<(), BaselineError> {
             .map_err(|_| BaselineError::CutoverEvidence)?,
     )
     .map_err(|_| BaselineError::CutoverEvidence)?;
+    let (product_fingerprint, product_file_count) = compute_product_fingerprint(root)?;
     if gate.schema_version != 1
         || gate.evidence_class != "hosted_release_gate"
         || gate.workflow != "CI"
@@ -480,6 +485,9 @@ fn validate_hosted_release_gate(root: &Path) -> Result<(), BaselineError> {
         || gate.branch != "codex/rust-rewrite"
         || !valid_hex(&gate.head_sha, 40)
         || !valid_hex(&gate.tree_sha, 40)
+        || !valid_hex(&gate.product_fingerprint, 64)
+        || gate.product_fingerprint != product_fingerprint
+        || gate.product_file_count != product_file_count
         || gate.conclusion != "success"
         || gate.jobs.len() != 2
         || gate.licenses.packages_checked == 0
@@ -556,6 +564,56 @@ fn validate_hosted_release_gate(root: &Path) -> Result<(), BaselineError> {
         return Err(BaselineError::CutoverEvidence);
     }
     Ok(())
+}
+
+fn compute_product_fingerprint(root: &Path) -> Result<(String, u64), BaselineError> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args([
+            "ls-files",
+            "-z",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+        ])
+        .output()
+        .map_err(|_| BaselineError::CutoverEvidence)?;
+    if !output.status.success() {
+        return Err(BaselineError::CutoverEvidence);
+    }
+    let mut paths = output
+        .stdout
+        .split(|byte| *byte == 0)
+        .filter(|path| !path.is_empty())
+        .map(|path| String::from_utf8(path.to_vec()))
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| BaselineError::CutoverEvidence)?;
+    paths.retain(|path| {
+        path != "fixtures/compat/release/hosted-gates.v1.json" && !path.starts_with(".planning/")
+    });
+    paths.sort_by(|left, right| left.as_bytes().cmp(right.as_bytes()));
+
+    let mut fingerprint = Sha256::new();
+    fingerprint.update(b"minimax-codex-product-v1\0");
+    for path in &paths {
+        let absolute = root.join(path);
+        let metadata =
+            std::fs::symlink_metadata(&absolute).map_err(|_| BaselineError::CutoverEvidence)?;
+        if !metadata.is_file() || metadata.file_type().is_symlink() {
+            return Err(BaselineError::CutoverEvidence);
+        }
+        let bytes = std::fs::read(absolute).map_err(|_| BaselineError::CutoverEvidence)?;
+        fingerprint.update(path.as_bytes());
+        fingerprint.update([0]);
+        fingerprint.update(Sha256::digest(bytes));
+    }
+    let encoded = fingerprint
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    Ok((encoded, paths.len() as u64))
 }
 
 fn valid_hex(value: &str, length: usize) -> bool {

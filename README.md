@@ -1,263 +1,155 @@
 # MiniMax Codex
 
-A contract-first, Codex-style interactive CLI for MiniMax and compatible
-Providers. The supported default is the Rust runtime: typed protocol/core ports,
-Provider adapters, bounded tools, BM25-first retrieval, and an Obsidian-compatible
-per-project Vault. SQLite is not used.
+A local-first, Codex-style command-line agent for MiniMax and compatible
+Providers. The supported product runtime is Rust. It combines a typed agent
+loop, bounded workspace tools, BM25-first open-source project discovery, and an
+Obsidian-compatible per-project Vault. SQLite is not used.
 
-## Run
+## Install and run
 
-Supported Windows x64 MSVC and Linux x64 GNU releases are versioned archives.
-Verify the `.sha256`, extract the archive, then run the native executable or its
-packaged launcher:
+Supported release platforms are Windows x64 MSVC and Linux x64 GNU. Verify the
+published SHA-256 sidecar before using either distribution:
 
-```bash
-node bin/minimax-codex.cjs doctor
-node bin/minimax-codex.cjs run --prompt "inspect this project"
-```
+- the versioned base archive contains the launcher, one native Rust binary,
+  release manifest, documentation, and licenses;
+- the platform npm package additionally contains the explicit TypeScript legacy
+  command in the same installable artifact.
 
-When installed as a platform npm release, `minimax-codex` is that fixed Rust
-launcher. `minimax-codex-legacy` is the explicit TypeScript fallback during the
-documented support window; the launcher never selects it automatically.
-
-For source development:
+After extraction or platform npm installation:
 
 ```bash
-cargo run -p minimax-cli -- doctor
-npm install
-npm run dev
+minimax-codex doctor
+minimax-codex run --prompt "inspect this project"
+minimax-codex chat
 ```
 
-`npm run dev` is the legacy TypeScript development reference, not the default
-release entry. See `docs/release/install-upgrade-rollback.md` and
-`docs/release/cutover.md` before installation or migration.
+`minimax-codex` always launches the fixed sibling Rust binary without a shell,
+download, `PATH` search, or silent fallback. `minimax-codex-legacy` is the
+operator-selected TypeScript fallback during the documented support window.
 
-Inside the CLI:
+See [installation, upgrade, and rollback](docs/release/install-upgrade-rollback.md)
+and the [cutover contract](docs/release/cutover.md) before migration or rollout.
 
-- `/new` creates a blank conversation, preserves the previous thread as
-  history, and makes the new thread active.
-- `/threads` lists stored conversations and marks the active thread.
-- `/resume <threadId>` switches to a stored conversation, hydrates its history,
-  and makes it the only active thread.
-- `/api` changes the active provider's API key.
-- `/provider` lists the active OpenAI-compatible provider.
-- `/provider hashsight` switches to the Hashsight provider.
-- `/provider minimax-official` switches back to the official MiniMax provider.
-- `/trace` toggles the folded work trace panel.
-- `/interrupt` cancels the active model request. Any received partial reply is
-  saved as interrupted and is not reused as completed model context.
-- `/compact` keeps the original JSONL transcript, writes a local summary with a
-  coverage boundary, and replaces the covered messages in the next model-visible
-  context with that summary.
-- `/retry` is available after startup initialization fails. It retries the same
-  runtime and dispatcher; duplicate retries are coalesced while one is running.
-- `/exit` quits.
+## What happens during a normal run
 
-Local runtime data is stored under `.mini-codex/`. API keys are excluded from
-chat transcripts, trace logs, summaries, and git.
+The Rust runtime validates configuration, acquires one project writer lease,
+and records the session as replayable append-only evidence. Workspace reads are
+bounded by default. Writes and commands follow exactly two permission modes:
 
-## Runtime Architecture and Ownership
+- `confirm`: ask before an effect that requires approval;
+- `full-access`: allow effects for the current process only.
 
-`ApplicationKernel` is the single connection point between typed commands and
-runtime events. It composes the workspace lease, command arbiter,
-`ProviderService`, `SessionService`, `TurnEngine`, context engine, and JSONL
-repository. The UI reduces runtime events into display state and does not own
-Provider or command-concurrency decisions.
+There is no persistent global “always allow” switch. Unknown or interrupted
+side effects are not replayed automatically.
 
-Only one live CLI process may own a `.mini-codex` workspace. Startup acquires an
-atomic, nonce-protected lease before initializing services. A second live
-process is rejected with the owning PID. If the owner process is no longer
-alive, startup safely replaces the stale lease; an older process cannot later
-delete the replacement lease.
+When a durable session is finalized, a separate strict call to the same pinned
+main model may propose Wiki updates. Only the bounded visible transcript,
+durability markers, current pages, and validation context are eligible; tool
+output and private reasoning are excluded. The local validator commits accepted
+Markdown transactionally into the project Vault. Lookup-only sessions are a
+no-op and spend no Wiki-generation call.
 
-## Configuration, Credentials, and Recovery
+The first run creates a stable project-to-Vault binding at
+`.minimax/vault-binding.v1.json`. Unless explicitly chosen before that first
+binding, the Vault is a sibling directory recommended by the runtime. It stays
+plain Markdown and JSON so Obsidian and ordinary file tools can inspect it.
 
-Workspace configuration remains in `.mini-codex/config.json`, but it is
-validated before use. Invalid provider IDs, protocols, URLs, storage drivers,
-or context budgets fail with the affected field path instead of reaching the
-Runtime as malformed state.
+## Open-source project discovery
 
-API keys use the system keychain when the optional `@napi-rs/keyring` backend
-is available. Plaintext fallback requires an explicit warning and confirmation,
-and writes to a user-level `credentials.json`, never the workspace:
+Non-programmers do not need to prepare a catalog flag. Ordinary agent prompts
+that explicitly ask for an open-source project, library, or tool automatically
+receive bounded read-only discovery context:
 
-- Windows: `%APPDATA%/minimax-codex/credentials.json`
-- macOS: `~/Library/Application Support/minimax-codex/credentials.json`
-- Linux: `${XDG_CONFIG_HOME:-~/.config}/minimax-codex/credentials.json`
+1. BM25 extracts and ranks lexical candidates first.
+2. An optional, separately installed and hash-verified embedding resource may
+   rerank only those candidates.
+3. Missing, incompatible, or unhealthy embeddings leave the BM25 order intact.
 
-`MINIMAX_CODEX_HOME` overrides that directory. A legacy
-`.mini-codex/secrets.local.json` entry is migrated only for an exact built-in
-Provider target. With a working keyring, startup writes and verifies the scoped
-key before removing the workspace source. If the keyring is unavailable,
-startup keeps the source untouched, emits a secret-free re-entry warning, and
-continues; it never converts that old secret into plaintext automatically.
-Custom and redirected Provider targets never inherit provider-ID-only legacy
-keys.
+Discovery never installs or executes a candidate. The embedded catalog is the
+zero-configuration default; `--catalog` remains a strict expert override.
 
-Every keychain and plaintext record is scoped to the Provider ID, canonical
-endpoint, and authentication scheme. Changing `baseUrl` therefore requires a
-new key. Workspace `envKey` values are honored only when the complete Provider
-target exactly matches a built-in definition, so a repository cannot redirect
-a trusted environment credential to another server.
+Read-only inspection is also available directly:
 
-When the OS keyring is unavailable, `/api` displays the absolute plaintext
-credential path. Type exactly `YES` to grant one-time consent and continue to
-API-key entry. Any other response cancels without saving. Consent is consumed
-by one save attempt and is never inferred or remembered silently. After a new
-scoped key is saved, pending legacy workspace files are cleaned up. If no save
-occurs, they remain for a later startup or explicit re-entry.
+```bash
+minimax-codex index capabilities status
+minimax-codex index projects search "本地知识库命令行工具"
+minimax-codex index wiki search "release decision" --vault <path> --project-id <id>
+```
 
-JSONL is the only supported transcript and Turn storage format; SQLite
-configuration is rejected during migration. New records use versioned
-envelopes and per-file monotonic sequences. A version-0 workspace is validated
-before replacement, every changed legacy file retains its original bytes in
-`.v0.bak`, and
-`manifest.json` is committed last with `schemaVersion: 1`. Legacy month-level
-session paths remain readable and appendable after migration. Unknown future
-versions fail closed.
+The base distribution never bundles or downloads model weights. See the
+[optional embedding package contract](docs/release/embedding-package.md).
 
-JSON snapshots are written through a same-directory temporary file, flushed,
-and atomically renamed. The previous valid snapshot is kept as `.bak`. Startup
-restores a valid backup when the primary config or thread index is damaged; if
-both are invalid it reports the path and stops instead of silently resetting.
-For append-only JSONL, only a malformed final line without a newline is treated
-as an interrupted append and removed. Corruption in the middle remains a hard
-error so history cannot disappear unnoticed. Visible assistant deltas are
-batched, and terminal Turns are checkpointed to one latest snapshot per Turn.
+## Vault maintenance and migration
 
-## Command/Event Boundary
+Vault maintenance is report-first and narrow: status/lint are read-only;
+repair and rebuild are allowlisted; garbage collection, purge, and privacy
+forget require action-specific plan-bound confirmations. Referenced raw evidence
+is preserved, trash can be undone before purge, and there is no `--force` path.
 
-Ink is a view layer. Chat text is parsed into a typed `Command`,
-`CommandDispatcher` routes it to the runtime, and the UI renders only
-`RuntimeEvent` values. `ApplicationKernel` owns command routing and concurrency;
-new workflow commands should be added to this protocol boundary instead of
-calling core services directly from `App.tsx`. Streamed Turn events carry
-`turnId` so UI messages do not depend on local callback state.
+TypeScript data migration follows the same rules:
 
-The active thread is restored on startup. User and assistant messages are
-loaded back into the UI, while Turn snapshots and streamed assistant deltas are
-kept in append-only JSONL files under `.mini-codex/turns/`. If the previous
-process stopped during a response, that Turn is marked `interrupted` on the
-next startup and its saved partial reply is shown as incomplete. Interrupted
-partial replies are never sent back to the model as completed context.
+```bash
+minimax-codex migrate inventory
+minimax-codex migrate dry-run --json
+minimax-codex migrate apply --plan <plan> --confirmation <printed-value>
+minimax-codex migrate verify --receipt <receipt>
+```
 
-## Provider Pipeline and Safe Trace
+Inventory and dry-run write nothing. Apply stages and verifies allowlisted
+artifacts before commit, preserves every source byte, and writes an immutable
+receipt. Rollback removes only unchanged targets created by that receipt.
+Credentials, private reasoning, caches, locks, databases, and unknown records
+are excluded.
 
-Model calls are split into narrow layers:
+## Architecture
+
+The Rust workspace keeps authority behind typed boundaries:
 
 ```text
-ApplicationKernel
-  -> TurnEngine
-      -> StrictProviderGateway
-          -> ProviderProtocol (Responses or Chat Completions)
-          -> HttpStreamTransport (fetch, abort, full-stream deadline)
+CLI/TUI
+  -> core agent and permission policy
+      -> Provider adapter
+      -> bounded tools
+      -> runtime journal
+      -> Vault/Wiki workflow
+      -> retrieval kernel (exact/BM25, optional candidate rerank)
 ```
 
-The protocol layer owns request and SSE event shapes. The transport layer owns
-network cancellation and timeout classification. Provider errors use stable
-categories such as `authentication`, `rate_limit`, `timeout`, and `network`
-before Runtime turns them into user-visible errors.
+Provider adapters normalize Responses and Chat Completions streams into one
+protocol. Success requires the protocol terminal event; malformed frames,
+premature EOF, duplicate completion, and content after completion fail closed.
+Raw reasoning and `<think>` blocks are removed at the Provider boundary.
 
-Provider streams succeed only after their protocol-specific terminal event:
-`response.completed` for Responses or `[DONE]` for Chat Completions. Malformed
-frames, premature EOF, duplicate completion, or data after completion fail the
-Turn; partial visible output remains marked as failed rather than being treated
-as a completed answer.
+The Vault crate owns Markdown parsing and transactions but has no Provider,
+HTTP, credential, SQLite, or model-download path. Wiki generation is a narrow
+port supplied by the CLI with the exact session model binding.
 
-Raw reasoning fields and `<think>` blocks are removed inside the provider
-boundary. Runtime receives only visible assistant deltas, token usage, and a
-small set of structured diagnostics. Durable trace events are created from
-known event codes with per-code fact allowlists; arbitrary prompts, response
-bodies, API keys, and raw reasoning have no trace field through which they can
-be persisted.
+## Source development
 
-Context construction uses a conservative estimator for CJK, emoji, code, and
-Latin prose. Compaction creates bounded structured summaries with separate
-original-goal, constraints, decisions, open-items, and recent-exchanges
-sections. Trace payloads, secrets, raw reasoning, and partial replies are not
-included as completed model context.
-
-## OpenAI-Compatible Providers
-
-The app follows the Codex-style provider split:
-
-- `modelProvider` selects the active provider.
-- `modelProviders` stores provider profiles.
-- each provider owns its `baseUrl`, `protocol`, `envKey`, and default model.
-- HTTPS is required by default. Plain HTTP requires
-  `allowInsecureLoopback: true` and a localhost, `127.0.0.0/8`, or `::1`
-  endpoint.
-- Provider `headers` are a strict public-metadata allowlist: `Accept`,
-  `User-Agent`, `OpenAI-Beta`, `Anthropic-Version`, `HTTP-Referer`, and
-  `X-Title`. Names are canonicalized; other names and control-character
-  injection are rejected. `Authorization` and `Content-Type` are Runtime-owned.
-
-Provider URLs cannot contain userinfo, a query, or a fragment. The Gateway
-revalidates these rules before each request, and HTTP redirects are not
-followed automatically.
-
-At production startup the active trusted built-in target also resumes legacy
-workspace credential migration. A scoped credential is written before the old
-entry is removed; interrupted cleanup fails initialization safely and is
-retried on the next startup. Custom Provider targets are not inspected by this
-migration path.
-
-Example:
-
-```json
-{
-  "modelProvider": "hashsight",
-  "modelProviders": {
-    "hashsight": {
-      "name": "Hashsight OpenAI Compatible",
-      "baseUrl": "https://www.hashsight.cn/v1",
-      "protocol": "chat_completions",
-      "envKey": "HASHSIGHT_API_KEY",
-      "defaultModel": "MiniMax-M3"
-    }
-  }
-}
-```
-
-## Offline Tests and CI
-
-`npm test` recursively discovers every `.test.ts` and `.test.tsx` file under
-`test/`; adding a test never requires editing a registry. Discovery ignores
-symlinks and non-test helpers, sorts absolute paths deterministically, converts
-them to platform-safe file URLs, and imports them sequentially in one Node.js
-process.
-
-GitHub Actions runs the same locked, offline verification on Ubuntu and Windows
-with Node.js 20:
+Rust 1.97.0 and Node.js 20 are pinned for the complete compatibility and release
+gate:
 
 ```bash
 npm ci
 npm run check
 npm test
+npm run check:rust
+npm run test:rust
+npm run verify:rust-contracts
 npm run build
 ```
 
-The workflow provides no Provider credentials and never runs the live smoke
-command. Tests use injected fake or unavailable keyring backends, so CI does not
-access the machine's real credential store even when the optional native package
-is installable for that operating system.
+`npm run dev` runs the legacy TypeScript reference for development; it is not
+the default product entry. `npm run smoke:provider` is the only live Provider
+smoke command and must be invoked explicitly with separate authorization. CI
+has no Provider credentials and uses fixtures only.
 
-## Explicit Live Provider Smoke Test
+Release verification deterministically packages both distributions, extracts
+and starts the actual packaged Rust default, verifies the legacy mapping, checks
+licenses/security/size/startup/RSS/Wiki search budgets, and records a product
+fingerprint. Any tracked product input change invalidates older hosted evidence.
 
-Offline tests use a fake Provider and never make a real API request. A live
-connection check exists only as an explicit operator action:
+## License
 
-```bash
-npm run smoke:provider
-```
-
-Run it only after the user has explicitly authorized a real Provider request
-and the credential is already available through the normal environment,
-keyring, or confirmed user-file path. The command does not accept a key
-argument and prints neither the prompt, credential, nor raw Provider frames.
-Because it uses the normal kernel path, its Turn is stored in the current
-workspace like any other submitted prompt.
-`npm run check` and `npm run build` compile the smoke source as part of the
-TypeScript project, and offline tests statically inspect its safety boundary.
-Those automated commands never invoke `npm run smoke:provider` and therefore
-never send its real Provider request.
+Licensed under either [Apache-2.0](LICENSE-APACHE) or [MIT](LICENSE-MIT), at your
+option.

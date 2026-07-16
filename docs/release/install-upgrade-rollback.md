@@ -2,9 +2,9 @@
 
 ## Supported base artifacts
 
-The v1 release matrix is `windows-x86_64-msvc` and `linux-x86_64-gnu`. Each release has one versioned `.tar.gz`, a `.sha256` sidecar, `RELEASE-MANIFEST.json`, the shell-free `bin/minimax-codex.cjs` launcher, one Rust executable, and both project licenses. A `*-gnullvm-dev` archive is local development evidence only and is not a supported Windows release.
+The v1 release matrix is `windows-x86_64-msvc` and `linux-x86_64-gnu`. Each platform has a versioned base `.tar.gz` and platform npm `.tgz`, each with a `.sha256` sidecar. The base archive contains `RELEASE-MANIFEST.json`, the shell-free `bin/minimax-codex.cjs` launcher, one Rust executable, documentation, and both project licenses. The npm package contains that exact launcher and native binary plus `dist/cli.js` as the explicit `minimax-codex-legacy` fallback. A `*-gnullvm-dev` artifact is local development evidence only and is not a supported Windows release.
 
-Before installation, compare the archive SHA-256 with the sidecar and inspect `RELEASE-MANIFEST.json`. The manifest must name the expected version/platform, match the executable hash, and say `embeddingIncluded: false`.
+Before installation, compare the chosen artifact SHA-256 with its sidecar and inspect `RELEASE-MANIFEST.json` from the matching base archive. The manifest must name the expected version/platform, match the executable and npm-package hashes, name `dist/cli.js` as the legacy entry, and say `embeddingIncluded: false`.
 
 ## Fresh install
 
@@ -15,7 +15,7 @@ Before installation, compare the archive SHA-256 with the sidecar and inspect `R
 5. Point the stable `minimax-codex` command at that version only after both checks succeed.
 6. Keep the prior versioned directory until the new version has passed normal work.
 
-The archive and launcher never download an embedding model, read a credential, or migrate data automatically.
+The archives and launcher never download an embedding model, read a credential, or migrate data automatically. Release verification extracts the npm package and starts its actual Rust default before an artifact is accepted.
 
 ## Upgrade
 

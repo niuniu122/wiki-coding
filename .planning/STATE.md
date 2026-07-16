@@ -5,16 +5,16 @@ milestone_name: milestone
 current_phase: 7
 current_phase_name: Close Milestone Integration Gaps
 status: executing
-stopped_at: Plan 07-02 complete; building the complete distribution and evidence binding
-last_updated: "2026-07-16T20:30:00Z"
+stopped_at: Plan 07-03 complete; running final cross-phase and hosted milestone gates
+last_updated: "2026-07-16T21:45:00Z"
 last_activity: 2026-07-16
 last_activity_desc: Automatic BM25-first project discovery and behavioral command evidence completed
 progress:
   total_phases: 7
   completed_phases: 6
   total_plans: 22
-  completed_plans: 20
-  percent: 91
+  completed_plans: 21
+  percent: 95
 ---
 
 # Project State
@@ -29,8 +29,8 @@ See: .planning/PROJECT.md (updated 2026-07-15)
 ## Current Position
 
 Phase: 7 (Close Milestone Integration Gaps) — EXECUTING
-Plan: 07-03 of 4
-Status: Closing audit blockers
+Plan: 07-04 of 4
+Status: Running final cross-phase, hosted, and milestone audit gates
 Last activity: 2026-07-16 — v1.0 integration audit created the closure phase
 
 Progress: [█████████░] 91%
@@ -81,10 +81,9 @@ Progress: [█████████░] 91%
 
 ### Pending Todos
 
-- Wire the production session-to-Vault-to-Wiki chain.
-- Restore ordinary product access to BM25-first project discovery.
-- Produce and smoke-test one complete Rust-default-plus-legacy artifact.
-- Bind final hosted evidence to the exact product fingerprint.
+- Run the final complete local release gate.
+- Record fresh hosted Windows/Linux evidence for the exact product fingerprint.
+- Repeat the milestone integration audit and close only with zero blockers.
 
 ### Roadmap Evolution
 
