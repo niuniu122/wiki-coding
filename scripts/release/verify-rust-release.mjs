@@ -245,18 +245,14 @@ function measureColdStart(executable, limit) {
 }
 
 async function measureIdleRss(executable, limit) {
-  const child = spawn(executable, ["__release-probe", "--hold-ms", "3000"], {
+  const child = spawn(executable, ["__release-probe", "--hold-ms", "10000"], {
     cwd: root,
     stdio: ["ignore", "pipe", "pipe"],
     shell: false,
     windowsHide: true
   });
   await waitForReady(child);
-  const samples = [];
-  for (let index = 0; index < 5; index += 1) {
-    samples.push(readRss(child.pid));
-    await delay(100);
-  }
+  const samples = await readRssSamples(child.pid, 5, 100);
   const maximum = Math.max(...samples);
   if (maximum > limit) {
     child.kill();
@@ -266,22 +262,36 @@ async function measureIdleRss(executable, limit) {
   return {samples, maximum};
 }
 
-function readRss(pid) {
+async function readRssSamples(pid, count, intervalMs) {
   if (process.platform === "win32") {
     const powershell = join(process.env.SystemRoot ?? "C:\\Windows", "System32/WindowsPowerShell/v1.0/powershell.exe");
+    const command = [
+      `1..${Number(count)} | ForEach-Object {`,
+      `  $value = (Get-Process -Id ${Number(pid)} -ErrorAction Stop).WorkingSet64;`,
+      "  [Console]::Out.WriteLine([string]$value);",
+      `  Start-Sleep -Milliseconds ${Number(intervalMs)}`,
+      "}"
+    ].join(" ");
     const output = spawnSync(
       powershell,
-      ["-NoProfile", "-NonInteractive", "-Command", `(Get-Process -Id ${Number(pid)}).WorkingSet64`],
+      ["-NoProfile", "-NonInteractive", "-Command", command],
       {encoding: "utf8", shell: false, windowsHide: true, timeout: 5_000}
     );
-    const value = Number(output.stdout.trim());
-    if (output.status !== 0 || !Number.isFinite(value) || value <= 0) fail("could not sample Windows idle RSS");
-    return value;
+    const samples = output.stdout.trim().split(/\r?\n/u).map((value) => Number(value.trim()));
+    if (output.status !== 0 || samples.length !== count || samples.some((value) => !Number.isFinite(value) || value <= 0)) {
+      fail(`could not sample Windows idle RSS: ${(output.stderr || output.stdout || "no output").trim()}`);
+    }
+    return samples;
   }
-  const status = readFileSync(`/proc/${Number(pid)}/status`, "utf8");
-  const kib = Number(/^VmRSS:\s+(\d+)\s+kB$/mu.exec(status)?.[1]);
-  if (!Number.isFinite(kib) || kib <= 0) fail("could not sample Linux idle RSS");
-  return kib * 1024;
+  const samples = [];
+  for (let index = 0; index < count; index += 1) {
+    const status = readFileSync(`/proc/${Number(pid)}/status`, "utf8");
+    const kib = Number(/^VmRSS:\s+(\d+)\s+kB$/mu.exec(status)?.[1]);
+    if (!Number.isFinite(kib) || kib <= 0) fail("could not sample Linux idle RSS");
+    samples.push(kib * 1024);
+    await delay(intervalMs);
+  }
+  return samples;
 }
 
 function runWikiBenchmark(limit) {
