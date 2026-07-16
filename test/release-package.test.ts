@@ -1,11 +1,18 @@
 import assert from "node:assert/strict";
 import {createHash} from "node:crypto";
 import {copyFile, mkdir, mkdtemp, readFile, rm, writeFile} from "node:fs/promises";
-import {resolve} from "node:path";
+import {dirname, resolve} from "node:path";
 import {spawnSync} from "node:child_process";
 import test from "node:test";
 
 test("release packaging is deterministic and confines all writes to target", async () => {
+  const npmCli = resolve(dirname(process.env.npm_execpath ?? ""), "npm-cli.js");
+  const built = spawnSync(process.execPath, [npmCli, "run", "build"], {
+    cwd: resolve("."),
+    encoding: "utf8",
+    shell: false
+  });
+  assert.equal(built.status, 0, built.stderr);
   await mkdir(resolve("target"), {recursive: true});
   const temporary = await mkdtemp(resolve("target/release-package-test-"));
   const binary = resolve(temporary, "fixture.exe");
