@@ -126,9 +126,16 @@ Plans:
 **Plans**: 3 plans
 
 Plans:
+**Wave 1**
 
 - [ ] 04-01: Implement Vault bootstrap, lease, raw journal, and recoverable file transactions
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
 - [ ] 04-02: Implement inbox, durability gate, MainModelWikiWorkflow, provenance, and supersession
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
 - [ ] 04-03: Implement lint/rebuild plus GC, trash/undo/purge, and forget workflows
 
 ### Phase 5: Retrieval and Project Discovery
