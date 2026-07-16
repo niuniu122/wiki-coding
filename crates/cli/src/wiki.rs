@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use minimax_core::{
     DurabilityGate, DurabilitySignals, KnowledgeCommitError, KnowledgeEffect, KnowledgeGuardError,
@@ -15,7 +15,7 @@ use minimax_protocol::{
 use minimax_vault::{
     FinalizedSessionEvidence, KnowledgeWorkflowStore, PreparedWikiTransaction, ProjectVault,
     StoredGeneration, VaultError, WikiChange, hash_vault_bytes, knowledge_job_for_session,
-    parse_wiki_page, recover_wiki_transaction, render_wiki_page, wiki_transaction_exists,
+    read_wiki_pages, recover_wiki_transaction, render_wiki_page, wiki_transaction_exists,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -531,48 +531,6 @@ impl KnowledgePort for VaultKnowledgePort {
     fn commit<'a>(&'a self, patch: &'a KnowledgePatch) -> minimax_core::KnowledgeCommitFuture<'a> {
         Box::pin(async move { self.commit_patch(patch) })
     }
-}
-
-fn read_wiki_pages(vault: &ProjectVault) -> Result<BTreeMap<String, KnowledgePage>, VaultError> {
-    let mut files = Vec::new();
-    collect_files(&vault.root().join("wiki"), &mut files)?;
-    files.sort();
-    let mut pages = BTreeMap::new();
-    for file in files {
-        if file == vault.root().join("wiki/index.md") {
-            continue;
-        }
-        let relative = file
-            .strip_prefix(vault.root())
-            .map_err(|_| VaultError::InvalidPath)?
-            .to_string_lossy()
-            .replace('\\', "/");
-        let page = parse_wiki_page(
-            &relative,
-            &std::fs::read(&file).map_err(|_| VaultError::Io)?,
-        )?;
-        pages.insert(relative, page);
-    }
-    Ok(pages)
-}
-
-fn collect_files(directory: &Path, files: &mut Vec<PathBuf>) -> Result<(), VaultError> {
-    let mut entries = std::fs::read_dir(directory)
-        .map_err(|_| VaultError::Io)?
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| VaultError::Io)?;
-    entries.sort_by_key(std::fs::DirEntry::file_name);
-    for entry in entries {
-        let kind = entry.file_type().map_err(|_| VaultError::Io)?;
-        if kind.is_dir() {
-            collect_files(&entry.path(), files)?;
-        } else if kind.is_file()
-            && entry.path().extension().and_then(|value| value.to_str()) == Some("md")
-        {
-            files.push(entry.path());
-        }
-    }
-    Ok(())
 }
 
 fn render_index(pages: &BTreeMap<String, KnowledgePage>) -> Vec<u8> {

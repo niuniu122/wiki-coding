@@ -20,8 +20,77 @@ pub enum CliCommand {
     Chat(ChatArgs),
     Doctor(DoctorArgs),
     Migrate,
-    Vault,
+    Vault(VaultArgs),
     Index,
+}
+
+#[derive(Clone, Debug, Args)]
+pub struct VaultArgs {
+    #[arg(long, default_value = ".")]
+    pub project: PathBuf,
+    #[arg(long)]
+    pub vault: PathBuf,
+    #[arg(long)]
+    pub project_id: String,
+    #[arg(long)]
+    pub jsonl: bool,
+    #[command(subcommand)]
+    pub action: VaultAction,
+}
+
+#[derive(Clone, Debug, Subcommand)]
+pub enum VaultAction {
+    Bootstrap,
+    Status,
+    Lint,
+    Repair,
+    Rebuild,
+    Import {
+        relative_path: String,
+    },
+    Gc {
+        #[command(subcommand)]
+        action: VaultGcAction,
+    },
+    Forget {
+        #[command(subcommand)]
+        action: VaultForgetAction,
+    },
+}
+
+#[derive(Clone, Debug, Subcommand)]
+pub enum VaultGcAction {
+    Report,
+    Apply {
+        #[arg(long)]
+        plan: PathBuf,
+        #[arg(long)]
+        confirmation: String,
+    },
+    Undo {
+        gc_id: String,
+    },
+    Purge {
+        gc_id: String,
+        #[arg(long)]
+        confirmation: String,
+    },
+}
+
+#[derive(Clone, Debug, Subcommand)]
+pub enum VaultForgetAction {
+    Plan {
+        evidence_id: String,
+        expected_hash: String,
+    },
+    Apply {
+        #[arg(long)]
+        plan: PathBuf,
+        #[arg(long)]
+        patch: PathBuf,
+        #[arg(long)]
+        confirmation: String,
+    },
 }
 
 #[derive(Clone, Debug, Args)]

@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 
 use minimax_protocol::{
-    RuntimeEvent, RuntimeEventV1, RuntimeTerminalOutcome, SessionRecord, SessionStatus, ToolEffect,
-    ToolInvocation, ToolResult, TraceCode, TraceEntry,
+    ForgetPlan, GcClass, GcPlan, RuntimeEvent, RuntimeEventV1, RuntimeTerminalOutcome,
+    SessionRecord, SessionStatus, ToolEffect, ToolInvocation, ToolResult, TraceCode, TraceEntry,
+    VaultLintReport,
 };
 
 const MAX_RENDER_CHARS: usize = 16_000;
@@ -10,6 +11,77 @@ const MAX_RENDER_CHARS: usize = 16_000;
 pub struct EventRenderer;
 
 impl EventRenderer {
+    #[must_use]
+    pub fn vault_lint(report: &VaultLintReport) -> String {
+        if report.issues.is_empty() {
+            return format!(
+                "vault lint | project={} | clean",
+                sanitize_bounded(report.project_id.as_str())
+            );
+        }
+        let mut lines = vec![format!(
+            "vault lint | project={} | issues={}",
+            sanitize_bounded(report.project_id.as_str()),
+            report.issues.len()
+        )];
+        lines.extend(report.issues.iter().map(|issue| {
+            format!(
+                "{:?} | path={}{}",
+                issue.code,
+                sanitize_bounded(&issue.relative_path),
+                issue.related_id.as_deref().map_or_else(String::new, |id| {
+                    format!(" | id={}", sanitize_bounded(id))
+                })
+            )
+        }));
+        lines.join("\n")
+    }
+
+    #[must_use]
+    pub fn gc_plan(plan: &GcPlan, confirmation: &str) -> String {
+        let eligible = plan
+            .candidates
+            .iter()
+            .filter(|candidate| {
+                matches!(candidate.class, GcClass::Rebuildable | GcClass::Collectable)
+            })
+            .count();
+        let bytes = plan
+            .candidates
+            .iter()
+            .filter(|candidate| {
+                matches!(candidate.class, GcClass::Rebuildable | GcClass::Collectable)
+            })
+            .fold(0_u64, |total, candidate| {
+                total.saturating_add(candidate.bytes)
+            });
+        format!(
+            "gc report | id={} | eligible={} | bytes={} | protected={}\nconfirmation: {}",
+            sanitize_bounded(plan.gc_id.as_str()),
+            eligible,
+            bytes,
+            plan.candidates.len().saturating_sub(eligible),
+            sanitize_bounded(confirmation)
+        )
+    }
+
+    #[must_use]
+    pub fn forget_plan(plan: &ForgetPlan, confirmation: &str) -> String {
+        let mut lines = vec![format!(
+            "forget plan | id={} | affected_claims={} | evidence_hash={}",
+            sanitize_bounded(plan.forget_id.as_str()),
+            plan.affected_page_paths.len(),
+            plan.expected_hash.as_str()
+        )];
+        lines.extend(
+            plan.affected_page_paths
+                .iter()
+                .map(|path| format!("claim path={}", sanitize_bounded(path))),
+        );
+        lines.push(format!("confirmation: {}", sanitize_bounded(confirmation)));
+        lines.join("\n")
+    }
+
     #[must_use]
     pub fn event(record: &RuntimeEventV1) -> String {
         let rendered = match &record.event {

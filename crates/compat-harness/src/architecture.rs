@@ -11,6 +11,7 @@ const COMPAT_HARNESS: &str = "minimax-compat-harness";
 const CORE: &str = "minimax-core";
 const PROTOCOL: &str = "minimax-protocol";
 const CLI: &str = "minimax-cli";
+const VAULT: &str = "minimax-vault";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ArchitecturePackage {
@@ -94,6 +95,7 @@ pub fn load_cargo_architecture(root: &Path) -> Result<ArchitectureGraph, Archite
 pub fn validate_architecture(graph: &ArchitectureGraph) -> Result<(), ArchitectureError> {
     validate_database_denylist(graph)?;
     validate_core_dependencies(graph)?;
+    validate_vault_dependencies(graph)?;
 
     let local_names = graph
         .packages
@@ -137,6 +139,44 @@ pub fn validate_architecture(graph: &ArchitectureGraph) -> Result<(), Architectu
 
 pub fn validate_core_source_boundary(root: &Path) -> Result<(), ArchitectureError> {
     validate_core_source_directory(&root.join("crates/core/src"))
+}
+
+pub fn validate_vault_source_boundary(root: &Path) -> Result<(), ArchitectureError> {
+    validate_source_directory(&root.join("crates/vault/src"), validate_vault_source_text)
+}
+
+pub fn validate_cli_tui_markdown_boundary(root: &Path) -> Result<(), ArchitectureError> {
+    for directory in [root.join("crates/cli/src"), root.join("crates/tui/src")] {
+        validate_source_directory(&directory, validate_ui_source_text)?;
+    }
+    Ok(())
+}
+
+fn validate_source_directory(
+    source_root: &Path,
+    validator: fn(&str, &str) -> Result<(), ArchitectureError>,
+) -> Result<(), ArchitectureError> {
+    validate_source_directory_inner(source_root, source_root, validator)
+}
+
+fn validate_source_directory_inner(
+    source_root: &Path,
+    directory: &Path,
+    validator: fn(&str, &str) -> Result<(), ArchitectureError>,
+) -> Result<(), ArchitectureError> {
+    for entry in fs::read_dir(directory).map_err(|_| ArchitectureError::CoreSourceRead)? {
+        let entry = entry.map_err(|_| ArchitectureError::CoreSourceRead)?;
+        let path = entry.path();
+        if path.is_dir() {
+            validate_source_directory_inner(source_root, &path, validator)?;
+        } else if path.extension().and_then(|extension| extension.to_str()) == Some("rs") {
+            let source =
+                fs::read_to_string(&path).map_err(|_| ArchitectureError::CoreSourceRead)?;
+            let relative = path.strip_prefix(source_root).unwrap_or(&path);
+            validator(&relative.to_string_lossy(), &source)?;
+        }
+    }
+    Ok(())
 }
 
 pub fn validate_core_source_directory(source_root: &Path) -> Result<(), ArchitectureError> {
@@ -189,6 +229,45 @@ pub fn validate_core_source_text(file: &str, source: &str) -> Result<(), Archite
     if let Some(pattern) = DENIED.iter().find(|pattern| source.contains(*pattern)) {
         return Err(ArchitectureError::Violation(format!(
             "core source boundary denied: {file} contains {pattern}"
+        )));
+    }
+    Ok(())
+}
+
+pub fn validate_vault_source_text(file: &str, source: &str) -> Result<(), ArchitectureError> {
+    const DENIED: [&str; 12] = [
+        "minimax_provider",
+        "ProviderPort",
+        "reqwest",
+        "hyper::",
+        "http::",
+        "rusqlite",
+        "sqlx",
+        "diesel",
+        "sea_orm",
+        "seaorm",
+        "Authorization",
+        "Bearer ",
+    ];
+    if let Some(pattern) = DENIED.iter().find(|pattern| source.contains(*pattern)) {
+        return Err(ArchitectureError::Violation(format!(
+            "vault source boundary denied: {file} contains {pattern}"
+        )));
+    }
+    Ok(())
+}
+
+pub fn validate_ui_source_text(file: &str, source: &str) -> Result<(), ArchitectureError> {
+    const DENIED: [&str; 5] = [
+        "parse_wiki_page",
+        "pulldown_cmark",
+        "markdown::",
+        "split_once(\"\\n---\\n\")",
+        "FRONTMATTER_KEYS",
+    ];
+    if let Some(pattern) = DENIED.iter().find(|pattern| source.contains(*pattern)) {
+        return Err(ArchitectureError::Violation(format!(
+            "CLI/TUI Markdown boundary denied: {file} contains {pattern}"
         )));
     }
     Ok(())
@@ -256,6 +335,33 @@ fn validate_core_dependencies(graph: &ArchitectureGraph) -> Result<(), Architect
             if !ALLOWED.contains(&dependency.as_str()) {
                 return Err(ArchitectureError::Violation(format!(
                     "core dependency denied: {CORE} -> {dependency}"
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn validate_vault_dependencies(graph: &ArchitectureGraph) -> Result<(), ArchitectureError> {
+    const ALLOWED: [&str; 8] = [
+        CORE,
+        PROTOCOL,
+        "fs4",
+        "serde",
+        "serde_json",
+        "sha2",
+        "tempfile",
+        "windows-sys",
+    ];
+    if let Some(vault) = graph
+        .packages
+        .iter()
+        .find(|package| package.local && package.name == VAULT)
+    {
+        for dependency in &vault.dependencies {
+            if !ALLOWED.contains(&dependency.as_str()) {
+                return Err(ArchitectureError::Violation(format!(
+                    "vault dependency denied: {VAULT} -> {dependency}"
                 )));
             }
         }

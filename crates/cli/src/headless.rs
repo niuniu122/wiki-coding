@@ -60,6 +60,12 @@ impl<W: Write> JsonlWriter<W> {
         self.writer.flush()
     }
 
+    pub fn write_json<T: serde::Serialize>(&mut self, value: &T) -> io::Result<()> {
+        serde_json::to_writer(&mut self.writer, value).map_err(io::Error::other)?;
+        self.writer.write_all(b"\n")?;
+        self.writer.flush()
+    }
+
     #[must_use]
     pub fn into_inner(self) -> W {
         self.writer

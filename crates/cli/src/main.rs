@@ -5,18 +5,26 @@ use std::process::ExitCode;
 
 use clap::Parser as _;
 use minimax_cli::{
-    ChatArgs, Cli, CliCommand, CommonArgs, DoctorArgs, DriverIds, ExitClass, HeadlessApprovalPort,
-    HttpProviderPort, InteractiveApprovalPort, JsonlWriter, MaintenanceRoute, RunArgs,
-    RuntimeDriver, exit_for_error, exit_for_report, inspect,
+    ChatArgs, Cli, CliCommand, CommonArgs, DoctorArgs, DriverIds, ExitClass, ForgetPlanOutput,
+    GcPlanOutput, HeadlessApprovalPort, HttpProviderPort, InteractiveApprovalPort, JsonlWriter,
+    MaintenanceRoute, RunArgs, RuntimeDriver, VaultAction, VaultArgs, VaultForgetAction,
+    VaultGcAction, VaultStatusOutput, exit_for_error, exit_for_report, inspect,
 };
 use minimax_core::{CompactionBudget, PermissionMode};
-use minimax_protocol::{ModelId, SessionId};
+use minimax_protocol::{
+    ContentHash, EvidenceId, GcId, KnowledgePatch, ModelId, ProjectId, SessionId,
+};
 use minimax_provider::{
     CredentialMode, CredentialResolver, HttpProviderClient, OsKeyringBackend, ResolvedConfig,
 };
 use minimax_tui::{
     CommandAvailability, CommandIntent, CrosstermTerminalHooks, EventRenderer, InteractiveShell,
     ParsedInput, StdioApprovalInput, parse_input,
+};
+use minimax_vault::{
+    ProjectVault, apply_forget_plan, apply_gc_plan, forget_confirmation, gc_apply_confirmation,
+    gc_report, import_inbox_file, lint_vault, plan_forget, purge_gc_plan, read_gc_trash_manifest,
+    rebuild_compiled_wiki, repair_vault, undo_gc_plan,
 };
 
 #[tokio::main]
@@ -37,9 +45,296 @@ async fn execute(cli: Cli) -> ExitClass {
         CliCommand::Chat(args) => execute_chat(args).await,
         CliCommand::Doctor(args) => execute_doctor(args),
         CliCommand::Migrate => unavailable(MaintenanceRoute::Migrate),
-        CliCommand::Vault => unavailable(MaintenanceRoute::Vault),
+        CliCommand::Vault(args) => execute_vault(args),
         CliCommand::Index => unavailable(MaintenanceRoute::Index),
     }
+}
+
+fn execute_vault(args: VaultArgs) -> ExitClass {
+    let project_id = match ProjectId::new(args.project_id) {
+        Ok(project_id) => project_id,
+        Err(error) => {
+            eprintln!("vault failed: {error}");
+            return ExitClass::Usage;
+        }
+    };
+    let now = unix_time_ms();
+    let vault = match ProjectVault::bootstrap(&args.project, &args.vault, project_id, now) {
+        Ok(vault) => vault,
+        Err(error) => {
+            eprintln!("vault failed: {error}");
+            return ExitClass::Workspace;
+        }
+    };
+    let result = match args.action {
+        VaultAction::Bootstrap => render_maintenance(
+            args.jsonl,
+            vault.manifest(),
+            format!(
+                "vault bootstrapped | project={} | root={} | warnings={:?}",
+                vault.manifest().project_id.as_str(),
+                vault.root().display(),
+                vault.warnings()
+            ),
+        ),
+        VaultAction::Status => {
+            let output = VaultStatusOutput {
+                manifest: vault.manifest().clone(),
+                lint: lint_vault(&vault),
+            };
+            let text = EventRenderer::vault_lint(&output.lint);
+            render_maintenance(args.jsonl, &output, text)
+        }
+        VaultAction::Lint => {
+            let report = lint_vault(&vault);
+            let text = EventRenderer::vault_lint(&report);
+            render_maintenance(args.jsonl, &report, text)
+        }
+        VaultAction::Repair => match repair_vault(&vault, now) {
+            Ok(receipt) => render_maintenance(
+                args.jsonl,
+                &receipt,
+                format!(
+                    "vault repair | operation={} | transactions={} | fragments={} | remaining={}",
+                    receipt.operation_id,
+                    receipt.recovered_transactions.len(),
+                    receipt.quarantined_fragments.len(),
+                    receipt.remaining_issues.len()
+                ),
+            ),
+            Err(error) => maintenance_error("repair", error),
+        },
+        VaultAction::Rebuild => match rebuild_compiled_wiki(&vault, now) {
+            Ok(receipt) => render_maintenance(
+                args.jsonl,
+                &receipt,
+                format!(
+                    "vault rebuild | operation={} | code={} | raw={} | pages={}",
+                    receipt.operation_id,
+                    receipt.code,
+                    receipt.raw_object_count,
+                    receipt.page_count
+                ),
+            ),
+            Err(error) => maintenance_error("rebuild", error),
+        },
+        VaultAction::Import { relative_path } => {
+            match import_inbox_file(&vault, &relative_path, now) {
+                Ok(receipt) => render_maintenance(
+                    args.jsonl,
+                    &receipt,
+                    format!(
+                        "vault import | evidence={} | code={} | bytes={} | source={}",
+                        receipt.evidence_id.as_str(),
+                        receipt.code,
+                        receipt.bytes,
+                        receipt.origin_relative_path
+                    ),
+                ),
+                Err(error) => maintenance_error("import", error),
+            }
+        }
+        VaultAction::Gc { action } => execute_vault_gc(&vault, action, args.jsonl, now),
+        VaultAction::Forget { action } => execute_vault_forget(&vault, action, args.jsonl, now),
+    };
+    drop(vault);
+    result
+}
+
+fn execute_vault_gc(
+    vault: &ProjectVault,
+    action: VaultGcAction,
+    jsonl: bool,
+    now: u64,
+) -> ExitClass {
+    match action {
+        VaultGcAction::Report => match gc_report(vault, now) {
+            Ok(plan) => {
+                let output = GcPlanOutput {
+                    confirmation: gc_apply_confirmation(&plan),
+                    plan,
+                };
+                let text = EventRenderer::gc_plan(&output.plan, &output.confirmation);
+                render_maintenance(jsonl, &output, text)
+            }
+            Err(error) => maintenance_error("gc report", error),
+        },
+        VaultGcAction::Apply { plan, confirmation } => {
+            let output = match read_json::<GcPlanOutput>(&plan) {
+                Ok(output) => output,
+                Err(exit) => return exit,
+            };
+            match apply_gc_plan(vault, &output.plan, &confirmation, now) {
+                Ok(receipt) => render_maintenance(
+                    jsonl,
+                    &receipt,
+                    format!(
+                        "gc applied | id={} | objects={} | bytes={}",
+                        receipt.gc_id.as_str(),
+                        receipt.object_count,
+                        receipt.bytes
+                    ),
+                ),
+                Err(error) => maintenance_error("gc apply", error),
+            }
+        }
+        VaultGcAction::Undo { gc_id } => {
+            let gc_id = match GcId::new(gc_id) {
+                Ok(gc_id) => gc_id,
+                Err(_) => return usage_error("gc undo", "invalid GC ID"),
+            };
+            match undo_gc_plan(vault, &gc_id, now) {
+                Ok(receipt) => render_maintenance(
+                    jsonl,
+                    &receipt,
+                    format!(
+                        "gc undone | id={} | objects={}",
+                        gc_id.as_str(),
+                        receipt.object_count
+                    ),
+                ),
+                Err(error) => maintenance_error("gc undo", error),
+            }
+        }
+        VaultGcAction::Purge {
+            gc_id,
+            confirmation,
+        } => {
+            let gc_id = match GcId::new(gc_id) {
+                Ok(gc_id) => gc_id,
+                Err(_) => return usage_error("gc purge", "invalid GC ID"),
+            };
+            let manifest = match read_gc_trash_manifest(vault, &gc_id) {
+                Ok(manifest) => manifest,
+                Err(error) => return maintenance_error("gc purge", error),
+            };
+            if confirmation != minimax_vault::gc_purge_confirmation(&manifest) {
+                return maintenance_error(
+                    "gc purge",
+                    minimax_vault::VaultError::InvalidConfirmation,
+                );
+            }
+            match purge_gc_plan(vault, &gc_id, &confirmation, now) {
+                Ok(receipt) => render_maintenance(
+                    jsonl,
+                    &receipt,
+                    format!(
+                        "gc purged | id={} | objects={}",
+                        gc_id.as_str(),
+                        receipt.object_count
+                    ),
+                ),
+                Err(error) => maintenance_error("gc purge", error),
+            }
+        }
+    }
+}
+
+fn execute_vault_forget(
+    vault: &ProjectVault,
+    action: VaultForgetAction,
+    jsonl: bool,
+    now: u64,
+) -> ExitClass {
+    match action {
+        VaultForgetAction::Plan {
+            evidence_id,
+            expected_hash,
+        } => {
+            let evidence_id = match EvidenceId::new(evidence_id) {
+                Ok(value) => value,
+                Err(_) => return usage_error("forget plan", "invalid evidence ID"),
+            };
+            let expected_hash = match ContentHash::new(expected_hash) {
+                Ok(value) => value,
+                Err(_) => return usage_error("forget plan", "invalid evidence hash"),
+            };
+            match plan_forget(vault, evidence_id, expected_hash, now) {
+                Ok(plan) => {
+                    let output = ForgetPlanOutput {
+                        confirmation: forget_confirmation(&plan),
+                        plan,
+                    };
+                    let text = EventRenderer::forget_plan(&output.plan, &output.confirmation);
+                    render_maintenance(jsonl, &output, text)
+                }
+                Err(error) => maintenance_error("forget plan", error),
+            }
+        }
+        VaultForgetAction::Apply {
+            plan,
+            patch,
+            confirmation,
+        } => {
+            let output = match read_json::<ForgetPlanOutput>(&plan) {
+                Ok(output) => output,
+                Err(exit) => return exit,
+            };
+            let patch = match read_json::<KnowledgePatch>(&patch) {
+                Ok(patch) => patch,
+                Err(exit) => return exit,
+            };
+            match apply_forget_plan(vault, &output.plan, &patch, &confirmation, now) {
+                Ok(receipt) => render_maintenance(
+                    jsonl,
+                    &receipt,
+                    format!(
+                        "evidence forgotten | plan={} | code={} | tombstone={}",
+                        receipt.forget_id.as_str(),
+                        receipt.code,
+                        receipt.tombstone_relative_path
+                    ),
+                ),
+                Err(error) => maintenance_error("forget apply", error),
+            }
+        }
+    }
+}
+
+fn render_maintenance<T: serde::Serialize>(jsonl: bool, value: &T, text: String) -> ExitClass {
+    if jsonl {
+        let mut writer = JsonlWriter::new(io::stdout().lock());
+        if writer.write_json(value).is_err() {
+            eprintln!("vault failed: output stream is unavailable");
+            return ExitClass::Workspace;
+        }
+    } else {
+        println!("{text}");
+    }
+    ExitClass::Completed
+}
+
+fn read_json<T: serde::de::DeserializeOwned>(path: &Path) -> Result<T, ExitClass> {
+    let bytes = std::fs::read(path).map_err(|_| {
+        eprintln!("vault failed: cannot read {}", path.display());
+        ExitClass::Usage
+    })?;
+    serde_json::from_slice(&bytes).map_err(|_| {
+        eprintln!("vault failed: invalid JSON in {}", path.display());
+        ExitClass::Usage
+    })
+}
+
+fn maintenance_error(operation: &str, error: minimax_vault::VaultError) -> ExitClass {
+    eprintln!("{operation} failed: {error}");
+    if error == minimax_vault::VaultError::InvalidConfirmation {
+        ExitClass::Usage
+    } else {
+        ExitClass::Workspace
+    }
+}
+
+fn usage_error(operation: &str, message: &str) -> ExitClass {
+    eprintln!("{operation} failed: {message}");
+    ExitClass::Usage
+}
+
+fn unix_time_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()
+        .and_then(|duration| u64::try_from(duration.as_millis()).ok())
+        .unwrap_or_default()
 }
 
 async fn execute_run(args: RunArgs) -> ExitClass {
@@ -330,6 +625,9 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
                     CommandIntent::RetryInitialization => {
                         println!("configuration and runtime initialization are already valid");
                     }
+                    CommandIntent::Vault(command) => println!(
+                        "vault maintenance is process-isolated; run the top-level command: minimax-codex-rust vault --project <project> --vault <vault> --project-id <id> {command}"
+                    ),
                     CommandIntent::Interrupt => println!(
                         "press Ctrl-C during a turn to persist an interrupted terminal outcome"
                     ),

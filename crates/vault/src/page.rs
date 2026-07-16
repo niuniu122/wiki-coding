@@ -101,6 +101,31 @@ pub fn parse_wiki_page(relative_path: &str, bytes: &[u8]) -> Result<KnowledgePag
     Ok(page)
 }
 
+pub fn read_wiki_pages(
+    vault: &crate::ProjectVault,
+) -> Result<BTreeMap<String, KnowledgePage>, VaultError> {
+    let mut files = Vec::new();
+    collect_files(&vault.root().join("wiki"), &mut files)?;
+    files.sort();
+    let mut pages = BTreeMap::new();
+    for file in files {
+        if file == vault.root().join("wiki/index.md") {
+            continue;
+        }
+        let relative = file
+            .strip_prefix(vault.root())
+            .map_err(|_| VaultError::InvalidPath)?
+            .to_string_lossy()
+            .replace('\\', "/");
+        let page = parse_wiki_page(
+            &relative,
+            &std::fs::read(&file).map_err(|_| VaultError::Io)?,
+        )?;
+        pages.insert(relative, page);
+    }
+    Ok(pages)
+}
+
 #[must_use]
 pub fn normalize_wiki_slug(value: &str) -> String {
     let mut slug = String::new();
@@ -132,6 +157,25 @@ fn validate_slug_path(relative_path: &str) -> Result<(), VaultError> {
         .ok_or(VaultError::InvalidPage)?;
     if stem == "index" || normalize_wiki_slug(stem) != stem {
         return Err(VaultError::InvalidPage);
+    }
+    Ok(())
+}
+
+fn collect_files(directory: &Path, files: &mut Vec<std::path::PathBuf>) -> Result<(), VaultError> {
+    let mut entries = std::fs::read_dir(directory)
+        .map_err(|_| VaultError::Io)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| VaultError::Io)?;
+    entries.sort_by_key(std::fs::DirEntry::file_name);
+    for entry in entries {
+        let kind = entry.file_type().map_err(|_| VaultError::Io)?;
+        if kind.is_dir() {
+            collect_files(&entry.path(), files)?;
+        } else if kind.is_file()
+            && entry.path().extension().and_then(|value| value.to_str()) == Some("md")
+        {
+            files.push(entry.path());
+        }
     }
     Ok(())
 }

@@ -13,6 +13,7 @@ pub enum BaselineError {
     PackageParse,
     ProductEntry,
     ToolEvidence(String),
+    VaultEvidence,
 }
 
 impl fmt::Display for BaselineError {
@@ -30,8 +31,51 @@ impl fmt::Display for BaselineError {
             Self::ToolEvidence(requirement) => {
                 write!(formatter, "Rust tool evidence is incomplete: {requirement}")
             }
+            Self::VaultEvidence => formatter.write_str("Rust Vault evidence is incomplete"),
         }
     }
+}
+
+pub fn validate_rust_vault_evidence(root: &Path) -> Result<(), BaselineError> {
+    let raw = std::fs::read_to_string(root.join("fixtures/compat/vault/maintenance.v1.json"))
+        .map_err(|_| BaselineError::VaultEvidence)?;
+    let fixture: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|_| BaselineError::VaultEvidence)?;
+    let cases = fixture
+        .get("cases")
+        .and_then(serde_json::Value::as_array)
+        .ok_or(BaselineError::VaultEvidence)?;
+    if fixture
+        .get("schemaVersion")
+        .and_then(serde_json::Value::as_u64)
+        != Some(1)
+        || fixture.get("database").and_then(serde_json::Value::as_bool) != Some(false)
+        || fixture
+            .get("liveProvider")
+            .and_then(serde_json::Value::as_bool)
+            != Some(false)
+        || fixture
+            .get("productEntry")
+            .and_then(serde_json::Value::as_str)
+            != Some("dist/cli.js")
+        || cases.len() != 8
+        || cases
+            .iter()
+            .any(|case| case.get("id").and_then(serde_json::Value::as_str).is_none())
+    {
+        return Err(BaselineError::VaultEvidence);
+    }
+    for path in [
+        "crates/vault/tests/maintenance.rs",
+        "crates/vault/tests/retention.rs",
+        "crates/cli/tests/vault_commands.rs",
+        "fixtures/compat/wiki/main-model-workflow.v1.json",
+    ] {
+        if !root.join(path).is_file() {
+            return Err(BaselineError::VaultEvidence);
+        }
+    }
+    Ok(())
 }
 
 pub fn validate_rust_tool_evidence(

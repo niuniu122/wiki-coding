@@ -24,6 +24,7 @@ pub enum CommandIntent {
     Permissions(Option<PermissionName>),
     ToggleTrace,
     RetryInitialization,
+    Vault(String),
     Exit,
 }
 
@@ -61,6 +62,7 @@ impl CommandIntent {
             Self::Permissions(_) => "/permissions",
             Self::ToggleTrace => "/trace",
             Self::RetryInitialization => "/retry",
+            Self::Vault(_) => "/vault",
             Self::Exit => "/exit",
         }
     }
@@ -79,6 +81,7 @@ pub enum CommandParseError {
     UnexpectedArgument(&'static str),
     InvalidPermissionMode,
     InvalidCapabilitiesSyntax,
+    InvalidVaultSyntax,
     UnknownCommand,
 }
 
@@ -96,6 +99,9 @@ impl fmt::Display for CommandParseError {
             Self::InvalidCapabilitiesSyntax => {
                 formatter.write_str("use /capabilities or /capabilities search <query>")
             }
+            Self::InvalidVaultSyntax => formatter.write_str(
+                "use /vault status|lint|repair|rebuild|import|gc|forget followed by its arguments",
+            ),
             Self::UnknownCommand => formatter.write_str("unknown slash command"),
         }
     }
@@ -134,10 +140,27 @@ pub fn parse_input(raw: &str) -> Result<ParsedInput, CommandParseError> {
         "/permissions" => CommandIntent::Permissions(parse_permission(argument)?),
         "/trace" => CommandIntent::ToggleTrace.no_argument(argument)?,
         "/retry" => CommandIntent::RetryInitialization.no_argument(argument)?,
+        "/vault" => CommandIntent::Vault(parse_vault(argument)?),
         "/exit" | "/quit" => CommandIntent::Exit.no_argument(argument)?,
         _ => return Err(CommandParseError::UnknownCommand),
     };
     Ok(ParsedInput::Command(intent))
+}
+
+fn parse_vault(argument: Option<&str>) -> Result<String, CommandParseError> {
+    let value = argument.ok_or(CommandParseError::InvalidVaultSyntax)?;
+    let action = value
+        .split_whitespace()
+        .next()
+        .ok_or(CommandParseError::InvalidVaultSyntax)?;
+    if matches!(
+        action,
+        "bootstrap" | "status" | "lint" | "repair" | "rebuild" | "import" | "gc" | "forget"
+    ) {
+        Ok(value.to_owned())
+    } else {
+        Err(CommandParseError::InvalidVaultSyntax)
+    }
 }
 
 impl CommandIntent {

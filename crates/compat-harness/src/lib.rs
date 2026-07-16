@@ -10,12 +10,13 @@ pub mod report;
 
 pub use architecture::{
     ArchitectureError, ArchitectureGraph, ArchitecturePackage, load_cargo_architecture,
-    validate_architecture, validate_core_source_boundary, validate_core_source_directory,
-    validate_core_source_text,
+    validate_architecture, validate_cli_tui_markdown_boundary, validate_core_source_boundary,
+    validate_core_source_directory, validate_core_source_text, validate_ui_source_text,
+    validate_vault_source_boundary, validate_vault_source_text,
 };
 pub use baseline::{
     BaselineError, validate_product_entry, validate_rust_command_surface,
-    validate_rust_tool_evidence,
+    validate_rust_tool_evidence, validate_rust_vault_evidence,
 };
 pub use manifest::{
     BaselineStatus, CommandManifest, CompatManifests, ManifestError, ParityStatus,

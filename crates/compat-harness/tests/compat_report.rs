@@ -4,9 +4,11 @@ use std::fs;
 use minimax_compat_harness::{
     ArchitectureError, ArchitectureGraph, ArchitecturePackage, ManifestError, ParityStatus,
     build_report, load_cargo_architecture, load_compat_manifests, report_json, repository_root,
-    validate_architecture, validate_core_source_boundary, validate_core_source_directory,
-    validate_core_source_text, validate_product_entry, validate_report,
-    validate_rust_command_surface, validate_rust_tool_evidence,
+    validate_architecture, validate_cli_tui_markdown_boundary, validate_core_source_boundary,
+    validate_core_source_directory, validate_core_source_text, validate_product_entry,
+    validate_report, validate_rust_command_surface, validate_rust_tool_evidence,
+    validate_rust_vault_evidence, validate_ui_source_text, validate_vault_source_boundary,
+    validate_vault_source_text,
 };
 
 #[test]
@@ -81,6 +83,7 @@ fn rust_command_permission_and_product_baselines_are_executable() {
     let manifests = load_compat_manifests(&root).expect("strict manifests");
     validate_rust_command_surface(&manifests.commands).expect("complete Rust command surface");
     validate_rust_tool_evidence(&root, &manifests.baseline).expect("executable Rust tool evidence");
+    validate_rust_vault_evidence(&root).expect("executable Rust Vault evidence");
     validate_product_entry(&root).expect("TypeScript npm product entry");
 }
 
@@ -111,6 +114,46 @@ fn architecture_real_cargo_metadata_passes() {
     let graph = load_cargo_architecture(&root).expect("locked Cargo metadata");
     validate_architecture(&graph).expect("valid workspace architecture");
     validate_core_source_boundary(&root).expect("abstract core source boundary");
+    validate_vault_source_boundary(&root).expect("Provider-free Vault source boundary");
+    validate_cli_tui_markdown_boundary(&root).expect("Vault-owned Markdown parsing");
+}
+
+#[test]
+fn architecture_rejects_vault_provider_http_and_database_edges() {
+    for dependency in ["minimax-provider", "reqwest"] {
+        let graph = synthetic_graph(&[("minimax-vault", &[dependency])]);
+        assert_eq!(
+            validate_architecture(&graph),
+            Err(ArchitectureError::Violation(format!(
+                "vault dependency denied: minimax-vault -> {dependency}"
+            )))
+        );
+    }
+    let graph = synthetic_graph(&[("minimax-vault", &["rusqlite"])]);
+    assert_eq!(
+        validate_architecture(&graph),
+        Err(ArchitectureError::Violation(
+            "database dependency denied: rusqlite".to_owned()
+        ))
+    );
+    for source in [
+        "use minimax_provider::ProviderPort;",
+        "use reqwest::Client;",
+        "use rusqlite::Connection;",
+    ] {
+        assert!(validate_vault_source_text("bad.rs", source).is_err());
+    }
+}
+
+#[test]
+fn architecture_rejects_cli_or_tui_markdown_parsing() {
+    for source in [
+        "minimax_vault::parse_wiki_page(path, bytes);",
+        "let parser = pulldown_cmark::Parser::new(text);",
+        "let parts = text.split_once(\"\\n---\\n\");",
+    ] {
+        assert!(validate_ui_source_text("bad.rs", source).is_err());
+    }
 }
 
 #[test]

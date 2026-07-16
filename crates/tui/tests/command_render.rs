@@ -34,6 +34,8 @@ fn parser_covers_every_manifest_command_alias_and_argument_shape() {
         ("/permissions full-access", "/permissions"),
         ("/trace", "/trace"),
         ("/retry", "/retry"),
+        ("/vault status", "/vault"),
+        ("/vault gc report", "/vault"),
         ("/exit", "/exit"),
         ("/quit", "/exit"),
     ];
@@ -60,6 +62,8 @@ fn parser_rejects_unknown_arguments_and_any_third_permission_mode() {
         "/capabilities search",
         "/permissions workspace-read",
         "/permissions full_access",
+        "/vault",
+        "/vault destroy",
         "/unknown",
     ] {
         assert!(parse_input(input).is_err(), "must reject: {input}");

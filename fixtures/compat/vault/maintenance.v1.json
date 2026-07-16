@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "authority": "project_local_obsidian_vault",
+  "database": false,
+  "cases": [
+    {"id": "lint_read_only", "mutation": false, "stableCodes": true},
+    {"id": "repair_allowlist", "journalTail": true, "preparedRollForward": true},
+    {"id": "rebuild_raw_preserved", "providerCalls": 0, "rawMutation": false},
+    {"id": "gc_report", "mutation": false, "protectedRaw": true},
+    {"id": "gc_apply_drift", "outcome": "rejected"},
+    {"id": "gc_undo_at_expiry", "outcome": "restored"},
+    {"id": "gc_purge_reconfirmed", "force": false},
+    {"id": "forget_wiki_first", "rawDeletionAfterWiki": true, "nonSecretTombstone": true}
+  ],
+  "liveProvider": false,
+  "productEntry": "dist/cli.js"
+}
