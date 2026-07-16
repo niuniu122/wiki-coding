@@ -123,12 +123,12 @@ Plans:
   4. Normal retrieval sees one current truth while raw sources and supersession remain auditable.
   5. GC never auto-deletes raw, protects reachable evidence, supports 7-day undo, and keeps privacy deletion separate.
 
-**Plans**: 1/3 plans executed
+**Plans**: 2/3 plans executed
 
 Plans:
 
 - [x] 04-01-PLAN.md
-- [ ] 04-02-PLAN.md
+- [x] 04-02-PLAN.md
 - [ ] 04-03-PLAN.md
 
 **Wave 1**
@@ -191,6 +191,6 @@ Plans:
 | 1. Contract Foundation | 4/4 | Complete    | 2026-07-15 |
 | 2. Usable Rust Agent Shell | 3/3 | Complete   | 2026-07-15 |
 | 3. Safe Tool Completion | 2/2 | Complete | 2026-07-15 |
-| 4. Vault and Main-Model Wiki | 1/3 | In Progress|  |
+| 4. Vault and Main-Model Wiki | 2/3 | In Progress|  |
 | 5. Retrieval and Project Discovery | 0/3 | Not started | - |
 | 6. Migration, Release, and Cutover | 0/3 | Not started | - |
