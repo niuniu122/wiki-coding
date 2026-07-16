@@ -9,10 +9,11 @@ use minimax_cli::{
     ForgetPlanOutput, GcPlanOutput, HeadlessApprovalPort, HttpProviderPort, IndexAction, IndexArgs,
     InteractiveApprovalPort, JsonlWriter, MigrateAction, MigrateArgs, ProjectIndexAction, RunArgs,
     RuntimeDriver, VaultAction, VaultArgs, VaultForgetAction, VaultGcAction, VaultStatusOutput,
-    WikiIndexAction, WikiRunReport, apply_migration, build_migration_plan, capability_search,
-    capability_status, exit_for_error, exit_for_report, finalize_active_session_wiki, inspect,
-    inventory_migration, project_search, project_status, resolve_project_vault, rollback_migration,
-    verify_migration, wiki_search, wiki_status,
+    WikiIndexAction, WikiRunReport, apply_migration, augment_agent_prompt, build_migration_plan,
+    capability_search, capability_status, exit_for_error, exit_for_report,
+    finalize_active_session_wiki, inspect, inventory_migration, is_project_discovery_intent,
+    project_search, project_status, resolve_project_vault, rollback_migration, verify_migration,
+    wiki_search, wiki_status,
 };
 use minimax_core::{CompactionBudget, PermissionMode, WikiGenerationPort};
 use minimax_protocol::{
@@ -120,7 +121,7 @@ async fn execute_index(args: IndexArgs) -> ExitClass {
             ProjectIndexAction::Status {
                 catalog,
                 embedding_resource,
-            } => match project_status(&catalog, embedding_resource.as_deref()) {
+            } => match project_status(catalog.as_deref(), embedding_resource.as_deref()) {
                 Ok(status) => render_index_status(args.jsonl, status),
                 Err(error) => index_error(error),
             },
@@ -129,7 +130,13 @@ async fn execute_index(args: IndexArgs) -> ExitClass {
                 catalog,
                 embedding_resource,
                 limit,
-            } => match project_search(&catalog, embedding_resource.as_deref(), &query, limit).await
+            } => match project_search(
+                catalog.as_deref(),
+                embedding_resource.as_deref(),
+                &query,
+                limit,
+            )
+            .await
             {
                 Ok(response) => render_index_search(args.jsonl, response),
                 Err(error) => index_error(error),
@@ -611,6 +618,19 @@ async fn execute_run(args: RunArgs) -> ExitClass {
     if args.agent {
         driver.set_permission_mode(args.permission.into());
     }
+    let prompt = if args.agent {
+        match augment_agent_prompt(None, args.common.embedding_resource.as_deref(), args.prompt)
+            .await
+        {
+            Ok(prompt) => prompt,
+            Err(error) => {
+                eprintln!("project discovery failed: {error}");
+                return ExitClass::Workspace;
+            }
+        }
+    } else {
+        args.prompt
+    };
     let report = if args.jsonl {
         let mut writer = JsonlWriter::new(io::stdout().lock());
         let mut output_failed = false;
@@ -620,16 +640,10 @@ async fn execute_run(args: RunArgs) -> ExitClass {
             }
         };
         let report = if args.agent {
-            run_agent_with_shutdown_with(
-                &mut driver,
-                args.prompt,
-                config.max_output_tokens,
-                publish,
-            )
-            .await
-        } else {
-            run_with_shutdown_with(&mut driver, args.prompt, config.max_output_tokens, publish)
+            run_agent_with_shutdown_with(&mut driver, prompt, config.max_output_tokens, publish)
                 .await
+        } else {
+            run_with_shutdown_with(&mut driver, prompt, config.max_output_tokens, publish).await
         };
         if output_failed {
             eprintln!("run failed: output stream is unavailable");
@@ -638,20 +652,14 @@ async fn execute_run(args: RunArgs) -> ExitClass {
         report
     } else {
         let report = if args.agent {
-            run_agent_with_shutdown_with(
-                &mut driver,
-                args.prompt,
-                config.max_output_tokens,
-                |event| println!("{}", EventRenderer::event(event)),
-            )
+            run_agent_with_shutdown_with(&mut driver, prompt, config.max_output_tokens, |event| {
+                println!("{}", EventRenderer::event(event))
+            })
             .await
         } else {
-            run_with_shutdown_with(
-                &mut driver,
-                args.prompt,
-                config.max_output_tokens,
-                |event| println!("{}", EventRenderer::event(event)),
-            )
+            run_with_shutdown_with(&mut driver, prompt, config.max_output_tokens, |event| {
+                println!("{}", EventRenderer::event(event))
+            })
             .await
         };
         if let Ok(report) = &report {
@@ -788,6 +796,19 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
                         }
                     }
                     CommandIntent::AgentSubmit(prompt) => {
+                        let prompt = match augment_agent_prompt(
+                            None,
+                            args.common.embedding_resource.as_deref(),
+                            prompt,
+                        )
+                        .await
+                        {
+                            Ok(prompt) => prompt,
+                            Err(error) => {
+                                eprintln!("project discovery failed: {error}");
+                                continue;
+                            }
+                        };
                         let exit =
                             render_agent_turn(&mut driver, prompt, config.max_output_tokens).await;
                         if exit != ExitClass::Completed {
@@ -795,13 +816,11 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
                         }
                     }
                     CommandIntent::AgentContinue => {
-                        let exit = render_agent_turn(
-                            &mut driver,
+                        let prompt =
                             "Continue the previous agent task from the durable session context."
-                                .to_owned(),
-                            config.max_output_tokens,
-                        )
-                        .await;
+                                .to_owned();
+                        let exit =
+                            render_agent_turn(&mut driver, prompt, config.max_output_tokens).await;
                         if exit != ExitClass::Completed {
                             return exit;
                         }
@@ -904,7 +923,21 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
                         "credential setup uses the configured environment key or OS keyring; plaintext files are disabled"
                     ),
                     CommandIntent::RetryInitialization => {
-                        println!("configuration and runtime initialization are already valid");
+                        if let Some(turn_id) = driver.latest_retryable_turn_id() {
+                            match driver.retry_turn(turn_id, config.max_output_tokens).await {
+                                Ok(report) => {
+                                    for event in &report.events {
+                                        println!("{}", EventRenderer::event(event));
+                                    }
+                                    render_tool_results(&report);
+                                }
+                                Err(error) => eprintln!("retry failed: {error}"),
+                            }
+                        } else {
+                            println!(
+                                "configuration and runtime initialization are valid; no terminal turn is available to retry"
+                            );
+                        }
                     }
                     CommandIntent::Vault(command) => println!(
                         "vault maintenance is process-isolated; run the top-level command: minimax-codex-rust vault --project <project> --vault <vault> --project-id <id> {command}"
@@ -913,10 +946,27 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
                         "press Ctrl-C during a turn to persist an interrupted terminal outcome"
                     ),
                     CommandIntent::Capabilities(query) => match query {
-                        Some(query) => println!(
-                            "{}",
-                            EventRenderer::retrieval(&capability_search(&query, 5))
-                        ),
+                        Some(query) => {
+                            println!(
+                                "{}",
+                                EventRenderer::retrieval(&capability_search(&query, 5))
+                            );
+                            if is_project_discovery_intent(&query) {
+                                match project_search(
+                                    None,
+                                    args.common.embedding_resource.as_deref(),
+                                    &query,
+                                    5,
+                                )
+                                .await
+                                {
+                                    Ok(response) => {
+                                        println!("{}", EventRenderer::retrieval(&response));
+                                    }
+                                    Err(error) => eprintln!("project discovery failed: {error}"),
+                                }
+                            }
+                        }
                         None => println!("{}", EventRenderer::index_status(&capability_status())),
                     },
                 }

@@ -17,8 +17,8 @@ pub use driver::{
 };
 pub use headless::{ExitClass, JsonlWriter, exit_for_error, exit_for_report};
 pub use index::{
-    IndexError, capability_search, capability_status, project_search, project_status, wiki_search,
-    wiki_status,
+    IndexError, augment_agent_prompt, capability_search, capability_status,
+    is_project_discovery_intent, project_search, project_status, wiki_search, wiki_status,
 };
 pub use maintenance::{ForgetPlanOutput, GcPlanOutput, VaultStatusOutput};
 pub use migration::{

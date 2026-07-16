@@ -93,6 +93,7 @@ async fn conversation_reconstructs_then_lists_resumes_continues_retries_and_comp
             .await
             .expect("first turn");
         first_turn = report.receipt.turn_id.clone();
+        assert_eq!(driver.latest_retryable_turn_id(), Some(first_turn.clone()));
         assert_eq!(exit_for_report(&report), ExitClass::Completed);
         assert_eq!(driver.list_sessions().expect("list").len(), 1);
 

@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "differences": [
+    {
+      "command": "/interrupt",
+      "lockedOutcome": "turn.interrupt",
+      "rustBehavior": "Ctrl-C interrupts an active turn; the slash command reports that binding when the input loop is idle.",
+      "reason": "The single foreground terminal cannot read a slash command while the Provider turn owns the input loop.",
+      "safety": "The cancellation token still persists one interrupted terminal receipt."
+    },
+    {
+      "command": "/api",
+      "lockedOutcome": "config.api_key.request",
+      "rustBehavior": "Reports the environment or OS-keyring credential boundary without accepting plaintext into the session.",
+      "reason": "The Rust credential contract forbids plaintext configuration and headless keyring access.",
+      "safety": "No credential value is printed, persisted, or sent to the model."
+    },
+    {
+      "command": "/provider",
+      "lockedOutcome": "provider.list_or_switch",
+      "rustBehavior": "Lists the pinned provider; switching requires a validated new process/session binding.",
+      "reason": "Changing the Provider inside a durable session would mix model identity and recovery evidence.",
+      "safety": "Existing sessions retain their exact Provider, model, and protocol binding."
+    },
+    {
+      "command": "/models",
+      "lockedOutcome": "model.list",
+      "rustBehavior": "Lists the configured local model binding only.",
+      "reason": "Remote model enumeration would add an unbounded network call to an otherwise local command.",
+      "safety": "No Provider request or credential read is needed to inspect the selected model."
+    },
+    {
+      "command": "/retry",
+      "lockedOutcome": "runtime.init.retry",
+      "rustBehavior": "Retries initialization when unavailable; after healthy startup it retries the latest terminal turn.",
+      "reason": "This preserves initialization recovery and makes the required durable turn retry reachable.",
+      "safety": "Unknown side effects are never replayed; recovered started tools remain indeterminate."
+    }
+  ]
+}

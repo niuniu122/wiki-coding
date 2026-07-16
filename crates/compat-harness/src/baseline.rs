@@ -93,6 +93,7 @@ pub fn validate_rust_retrieval_evidence(root: &Path) -> Result<(), BaselineError
         "crates/retrieval/tests/embedding_resource.rs",
         "crates/retrieval/tests/benchmark.rs",
         "crates/cli/tests/index_commands.rs",
+        "crates/cli/tests/discovery_commands.rs",
     ] {
         if !root.join(path).is_file() {
             return Err(BaselineError::RetrievalEvidence);
@@ -375,11 +376,29 @@ struct ReleaseThresholds {
     wiki_bm25_p95_ms: f64,
 }
 
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CommandDifferenceFixture {
+    schema_version: u16,
+    differences: Vec<CommandDifference>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct CommandDifference {
+    command: String,
+    locked_outcome: String,
+    rust_behavior: String,
+    reason: String,
+    safety: String,
+}
+
 pub fn validate_cutover_evidence(
     root: &Path,
     baseline: &BaselineStatus,
 ) -> Result<(), BaselineError> {
     validate_hosted_release_gate(root)?;
+    validate_command_behavior_evidence(root)?;
     if baseline
         .items
         .iter()
@@ -404,6 +423,36 @@ pub fn validate_cutover_evidence(
         {
             return Err(BaselineError::CutoverEvidence);
         }
+    }
+    Ok(())
+}
+
+fn validate_command_behavior_evidence(root: &Path) -> Result<(), BaselineError> {
+    let raw = std::fs::read_to_string(root.join("fixtures/compat/command-differences.v1.json"))
+        .map_err(|_| BaselineError::CutoverEvidence)?;
+    let fixture: CommandDifferenceFixture =
+        serde_json::from_str(&raw).map_err(|_| BaselineError::CutoverEvidence)?;
+    let expected = ["/api", "/interrupt", "/models", "/provider", "/retry"];
+    let mut actual = fixture
+        .differences
+        .iter()
+        .map(|difference| difference.command.as_str())
+        .collect::<Vec<_>>();
+    actual.sort_unstable();
+    if fixture.schema_version != 1
+        || actual != expected
+        || fixture.differences.iter().any(|difference| {
+            difference.locked_outcome.trim().is_empty()
+                || difference.rust_behavior.len() < 24
+                || difference.reason.len() < 24
+                || difference.safety.len() < 24
+        })
+        || !root
+            .join("crates/cli/tests/discovery_commands.rs")
+            .is_file()
+        || !root.join("crates/cli/tests/restart.rs").is_file()
+    {
+        return Err(BaselineError::CutoverEvidence);
     }
     Ok(())
 }

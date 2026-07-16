@@ -556,6 +556,16 @@ impl<P: ProviderPort> RuntimeDriver<P> {
         self.store.machine().sessions().get(session_id).cloned()
     }
 
+    #[must_use]
+    pub fn latest_retryable_turn_id(&self) -> Option<TurnId> {
+        self.store
+            .machine()
+            .active_session()
+            .and_then(|session| session.turns.last())
+            .filter(|turn| turn.status.is_terminal())
+            .map(|turn| turn.turn_id.clone())
+    }
+
     pub fn finalize_active_session(
         &self,
         vault: &ProjectVault,

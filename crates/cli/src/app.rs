@@ -107,14 +107,14 @@ pub enum CapabilityIndexAction {
 pub enum ProjectIndexAction {
     Status {
         #[arg(long)]
-        catalog: PathBuf,
+        catalog: Option<PathBuf>,
         #[arg(long)]
         embedding_resource: Option<PathBuf>,
     },
     Search {
         query: String,
         #[arg(long)]
-        catalog: PathBuf,
+        catalog: Option<PathBuf>,
         #[arg(long)]
         embedding_resource: Option<PathBuf>,
         #[arg(long, default_value_t = 5)]

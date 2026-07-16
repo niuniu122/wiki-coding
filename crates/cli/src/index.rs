@@ -94,7 +94,7 @@ pub fn capability_search(query: &str, limit: usize) -> RetrievalResponse {
 }
 
 pub fn project_status(
-    catalog_path: &Path,
+    catalog_path: Option<&Path>,
     embedding_resource: Option<&Path>,
 ) -> Result<IndexStatusRecord, IndexError> {
     let catalog = load_catalog(catalog_path)?;
@@ -111,7 +111,7 @@ pub fn project_status(
 }
 
 pub async fn project_search(
-    catalog_path: &Path,
+    catalog_path: Option<&Path>,
     embedding_resource: Option<&Path>,
     query: &str,
     limit: usize,
@@ -252,9 +252,50 @@ pub fn wiki_search(
     })
 }
 
-fn load_catalog(path: &Path) -> Result<ProjectCatalog, IndexError> {
-    let bytes = std::fs::read(path).map_err(|_| IndexError::Read)?;
-    ProjectCatalog::from_slice(&bytes).map_err(IndexError::Catalog)
+pub async fn augment_agent_prompt(
+    catalog_path: Option<&Path>,
+    embedding_resource: Option<&Path>,
+    prompt: String,
+) -> Result<String, IndexError> {
+    if !is_project_discovery_intent(&prompt) {
+        return Ok(prompt);
+    }
+    let response = project_search(catalog_path, embedding_resource, &prompt, 5).await?;
+    let evidence = serde_json::to_string(&response).map_err(|_| IndexError::Read)?;
+    Ok(format!(
+        "{prompt}\n\n[local_project_discovery schema=1 read_only=true]\n{evidence}\n[/local_project_discovery]\nUse this BM25-first local evidence only when it helps. Do not install or run a project automatically."
+    ))
+}
+
+#[must_use]
+pub fn is_project_discovery_intent(prompt: &str) -> bool {
+    let lower = prompt.to_lowercase();
+    [
+        "开源",
+        "项目",
+        "工具",
+        "open source",
+        "project",
+        "repository",
+        "repo",
+        "cli tool",
+        "command line tool",
+    ]
+    .iter()
+    .any(|marker| lower.contains(marker))
+}
+
+fn load_catalog(path: Option<&Path>) -> Result<ProjectCatalog, IndexError> {
+    match path {
+        Some(path) => {
+            let bytes = std::fs::read(path).map_err(|_| IndexError::Read)?;
+            ProjectCatalog::from_slice(&bytes).map_err(IndexError::Catalog)
+        }
+        None => ProjectCatalog::from_slice(include_bytes!(
+            "../../../fixtures/compat/retrieval/projects.v1.json"
+        ))
+        .map_err(IndexError::Catalog),
+    }
 }
 
 fn embedding_status(

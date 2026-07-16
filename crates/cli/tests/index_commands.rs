@@ -53,8 +53,7 @@ fn clap_exposes_explicit_read_only_status_and_search_routes() {
         assert!(Cli::try_parse_from(arguments).is_ok());
     }
     assert!(
-        Cli::try_parse_from(["minimax-codex-rust", "index", "projects", "search", "query"])
-            .is_err()
+        Cli::try_parse_from(["minimax-codex-rust", "index", "projects", "search", "query"]).is_ok()
     );
     assert!(
         Cli::try_parse_from([
@@ -87,6 +86,16 @@ fn clap_exposes_explicit_read_only_status_and_search_routes() {
                 action: ProjectIndexAction::Search { .. }
             })
     ));
+    assert!(
+        Cli::try_parse_from([
+            "minimax-codex-rust",
+            "index",
+            "projects",
+            "search",
+            "find an open source CLI tool",
+        ])
+        .is_ok()
+    );
     assert!(matches!(
         Cli::try_parse_from(["minimax-codex-rust", "index", "capabilities", "status"])
             .expect("capability status")
@@ -119,7 +128,8 @@ async fn capability_and_project_text_jsonl_contain_the_same_truthful_facts() {
     assert!(capability_text.contains("domain=capability"));
     assert_eq!(capability_status().documents, 6);
 
-    let project = project_search(&fixture_catalog(), None, "fast command line file search", 5)
+    let catalog = fixture_catalog();
+    let project = project_search(Some(&catalog), None, "fast command line file search", 5)
         .await
         .expect("project search");
     assert_eq!(project.mode, RetrievalMode::Bm25);
@@ -147,7 +157,7 @@ async fn capability_and_project_text_jsonl_contain_the_same_truthful_facts() {
     let decoded: RetrievalResponse = serde_json::from_str(encoded.trim()).expect("strict response");
     assert_eq!(decoded, project);
 
-    let status = project_status(&fixture_catalog(), None).expect("status");
+    let status = project_status(Some(&catalog), None).expect("status");
     assert_eq!(status.documents, 6);
     assert_eq!(
         status.degraded_reason,
