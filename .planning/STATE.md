@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: milestone
-current_phase: 6
-current_phase_name: Migration, Release, and Cutover
-status: verifying
-stopped_at: All 6 phases and 18 plans complete; milestone audit in progress
-last_updated: "2026-07-16T18:30:00Z"
+current_phase: 7
+current_phase_name: Close Milestone Integration Gaps
+status: executing
+stopped_at: Phase 7 closure planned from the v1.0 integration audit
+last_updated: "2026-07-16T19:20:00Z"
 last_activity: 2026-07-16
-last_activity_desc: Rust launcher cutover completed with final hosted Windows and Linux gates
+last_activity_desc: Milestone audit found six cross-phase blockers and created Phase 7 closure work
 progress:
-  total_phases: 6
+  total_phases: 7
   completed_phases: 6
-  total_plans: 18
+  total_plans: 22
   completed_plans: 18
-  percent: 100
+  percent: 82
 ---
 
 # Project State
@@ -24,16 +24,16 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-15)
 
 **Core value:** A non-programmer can safely find the right open-source capability or project and complete work in one recoverable local CLI.
-**Current focus:** Milestone v1.0 audit after completing all six phases
+**Current focus:** Phase 7 — Close Milestone Integration Gaps
 
 ## Current Position
 
-Phase: 6 (Migration, Release, and Cutover) — COMPLETE
-Plan: 06-03 of 3 complete
-Status: Verifying milestone
-Last activity: 2026-07-16 — Phase 6 cutover completed with final hosted Windows and Linux gates
+Phase: 7 (Close Milestone Integration Gaps) — EXECUTING
+Plan: 07-01 of 4
+Status: Closing audit blockers
+Last activity: 2026-07-16 — v1.0 integration audit created the closure phase
 
-Progress: [██████████] 100%
+Progress: [████████░░] 82%
 
 ## Performance Metrics
 
@@ -81,7 +81,14 @@ Progress: [██████████] 100%
 
 ### Pending Todos
 
-None outside the roadmap.
+- Wire the production session-to-Vault-to-Wiki chain.
+- Restore ordinary product access to BM25-first project discovery.
+- Produce and smoke-test one complete Rust-default-plus-legacy artifact.
+- Bind final hosted evidence to the exact product fingerprint.
+
+### Roadmap Evolution
+
+- Phase 7 added: Close milestone integration gaps found by the v1.0 audit.
 
 ### Blockers/Concerns
 
@@ -99,5 +106,5 @@ None outside the roadmap.
 ## Session Continuity
 
 Last session: 2026-07-15T15:18:45Z
-Stopped at: All phases complete; running milestone audit
+Stopped at: Phase 7 planned; implementing 07-01
 Resume file: .planning/ROADMAP.md
