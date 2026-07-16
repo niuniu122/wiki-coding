@@ -9,7 +9,7 @@ The milestone proceeds as six vertical, verifiable boundaries: freeze compatibil
 - [x] **Phase 1: Contract Foundation** - Compile the Rust workspace and prove typed protocol/parity contracts offline. (completed 2026-07-15)
 - [x] **Phase 2: Usable Rust Agent Shell** - Run, stream, resume, compact, diagnose, and operate through TUI or headless CLI. (completed 2026-07-15)
 - [x] **Phase 3: Safe Tool Completion** - Execute the v1 tool set under exactly two permission modes. (completed 2026-07-15)
-- [ ] **Phase 4: Vault and Main-Model Wiki** - Persist raw evidence and maintain recoverable Obsidian knowledge through the pinned main model.
+- [x] **Phase 4: Vault and Main-Model Wiki** - Persist raw evidence and maintain recoverable Obsidian knowledge through the pinned main model. (completed 2026-07-16)
 - [ ] **Phase 5: Retrieval and Project Discovery** - Serve three isolated indexes and preserve BM25-first project finding with truthful embedding.
 - [ ] **Phase 6: Migration, Release, and Cutover** - Import safely, meet release gates, and switch the default entry only after parity.
 
@@ -123,13 +123,13 @@ Plans:
   4. Normal retrieval sees one current truth while raw sources and supersession remain auditable.
   5. GC never auto-deletes raw, protects reachable evidence, supports 7-day undo, and keeps privacy deletion separate.
 
-**Plans**: 2/3 plans executed
+**Plans**: 3/3 plans complete
 
 Plans:
 
 - [x] 04-01-PLAN.md
 - [x] 04-02-PLAN.md
-- [ ] 04-03-PLAN.md
+- [x] 04-03-PLAN.md
 
 **Wave 1**
 
@@ -137,7 +137,7 @@ Plans:
 
 **Wave 2** *(blocked on Wave 1 completion)*
 
-- [ ] 04-02: Implement inbox, durability gate, MainModelWikiWorkflow, provenance, and supersession
+- [x] 04-02: Implement inbox, durability gate, MainModelWikiWorkflow, provenance, and supersession
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
@@ -191,6 +191,6 @@ Plans:
 | 1. Contract Foundation | 4/4 | Complete    | 2026-07-15 |
 | 2. Usable Rust Agent Shell | 3/3 | Complete   | 2026-07-15 |
 | 3. Safe Tool Completion | 2/2 | Complete | 2026-07-15 |
-| 4. Vault and Main-Model Wiki | 2/3 | In Progress|  |
+| 4. Vault and Main-Model Wiki | 3/3 | Complete   | 2026-07-16 |
 | 5. Retrieval and Project Discovery | 0/3 | Not started | - |
 | 6. Migration, Release, and Cutover | 0/3 | Not started | - |

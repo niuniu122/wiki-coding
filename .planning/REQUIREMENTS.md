@@ -44,19 +44,19 @@
 
 ### Vault
 
-- [ ] **VAULT-01**: First run lets the user select a per-project Vault, recommends a sibling path outside Git, and binds it with a stable project ID.
-- [ ] **VAULT-02**: Human-owned inbox and Agent-owned raw/wiki/internal directories have explicit ownership and fail closed on conflicting external edits.
-- [ ] **VAULT-03**: Raw sessions append recoverable events, finalize before knowledge work, and become immutable with stable hashes.
-- [ ] **VAULT-04**: Wiki file transactions use manifests, per-file atomic replace, expected hashes, and idempotent roll-forward recovery.
-- [ ] **VAULT-05**: Inbox import is content-addressed, provenance-preserving, idempotent, and safe for unsupported binary assets.
-- [ ] **VAULT-06**: GC only reports by default; referenced/pending/pinned evidence is protected, trash is reversible for 7 days, purge reconfirms, and privacy deletion uses `vault forget`.
+- [x] **VAULT-01**: First run lets the user select a per-project Vault, recommends a sibling path outside Git, and binds it with a stable project ID.
+- [x] **VAULT-02**: Human-owned inbox and Agent-owned raw/wiki/internal directories have explicit ownership and fail closed on conflicting external edits.
+- [x] **VAULT-03**: Raw sessions append recoverable events, finalize before knowledge work, and become immutable with stable hashes.
+- [x] **VAULT-04**: Wiki file transactions use manifests, per-file atomic replace, expected hashes, and idempotent roll-forward recovery.
+- [x] **VAULT-05**: Inbox import is content-addressed, provenance-preserving, idempotent, and safe for unsupported binary assets.
+- [x] **VAULT-06**: GC only reports by default; referenced/pending/pinned evidence is protected, trash is reversible for 7 days, purge reconfirms, and privacy deletion uses `vault forget`.
 
 ### Wiki
 
-- [ ] **WIKI-01**: Every terminal session receives a durable local durability evaluation and a no-op or pending receipt.
-- [ ] **WIKI-02**: A separate `MainModelWikiWorkflow` uses the session's pinned main model, reports separate usage, and produces only a structured KnowledgePatch.
-- [ ] **WIKI-03**: Core validates source IDs, size, ownership, operation, and expected hashes before the Vault writer applies a patch.
-- [ ] **WIKI-04**: Wiki exposes one current truth per topic, retains supersession provenance, supports lint/rebuild, and excludes superseded pages from normal retrieval.
+- [x] **WIKI-01**: Every terminal session receives a durable local durability evaluation and a no-op or pending receipt.
+- [x] **WIKI-02**: A separate `MainModelWikiWorkflow` uses the session's pinned main model, reports separate usage, and produces only a structured KnowledgePatch.
+- [x] **WIKI-03**: Core validates source IDs, size, ownership, operation, and expected hashes before the Vault writer applies a patch.
+- [x] **WIKI-04**: Wiki exposes one current truth per topic, retains supersession provenance, supports lint/rebuild, and excludes superseded pages from normal retrieval.
 
 ### Retrieval and Project Discovery
 
@@ -124,16 +124,16 @@
 | TOOL-03 | Phase 3 | Complete |
 | TOOL-04 | Phase 3 | Complete |
 | TOOL-05 | Phase 3 | Complete |
-| VAULT-01 | Phase 4 | Pending |
-| VAULT-02 | Phase 4 | Pending |
-| VAULT-03 | Phase 4 | Pending |
-| VAULT-04 | Phase 4 | Pending |
-| VAULT-05 | Phase 4 | Pending |
-| VAULT-06 | Phase 4 | Pending |
-| WIKI-01 | Phase 4 | Pending |
-| WIKI-02 | Phase 4 | Pending |
-| WIKI-03 | Phase 4 | Pending |
-| WIKI-04 | Phase 4 | Pending |
+| VAULT-01 | Phase 4 | Complete |
+| VAULT-02 | Phase 4 | Complete |
+| VAULT-03 | Phase 4 | Complete |
+| VAULT-04 | Phase 4 | Complete |
+| VAULT-05 | Phase 4 | Complete |
+| VAULT-06 | Phase 4 | Complete |
+| WIKI-01 | Phase 4 | Complete |
+| WIKI-02 | Phase 4 | Complete |
+| WIKI-03 | Phase 4 | Complete |
+| WIKI-04 | Phase 4 | Complete |
 | RETR-01 | Phase 5 | Pending |
 | RETR-02 | Phase 5 | Pending |
 | RETR-03 | Phase 5 | Pending |
@@ -156,4 +156,4 @@
 
 ---
 *Requirements defined: 2026-07-15*
-*Last updated: 2026-07-15 after Phase 3 bounded-tool completion*
+*Last updated: 2026-07-16 after Phase 4 Vault and Wiki completion*
