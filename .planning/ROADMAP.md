@@ -10,7 +10,7 @@ The milestone proceeds as six vertical, verifiable boundaries: freeze compatibil
 - [x] **Phase 2: Usable Rust Agent Shell** - Run, stream, resume, compact, diagnose, and operate through TUI or headless CLI. (completed 2026-07-15)
 - [x] **Phase 3: Safe Tool Completion** - Execute the v1 tool set under exactly two permission modes. (completed 2026-07-15)
 - [x] **Phase 4: Vault and Main-Model Wiki** - Persist raw evidence and maintain recoverable Obsidian knowledge through the pinned main model. (completed 2026-07-16)
-- [ ] **Phase 5: Retrieval and Project Discovery** - Serve three isolated indexes and preserve BM25-first project finding with truthful embedding.
+- [x] **Phase 5: Retrieval and Project Discovery** - Serve three isolated indexes and preserve BM25-first project finding with truthful embedding. (completed 2026-07-16)
 - [ ] **Phase 6: Migration, Release, and Cutover** - Import safely, meet release gates, and switch the default entry only after parity.
 
 ## Phase Details
@@ -156,17 +156,17 @@ Plans:
   4. Missing, damaged, incompatible, or slow embedding resources degrade truthfully without crashing.
   5. A verified local model/vector fingerprint is required before hybrid mode appears.
 
-**Plans**: 0/3 plans executed
+**Plans**: 3/3 plans executed
 
 Plans:
 
-- [ ] 05-01-PLAN.md
-- [ ] 05-02-PLAN.md
-- [ ] 05-03-PLAN.md
+- [x] 05-01-PLAN.md
+- [x] 05-02-PLAN.md
+- [x] 05-03-PLAN.md
 
-- [ ] 05-01: Port exact/BM25/RRF core and build three isolated lexical indexes
-- [ ] 05-02: Restore project catalog workflow and wire a concrete optional embedding provider
-- [ ] 05-03: Add truthful status, source/license/maintenance explanations, and retrieval benchmarks
+- [x] 05-01: Port exact/BM25/RRF core and build three isolated lexical indexes
+- [x] 05-02: Restore project catalog workflow and wire a concrete optional embedding provider
+- [x] 05-03: Add truthful status, source/license/maintenance explanations, and retrieval benchmarks
 
 ### Phase 6: Migration, Release, and Cutover
 
@@ -196,5 +196,5 @@ Plans:
 | 2. Usable Rust Agent Shell | 3/3 | Complete   | 2026-07-15 |
 | 3. Safe Tool Completion | 2/2 | Complete | 2026-07-15 |
 | 4. Vault and Main-Model Wiki | 3/3 | Complete   | 2026-07-16 |
-| 5. Retrieval and Project Discovery | 0/3 | Planned    |  |
+| 5. Retrieval and Project Discovery | 3/3 | Complete   | 2026-07-16 |
 | 6. Migration, Release, and Cutover | 0/3 | Not started | - |

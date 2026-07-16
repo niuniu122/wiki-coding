@@ -60,12 +60,12 @@
 
 ### Retrieval and Project Discovery
 
-- [ ] **RETR-01**: One shared exact/BM25/embedding/RRF engine serves three schema-isolated indexes: capability, open-source project, and Wiki.
-- [ ] **RETR-02**: Exact + BM25 works offline without an embedding resource and preserves the TypeScript capability ranking baseline within fixture tolerance.
-- [ ] **RETR-03**: A non-programmer's natural-language need first yields BM25 keywords/candidate projects, then embedding semantically matches and reranks only those candidates.
-- [ ] **RETR-04**: A concrete local embedding provider validates model ID, version, hash, license, vectors, fingerprint, and Windows/Linux health before activation.
-- [ ] **RETR-05**: Retrieval reports `exact+bm25`, verified hybrid, or an explicit degraded reason and never treats a feature flag alone as enabled.
-- [ ] **RETR-06**: Project results explain the match and include source, license, maintenance signals, actual retrieval mode, and deterministic benchmark coverage.
+- [x] **RETR-01**: One shared exact/BM25/embedding/RRF engine serves three schema-isolated indexes: capability, open-source project, and Wiki.
+- [x] **RETR-02**: Exact + BM25 works offline without an embedding resource and preserves the TypeScript capability ranking baseline within fixture tolerance.
+- [x] **RETR-03**: A non-programmer's natural-language need first yields BM25 keywords/candidate projects, then embedding semantically matches and reranks only those candidates.
+- [x] **RETR-04**: A concrete local embedding provider validates model ID, version, hash, license, vectors, fingerprint, and Windows/Linux health before activation.
+- [x] **RETR-05**: Retrieval reports `exact+bm25`, verified hybrid, or an explicit degraded reason and never treats a feature flag alone as enabled.
+- [x] **RETR-06**: Project results explain the match and include source, license, maintenance signals, actual retrieval mode, and deterministic benchmark coverage.
 
 ### Migration
 
@@ -134,12 +134,12 @@
 | WIKI-02 | Phase 4 | Complete |
 | WIKI-03 | Phase 4 | Complete |
 | WIKI-04 | Phase 4 | Complete |
-| RETR-01 | Phase 5 | Pending |
-| RETR-02 | Phase 5 | Pending |
-| RETR-03 | Phase 5 | Pending |
-| RETR-04 | Phase 5 | Pending |
-| RETR-05 | Phase 5 | Pending |
-| RETR-06 | Phase 5 | Pending |
+| RETR-01 | Phase 5 | Complete |
+| RETR-02 | Phase 5 | Complete |
+| RETR-03 | Phase 5 | Complete |
+| RETR-04 | Phase 5 | Complete |
+| RETR-05 | Phase 5 | Complete |
+| RETR-06 | Phase 5 | Complete |
 | MIGR-01 | Phase 6 | Pending |
 | MIGR-02 | Phase 6 | Pending |
 | MIGR-03 | Phase 6 | Pending |
@@ -156,4 +156,4 @@
 
 ---
 *Requirements defined: 2026-07-15*
-*Last updated: 2026-07-16 after Phase 4 Vault and Wiki completion*
+*Last updated: 2026-07-16 after Phase 5 retrieval and project discovery completion*
