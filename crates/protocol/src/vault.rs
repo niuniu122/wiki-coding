@@ -70,6 +70,8 @@ macro_rules! vault_id {
 
 vault_id!(ProjectId);
 vault_id!(TransactionId);
+vault_id!(GcId);
+vault_id!(ForgetId);
 
 #[derive(Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(transparent)]
@@ -277,6 +279,170 @@ impl TransactionManifest {
 pub struct VaultReceipt {
     pub schema_version: SchemaVersion,
     pub operation_id: String,
+    pub code: String,
+    pub recorded_at_unix_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum VaultIssueCode {
+    ManifestInvalid,
+    OwnedPathMissing,
+    RawMetadataInvalid,
+    RawContentMissing,
+    RawHashMismatch,
+    WikiPageInvalid,
+    WikiPageIdDuplicate,
+    WikiCurrentTopicDuplicate,
+    WikiSourceMissing,
+    WikiSourceHashMismatch,
+    WorkflowJournalIncomplete,
+    WorkflowRecordInvalid,
+    TransactionManifestInvalid,
+    TransactionRecoveryRequired,
+    TransactionTargetConflict,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct VaultIssue {
+    pub code: VaultIssueCode,
+    pub relative_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub related_id: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct VaultLintReport {
+    pub schema_version: SchemaVersion,
+    pub project_id: ProjectId,
+    pub issues: Vec<VaultIssue>,
+}
+
+impl VaultLintReport {
+    #[must_use]
+    pub const fn is_clean(&self) -> bool {
+        self.issues.is_empty()
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct VaultRepairReceipt {
+    pub schema_version: SchemaVersion,
+    pub operation_id: String,
+    pub recovered_transactions: Vec<TransactionId>,
+    pub quarantined_fragments: Vec<String>,
+    pub remaining_issues: Vec<VaultIssue>,
+    pub recorded_at_unix_ms: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct RebuildReceipt {
+    pub schema_version: SchemaVersion,
+    pub operation_id: String,
+    pub raw_snapshot_hash: ContentHash,
+    pub raw_object_count: u32,
+    pub page_count: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub transaction_id: Option<TransactionId>,
+    pub code: String,
+    pub recorded_at_unix_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GcClass {
+    Permanent,
+    Referenced,
+    Rebuildable,
+    Collectable,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GcCandidate {
+    pub relative_path: String,
+    pub content_hash: ContentHash,
+    pub bytes: u64,
+    pub class: GcClass,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub eligible_at_unix_ms: Option<u64>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GcPlan {
+    pub schema_version: SchemaVersion,
+    pub gc_id: GcId,
+    pub plan_hash: ContentHash,
+    pub candidates: Vec<GcCandidate>,
+    pub created_at_unix_ms: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TrashEntry {
+    pub original_relative_path: String,
+    pub trash_relative_path: String,
+    pub content_hash: ContentHash,
+    pub bytes: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct TrashManifest {
+    pub schema_version: SchemaVersion,
+    pub gc_id: GcId,
+    pub plan_hash: ContentHash,
+    pub entries: Vec<TrashEntry>,
+    pub applied_at_unix_ms: u64,
+    pub expires_at_unix_ms: u64,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GcReceiptAction {
+    Applied,
+    Undone,
+    Purged,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct GcReceipt {
+    pub schema_version: SchemaVersion,
+    pub gc_id: GcId,
+    pub plan_hash: ContentHash,
+    pub action: GcReceiptAction,
+    pub object_count: u32,
+    pub bytes: u64,
+    pub recorded_at_unix_ms: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ForgetPlan {
+    pub schema_version: SchemaVersion,
+    pub forget_id: ForgetId,
+    pub evidence_id: EvidenceId,
+    pub expected_hash: ContentHash,
+    pub affected_page_paths: Vec<String>,
+    pub plan_hash: ContentHash,
+    pub created_at_unix_ms: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct ForgetReceipt {
+    pub schema_version: SchemaVersion,
+    pub forget_id: ForgetId,
+    pub evidence_id: EvidenceId,
+    pub evidence_hash: ContentHash,
+    pub transaction_id: TransactionId,
+    pub tombstone_relative_path: String,
     pub code: String,
     pub recorded_at_unix_ms: u64,
 }

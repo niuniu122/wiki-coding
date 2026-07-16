@@ -41,9 +41,11 @@ pub use tool::{
     validate_unique_call_ids,
 };
 pub use vault::{
-    ContentHash, InboxImportReceipt, InboxImportStatus, ProjectId, RawEvidenceKind,
-    RawEvidenceManifest, TransactionId, TransactionManifest, TransactionState, TransactionTarget,
-    VaultManifest, VaultOwnership, VaultReceipt, VaultValidationError,
+    ContentHash, ForgetId, ForgetPlan, ForgetReceipt, GcCandidate, GcClass, GcId, GcPlan,
+    GcReceipt, GcReceiptAction, InboxImportReceipt, InboxImportStatus, ProjectId, RawEvidenceKind,
+    RawEvidenceManifest, RebuildReceipt, TransactionId, TransactionManifest, TransactionState,
+    TransactionTarget, TrashEntry, TrashManifest, VaultIssue, VaultIssueCode, VaultLintReport,
+    VaultManifest, VaultOwnership, VaultReceipt, VaultRepairReceipt, VaultValidationError,
     validate_vault_relative_path,
 };
 

@@ -146,6 +146,16 @@ impl KnowledgeWorkflowHistory {
             _ => None,
         })
     }
+
+    #[must_use]
+    pub fn accepted_patch(&self) -> Option<&KnowledgePatch> {
+        self.records.iter().rev().find_map(|record| match record {
+            WorkflowRecord::Generation {
+                generation: StoredGeneration::Accepted { patch, .. },
+            } => Some(patch),
+            _ => None,
+        })
+    }
 }
 
 pub struct KnowledgeWorkflowStore<'a> {
@@ -360,6 +370,44 @@ pub fn find_evaluation_missing(
         }
     }
     Ok(missing)
+}
+
+pub fn synthesized_knowledge_patches(
+    vault: &ProjectVault,
+) -> Result<Vec<KnowledgePatch>, VaultError> {
+    let mut entries = std::fs::read_dir(vault.root().join(".minimax/pending"))
+        .map_err(|_| VaultError::Io)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| VaultError::Io)?;
+    entries.sort_by_key(std::fs::DirEntry::file_name);
+    let mut patches = Vec::new();
+    for entry in entries {
+        if !entry.file_type().map_err(|_| VaultError::Io)?.is_dir() {
+            continue;
+        }
+        let job = serde_json::from_slice::<KnowledgeEvaluationJob>(
+            &std::fs::read(entry.path().join("job.json"))
+                .map_err(|_| VaultError::RecoveryRequired)?,
+        )
+        .map_err(|_| VaultError::RecoveryRequired)?
+        .validate()
+        .map_err(|_| VaultError::RecoveryRequired)?;
+        let history = load_history(&entry.path().join("journal.jsonl"))?;
+        if history
+            .receipt()
+            .is_some_and(|receipt| receipt.outcome == KnowledgeReceiptOutcome::Synthesized)
+        {
+            let patch = history
+                .accepted_patch()
+                .ok_or(VaultError::RecoveryRequired)?;
+            if patch.job_id != job.job_id {
+                return Err(VaultError::RecoveryRequired);
+            }
+            patches.push(patch.clone());
+        }
+    }
+    patches.sort_by(|left, right| left.job_id.cmp(&right.job_id));
+    Ok(patches)
 }
 
 fn workflow_directory(root: &Path, job: &KnowledgeEvaluationJob) -> PathBuf {

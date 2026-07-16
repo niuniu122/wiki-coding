@@ -5,18 +5,22 @@
 
 mod bootstrap;
 mod inbox;
+mod lint;
 mod page;
 mod path;
 mod raw;
+mod rebuild;
 pub mod runtime;
 mod transaction;
 mod workflow;
 
 pub use bootstrap::{ProjectVault, VaultError, VaultWarning, classify_vault_path};
 pub use inbox::{complete_inbox_import, import_inbox_file};
+pub use lint::{lint_vault, repair_vault};
 pub use page::{normalize_wiki_slug, parse_wiki_page, render_wiki_page};
 pub use path::content_hash as hash_vault_bytes;
 pub use raw::{FinalizedSessionEvidence, finalize_runtime_session};
+pub use rebuild::rebuild_compiled_wiki;
 pub use runtime::{RuntimeStore, RuntimeStoreError};
 pub use transaction::{
     PreparedWikiTransaction, TransactionFaultPoint, WikiChange, recover_wiki_transaction,
@@ -24,7 +28,7 @@ pub use transaction::{
 };
 pub use workflow::{
     KnowledgeWorkflowHistory, KnowledgeWorkflowStore, StoredGeneration, ensure_knowledge_job,
-    find_evaluation_missing, knowledge_job_for_session,
+    find_evaluation_missing, knowledge_job_for_session, synthesized_knowledge_patches,
 };
 
 /// Human-readable boundary used by architecture checks and documentation.

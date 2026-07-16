@@ -1,10 +1,48 @@
 use minimax_protocol::{
-    ContentHash, ProjectId, SchemaVersion, TransactionId, TransactionManifest, TransactionState,
-    TransactionTarget, VaultManifest, VaultValidationError, validate_vault_relative_path,
+    ContentHash, GcCandidate, GcClass, GcId, GcPlan, ProjectId, SchemaVersion, TransactionId,
+    TransactionManifest, TransactionState, TransactionTarget, VaultIssue, VaultIssueCode,
+    VaultLintReport, VaultManifest, VaultValidationError, validate_vault_relative_path,
 };
 
 fn hash(byte: char) -> ContentHash {
     ContentHash::new(byte.to_string().repeat(64)).expect("hash")
+}
+
+#[test]
+fn maintenance_records_round_trip_with_stable_codes() {
+    let report = VaultLintReport {
+        schema_version: SchemaVersion,
+        project_id: ProjectId::new("project-1").expect("project"),
+        issues: vec![VaultIssue {
+            code: VaultIssueCode::RawHashMismatch,
+            relative_path: "raw/imports/a.txt".to_owned(),
+            related_id: Some("import:a".to_owned()),
+        }],
+    };
+    let encoded = serde_json::to_string(&report).expect("encode report");
+    assert_eq!(
+        serde_json::from_str::<VaultLintReport>(&encoded).expect("decode report"),
+        report
+    );
+
+    let plan = GcPlan {
+        schema_version: SchemaVersion,
+        gc_id: GcId::new("gc-1").expect("gc ID"),
+        plan_hash: hash('d'),
+        candidates: vec![GcCandidate {
+            relative_path: ".minimax/indexes/wiki.json".to_owned(),
+            content_hash: hash('e'),
+            bytes: 12,
+            class: GcClass::Rebuildable,
+            eligible_at_unix_ms: None,
+        }],
+        created_at_unix_ms: 45,
+    };
+    let encoded = serde_json::to_string(&plan).expect("encode plan");
+    assert_eq!(
+        serde_json::from_str::<GcPlan>(&encoded).expect("decode plan"),
+        plan
+    );
 }
 
 #[test]
