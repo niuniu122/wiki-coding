@@ -37,6 +37,20 @@ impl ProductProvider {
             wiki_calls: Arc::new(AtomicUsize::new(0)),
         }
     }
+
+    fn interrupted(answer: &str) -> Self {
+        Self {
+            runtime: Arc::new(Mutex::new(VecDeque::from([vec![
+                StreamEvent::VisibleTextDelta {
+                    delta: answer.to_owned(),
+                },
+                StreamEvent::Terminal {
+                    outcome: TerminalOutcome::Interrupted,
+                },
+            ]]))),
+            wiki_calls: Arc::new(AtomicUsize::new(0)),
+        }
+    }
 }
 
 impl ProviderPort for ProductProvider {
@@ -189,6 +203,62 @@ async fn lookup_only_session_gets_no_op_receipt_without_second_model_call() {
         minimax_protocol::KnowledgeReceiptOutcome::NoOp
     );
     assert_eq!(wiki_calls.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn interrupted_runtime_session_still_gets_a_durable_wiki_receipt() {
+    let project = tempfile::tempdir().expect("project");
+    let vault = tempfile::tempdir().expect("vault");
+    let resolved = resolve_project_vault(
+        project.path(),
+        Some(vault.path()),
+        Some("project:interrupted"),
+        1,
+    )
+    .expect("binding");
+    let provider = ProductProvider::interrupted("The Vault architecture decision was interrupted.");
+    let wiki_calls = Arc::clone(&provider.wiki_calls);
+    let mut driver = RuntimeDriver::open(
+        project.path(),
+        binding(),
+        provider,
+        DriverIds::new("interrupted", 10),
+    )
+    .expect("driver");
+    let report = driver
+        .run_prompt("We decided to use the Vault architecture", 128)
+        .await
+        .expect("interrupted runtime turn");
+    assert_eq!(
+        report.receipt.outcome,
+        minimax_protocol::RuntimeTerminalOutcome::Interrupted
+    );
+
+    let wiki = finalize_active_session_wiki(&driver, &resolved.binding, 20)
+        .await
+        .expect("Wiki lifecycle")
+        .expect("Wiki report");
+    assert_eq!(
+        wiki.receipt.outcome,
+        minimax_protocol::KnowledgeReceiptOutcome::Synthesized
+    );
+    assert_eq!(wiki_calls.load(Ordering::SeqCst), 1);
+
+    let vault = resolved.binding.open().expect("open Vault");
+    let raw_session = std::fs::read_dir(vault.root().join("raw/sessions"))
+        .expect("raw sessions")
+        .next()
+        .expect("one raw session")
+        .expect("raw session entry")
+        .path()
+        .join("session.json");
+    let evidence: minimax_vault::FinalizedSessionEvidence =
+        serde_json::from_slice(&std::fs::read(raw_session).expect("session evidence"))
+            .expect("valid session evidence");
+    assert_eq!(evidence.session_id, report.receipt.session_id);
+    let job = minimax_vault::knowledge_job_for_session(&evidence).expect("Wiki job");
+    let store = minimax_vault::KnowledgeWorkflowStore::open(&vault, job).expect("Wiki store");
+    assert_eq!(store.history().receipt(), Some(&wiki.receipt));
 }
 
 fn binding() -> ModelBinding {

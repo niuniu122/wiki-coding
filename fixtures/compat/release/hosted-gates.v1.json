@@ -7,7 +7,7 @@
   "branch": "codex/rust-rewrite",
   "headSha": "366c35e9169c561bb008400b529c2423169749cd",
   "treeSha": "78afa7ca18d737b9b05375e42566f7ad2026295b",
-  "productFingerprint": "5a54c5e7c2000baedc7b81ebb798849345c7a70b764918dce58253cdb0800f84",
+  "productFingerprint": "ff805ee8d73168b968e0b5834b2e7582bf9cc598b4cb3f35835c004aec577172",
   "productFileCount": 402,
   "conclusion": "success",
   "jobs": [

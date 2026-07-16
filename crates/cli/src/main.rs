@@ -772,7 +772,7 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
             ParsedInput::Prompt(prompt) => {
                 let exit = render_chat_turn(&mut driver, prompt, config.max_output_tokens).await;
                 if exit != ExitClass::Completed {
-                    return exit;
+                    return finish_chat_session(&driver, &vault_binding, exit).await;
                 }
             }
             ParsedInput::Command(intent) => {
@@ -792,7 +792,7 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
                         let exit =
                             render_chat_turn(&mut driver, prompt, config.max_output_tokens).await;
                         if exit != ExitClass::Completed {
-                            return exit;
+                            return finish_chat_session(&driver, &vault_binding, exit).await;
                         }
                     }
                     CommandIntent::AgentSubmit(prompt) => {
@@ -812,7 +812,7 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
                         let exit =
                             render_agent_turn(&mut driver, prompt, config.max_output_tokens).await;
                         if exit != ExitClass::Completed {
-                            return exit;
+                            return finish_chat_session(&driver, &vault_binding, exit).await;
                         }
                     }
                     CommandIntent::AgentContinue => {
@@ -822,7 +822,7 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
                         let exit =
                             render_agent_turn(&mut driver, prompt, config.max_output_tokens).await;
                         if exit != ExitClass::Completed {
-                            return exit;
+                            return finish_chat_session(&driver, &vault_binding, exit).await;
                         }
                     }
                     CommandIntent::Permissions(None) => println!(
