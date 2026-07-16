@@ -1,0 +1,85 @@
+{
+  "schemaVersion": 1,
+  "evidenceClass": "hosted_release_gate",
+  "workflow": "CI",
+  "runId": 29474558013,
+  "runUrl": "https://github.com/niuniu122/minimax-codex/actions/runs/29474558013",
+  "branch": "codex/rust-rewrite",
+  "headSha": "5b730caaa018bd89aa439fa8ea8f9eff1a6c773f",
+  "treeSha": "b4c19d5f776850808d138cf51a694789eb67be38",
+  "conclusion": "success",
+  "jobs": [
+    {
+      "jobId": 87544656845,
+      "platform": "windows-x86_64-msvc",
+      "conclusion": "success",
+      "environment": {
+        "os": "win32",
+        "osRelease": "10.0.26100",
+        "architecture": "x64",
+        "cpuModel": "AMD EPYC 7763 64-Core Processor",
+        "logicalCpuCount": 4,
+        "node": "v20.20.2",
+        "rustcRelease": "1.97.0",
+        "rustcHost": "x86_64-pc-windows-msvc"
+      },
+      "package": {
+        "archiveSha256": "e8166795ad9354e4c5041213c702610ca088b84bf30db7a04ad905e3632b491d",
+        "binarySha256": "a5ab802f58ad8f896a4a13b57f457658bfecc1074fcfa7c3e0dad343057f248e",
+        "compressedBytes": 4000125,
+        "embeddingIncluded": false,
+        "supportTier": "supported"
+      },
+      "performance": {
+        "coldStartSamplesMs": [27.905, 21.398, 20.675, 20.156, 21.638, 23.042, 24.363, 22.638, 23.657],
+        "coldStartP95Ms": 27.905,
+        "idleRssSamplesBytes": [7213056, 7213056, 7213056, 7213056, 7213056],
+        "idleRssMaximumBytes": 7213056,
+        "wikiBm25P95Ms": 1.366
+      }
+    },
+    {
+      "jobId": 87544656868,
+      "platform": "linux-x86_64-gnu",
+      "conclusion": "success",
+      "environment": {
+        "os": "linux",
+        "osRelease": "6.17.0-1020-azure",
+        "architecture": "x64",
+        "cpuModel": "AMD EPYC 7763 64-Core Processor",
+        "logicalCpuCount": 4,
+        "node": "v20.20.2",
+        "rustcRelease": "1.97.0",
+        "rustcHost": "x86_64-unknown-linux-gnu"
+      },
+      "package": {
+        "archiveSha256": "3bb2af46252e85762688d2bbd36d7d7c4e93ccc6066aa020d2516f5d2e37eecf",
+        "binarySha256": "39091bda938bbb16e78ce8804538fc33c3a56fbeaab9066ab54408e789232040",
+        "compressedBytes": 4745674,
+        "embeddingIncluded": false,
+        "supportTier": "supported"
+      },
+      "performance": {
+        "coldStartSamplesMs": [4.102, 3.622, 3.589, 3.583, 3.91, 3.54, 3.627, 3.523, 4.113],
+        "coldStartP95Ms": 4.113,
+        "idleRssSamplesBytes": [5664768, 5664768, 5664768, 5664768, 5664768],
+        "idleRssMaximumBytes": 5664768,
+        "wikiBm25P95Ms": 2.099
+      }
+    }
+  ],
+  "licenses": {
+    "packagesChecked": 234,
+    "invalid": 0
+  },
+  "security": {
+    "unsafeFiles": 0,
+    "unsafeWorkspaceLint": "forbid",
+    "databasePackages": 0,
+    "migrationNetworkOrCredentialPaths": 0
+  },
+  "offline": true,
+  "providerCalls": 0,
+  "credentialsRead": 0,
+  "modelDownloads": 0
+}

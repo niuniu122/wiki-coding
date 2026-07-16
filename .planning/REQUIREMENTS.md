@@ -69,15 +69,15 @@
 
 ### Migration
 
-- [ ] **MIGR-01**: Migration inventory and dry-run report what can move, what is excluded, collisions, target schema, and expected hashes before writing.
-- [ ] **MIGR-02**: Migration imports safe configuration, sessions, messages, tool events, and capability metadata without secrets, private reasoning, or derived caches.
-- [ ] **MIGR-03**: Migration is idempotent, leaves source data unchanged, writes receipts, verifies target hashes, and supports rollback by removing only the new target.
+- [x] **MIGR-01**: Migration inventory and dry-run report what can move, what is excluded, collisions, target schema, and expected hashes before writing.
+- [x] **MIGR-02**: Migration imports safe configuration, sessions, messages, tool events, and capability metadata without secrets, private reasoning, or derived caches.
+- [x] **MIGR-03**: Migration is idempotent, leaves source data unchanged, writes receipts, verifies target hashes, and supports rollback by removing only the new target.
 
 ### Release and Cutover
 
-- [ ] **REL-01**: Windows and Linux receive versioned base artifacts with checksum, install, upgrade, and rollback instructions; embedding stays separate.
-- [ ] **REL-02**: Recorded benchmarks enforce cold start <= 500 ms, idle RSS <= 150 MB, base compressed artifact <= 50 MB, and 10k-page BM25 p95 <= 100 ms.
-- [ ] **REL-03**: Offline unit, contract, parity, recovery, security, migration, and cross-platform CI pass without real credentials or API spend.
+- [x] **REL-01**: Windows and Linux receive versioned base artifacts with checksum, install, upgrade, and rollback instructions; embedding stays separate.
+- [x] **REL-02**: Recorded benchmarks enforce cold start <= 500 ms, idle RSS <= 150 MB, base compressed artifact <= 50 MB, and 10k-page BM25 p95 <= 100 ms.
+- [x] **REL-03**: Offline unit, contract, parity, recovery, security, migration, and cross-platform CI pass without real credentials or API spend.
 - [ ] **REL-04**: Rust becomes the default entry only after mandatory acceptance gates pass; TypeScript remains usable until cutover and its source data is never deleted automatically.
 
 ## v2 Requirements
@@ -140,12 +140,12 @@
 | RETR-04 | Phase 5 | Complete |
 | RETR-05 | Phase 5 | Complete |
 | RETR-06 | Phase 5 | Complete |
-| MIGR-01 | Phase 6 | Pending |
-| MIGR-02 | Phase 6 | Pending |
-| MIGR-03 | Phase 6 | Pending |
-| REL-01 | Phase 6 | Pending |
-| REL-02 | Phase 6 | Pending |
-| REL-03 | Phase 6 | Pending |
+| MIGR-01 | Phase 6 | Complete |
+| MIGR-02 | Phase 6 | Complete |
+| MIGR-03 | Phase 6 | Complete |
+| REL-01 | Phase 6 | Complete |
+| REL-02 | Phase 6 | Complete |
+| REL-03 | Phase 6 | Complete |
 | REL-04 | Phase 6 | Pending |
 
 **Coverage:**
