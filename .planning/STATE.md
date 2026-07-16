@@ -4,17 +4,17 @@ milestone: v1.0
 milestone_name: milestone
 current_phase: 6
 current_phase_name: Migration, Release, and Cutover
-status: executing
-stopped_at: Phase 6 plan 06-02 complete; executing 06-03 cutover
-last_updated: "2026-07-16T17:52:00Z"
+status: verifying
+stopped_at: All 6 phases and 18 plans complete; milestone audit in progress
+last_updated: "2026-07-16T18:30:00Z"
 last_activity: 2026-07-16
-last_activity_desc: Hosted Windows MSVC and Linux GNU offline release gates passed
+last_activity_desc: Rust launcher cutover completed with final hosted Windows and Linux gates
 progress:
   total_phases: 6
-  completed_phases: 5
+  completed_phases: 6
   total_plans: 18
-  completed_plans: 17
-  percent: 94
+  completed_plans: 18
+  percent: 100
 ---
 
 # Project State
@@ -24,22 +24,22 @@ progress:
 See: .planning/PROJECT.md (updated 2026-07-15)
 
 **Core value:** A non-programmer can safely find the right open-source capability or project and complete work in one recoverable local CLI.
-**Current focus:** Phase 6 — Migration, Release, and Cutover
+**Current focus:** Milestone v1.0 audit after completing all six phases
 
 ## Current Position
 
-Phase: 6 (Migration, Release, and Cutover) — READY TO PLAN
-Plan: 06-03 of 3
-Status: Executing
-Last activity: 2026-07-16 — Phase 5 retrieval and project discovery completed with all local gates
+Phase: 6 (Migration, Release, and Cutover) — COMPLETE
+Plan: 06-03 of 3 complete
+Status: Verifying milestone
+Last activity: 2026-07-16 — Phase 6 cutover completed with final hosted Windows and Linux gates
 
-Progress: [████████░░] 83%
+Progress: [██████████] 100%
 
 ## Performance Metrics
 
 **Velocity:**
 
-- Total plans completed: 17
+- Total plans completed: 18
 - Average duration: 35 min
 - Total execution time: 312 min
 
@@ -72,7 +72,7 @@ Progress: [████████░░] 83%
 - Compaction is a deterministic completed-visible-only local reducer; trace accepts only bounded allowlisted facts.
 - Interactive and JSONL output consume the same persisted schema-v1 events; rendering remains outside core.
 - Configuration precedence is defaults, user, project, environment, then CLI; headless credentials are environment-only.
-- The npm product entry remains TypeScript until Phase 6 even though the Rust development shell is now usable.
+- The npm product entry is the fixed Rust launcher; TypeScript remains explicit as minimax-codex-legacy during the support window.
 - Native tool calls use typed Provider history, durable request/decision/start/terminal facts, and serial bounded execution.
 - Restart closes pre-start work as cancelled and post-start work as indeterminate without automatic replay.
 - The bounded v1 inventory is exactly eight strict tools behind one shared permission-independent preflight.
@@ -87,7 +87,7 @@ None outside the roadmap.
 
 - Embedding model download and real Provider spend are not authorized; tests must use fixtures until separately approved.
 - No destructive migration or PR is authorized. The existing branch was pushed only for hosted CI verification.
-- This Windows 10 20H2 host cannot install the current MSVC Build Tools; local Rust gates use official 1.97.0 gnullvm, and Plan 01-04 must preserve supported Windows/MSVC runner evidence.
+- This Windows 10 20H2 host uses official 1.97.0 GNU-LLVM development evidence; supported Windows MSVC and Linux GNU evidence passed twice in hosted CI.
 
 ## Deferred Items
 
@@ -99,5 +99,5 @@ None outside the roadmap.
 ## Session Continuity
 
 Last session: 2026-07-15T15:18:45Z
-Stopped at: Phase 6 plan 06-02 complete; executing cutover
+Stopped at: All phases complete; running milestone audit
 Resume file: .planning/ROADMAP.md

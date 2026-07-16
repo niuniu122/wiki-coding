@@ -78,7 +78,7 @@
 - [x] **REL-01**: Windows and Linux receive versioned base artifacts with checksum, install, upgrade, and rollback instructions; embedding stays separate.
 - [x] **REL-02**: Recorded benchmarks enforce cold start <= 500 ms, idle RSS <= 150 MB, base compressed artifact <= 50 MB, and 10k-page BM25 p95 <= 100 ms.
 - [x] **REL-03**: Offline unit, contract, parity, recovery, security, migration, and cross-platform CI pass without real credentials or API spend.
-- [ ] **REL-04**: Rust becomes the default entry only after mandatory acceptance gates pass; TypeScript remains usable until cutover and its source data is never deleted automatically.
+- [x] **REL-04**: Rust becomes the default entry only after mandatory acceptance gates pass; TypeScript remains usable until cutover and its source data is never deleted automatically.
 
 ## v2 Requirements
 
@@ -146,7 +146,7 @@
 | REL-01 | Phase 6 | Complete |
 | REL-02 | Phase 6 | Complete |
 | REL-03 | Phase 6 | Complete |
-| REL-04 | Phase 6 | Pending |
+| REL-04 | Phase 6 | Complete |
 
 **Coverage:**
 
@@ -156,4 +156,4 @@
 
 ---
 *Requirements defined: 2026-07-15*
-*Last updated: 2026-07-16 after Phase 5 retrieval and project discovery completion*
+*Last updated: 2026-07-16 after Phase 6 migration, release, and cutover completion*

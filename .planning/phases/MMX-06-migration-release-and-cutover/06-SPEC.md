@@ -20,16 +20,16 @@ Finish the Rust rewrite with a source-preserving migration workflow and release 
 
 ## Acceptance criteria
 
-- [ ] Inventory/dry-run produce byte-stable JSON for unchanged fixture input and perform zero writes.
-- [ ] Fixture migration imports safe config, sessions/messages/tool events/capability metadata while an adversarial corpus proves secret/private/derived exclusions.
-- [ ] Source tree hash is unchanged after apply, verify, repeated apply, failed apply, and rollback.
-- [ ] Collision, source drift, crash residue, changed target, forged plan/receipt, symlink, oversized input, malformed record, and path escape fail closed.
-- [ ] The generated Rust journal replays successfully and receipts verify every target hash.
-- [ ] Windows/Linux packaging scripts produce versioned embedding-free archives, manifests, and SHA-256 files from release binaries.
-- [ ] Security/architecture/license gates and the four performance budgets are executable and recorded.
-- [ ] Hosted Windows MSVC and Linux CI run the complete offline release gate.
-- [ ] Compatibility evidence has no pending mandatory product item before cutover.
-- [ ] `package.json` points `minimax-codex` to the fixed Rust launcher and retains `minimax-codex-legacy` -> `dist/cli.js`.
+- [x] Inventory/dry-run produce byte-stable JSON for unchanged fixture input and perform zero writes.
+- [x] Fixture migration imports safe config, sessions/messages/tool events/capability metadata while an adversarial corpus proves secret/private/derived exclusions.
+- [x] Source tree hash is unchanged after apply, verify, repeated apply, failed apply, and rollback.
+- [x] Collision, source drift, crash residue, changed target, forged plan/receipt, symlink, oversized input, malformed record, and path escape fail closed.
+- [x] The generated Rust journal replays successfully and receipts verify every target hash.
+- [x] Windows/Linux packaging scripts produce versioned embedding-free archives, manifests, and SHA-256 files from release binaries.
+- [x] Security/architecture/license gates and the four performance budgets are executable and recorded.
+- [x] Hosted Windows MSVC and Linux CI run the complete offline release gate.
+- [x] Compatibility evidence has no pending mandatory product item before cutover.
+- [x] `package.json` points `minimax-codex` to the fixed Rust launcher and retains `minimax-codex-legacy` -> `dist/cli.js`.
 
 ## Must not
 

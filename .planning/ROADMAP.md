@@ -11,7 +11,7 @@ The milestone proceeds as six vertical, verifiable boundaries: freeze compatibil
 - [x] **Phase 3: Safe Tool Completion** - Execute the v1 tool set under exactly two permission modes. (completed 2026-07-15)
 - [x] **Phase 4: Vault and Main-Model Wiki** - Persist raw evidence and maintain recoverable Obsidian knowledge through the pinned main model. (completed 2026-07-16)
 - [x] **Phase 5: Retrieval and Project Discovery** - Serve three isolated indexes and preserve BM25-first project finding with truthful embedding. (completed 2026-07-16)
-- [ ] **Phase 6: Migration, Release, and Cutover** - Import safely, meet release gates, and switch the default entry only after parity.
+- [x] **Phase 6: Migration, Release, and Cutover** - Import safely, meet release gates, and switch the default entry only after parity. (completed 2026-07-16)
 
 ## Phase Details
 
@@ -180,13 +180,13 @@ Plans:
   3. Offline CI and recorded performance gates pass without real API calls or bundled embedding weight.
   4. Rust becomes default only when the acceptance matrix is green; rollback keeps evidence and receipts.
 
-**Plans**: 2/3 plans executed
+**Plans**: 3/3 plans executed
 
 Plans:
 
 - [x] 06-01: Implement inventory, dry-run, import, receipt verification, and rollback
 - [x] 06-02: Build cross-platform packaging, CI, security, license, and performance gates
-- [ ] 06-03: Complete parity, cutover, upgrade, rollback, and support-window documentation
+- [x] 06-03: Complete parity, cutover, upgrade, rollback, and support-window documentation
 
 ## Progress
 
@@ -197,4 +197,4 @@ Plans:
 | 3. Safe Tool Completion | 2/2 | Complete | 2026-07-15 |
 | 4. Vault and Main-Model Wiki | 3/3 | Complete   | 2026-07-16 |
 | 5. Retrieval and Project Discovery | 3/3 | Complete   | 2026-07-16 |
-| 6. Migration, Release, and Cutover | 2/3 | In progress | - |
+| 6. Migration, Release, and Cutover | 3/3 | Complete | 2026-07-16 |
