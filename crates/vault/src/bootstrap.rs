@@ -47,6 +47,9 @@ pub enum VaultError {
     SensitiveContent,
     SessionNotTerminal,
     SessionNotFound,
+    InvalidPage,
+    EmptyTransaction,
+    FaultInjected,
 }
 
 impl fmt::Display for VaultError {
@@ -65,6 +68,11 @@ impl fmt::Display for VaultError {
             }
             Self::SessionNotTerminal => "the session is not terminal and cannot be finalized",
             Self::SessionNotFound => "the session does not exist in the runtime journal",
+            Self::InvalidPage => "the Wiki page or frontmatter is invalid",
+            Self::EmptyTransaction => "the Wiki transaction has no changed targets",
+            Self::FaultInjected => {
+                "the test interrupted the Wiki transaction at a durable boundary"
+            }
         };
         formatter.write_str(message)
     }

@@ -7,8 +7,22 @@ use sha2::{Digest, Sha256};
 
 use crate::VaultError;
 
-pub(crate) fn content_hash(bytes: &[u8]) -> ContentHash {
+pub fn content_hash(bytes: &[u8]) -> ContentHash {
     ContentHash::new(sha256_hex(bytes)).expect("SHA-256 is always valid")
+}
+
+pub(crate) fn atomic_replace(path: &Path, bytes: &[u8]) -> Result<(), VaultError> {
+    let parent = path.parent().ok_or(VaultError::InvalidPath)?;
+    std::fs::create_dir_all(parent).map_err(|_| VaultError::Io)?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent).map_err(|_| VaultError::Io)?;
+    temporary.write_all(bytes).map_err(|_| VaultError::Io)?;
+    temporary.flush().map_err(|_| VaultError::Io)?;
+    temporary.as_file().sync_all().map_err(|_| VaultError::Io)?;
+    temporary
+        .persist(path)
+        .map_err(|_| VaultError::Io)?
+        .sync_all()
+        .map_err(|_| VaultError::Io)
 }
 
 pub(crate) fn sha256_hex(bytes: &[u8]) -> String {

@@ -142,6 +142,13 @@ impl KnowledgePage {
         {
             return Err(KnowledgeValidationError::DuplicateSource);
         }
+        if self
+            .sources
+            .windows(2)
+            .any(|pair| pair[0].source_id >= pair[1].source_id)
+        {
+            return Err(KnowledgeValidationError::DuplicateSource);
+        }
         match (self.status, &self.superseded_by) {
             (KnowledgePageStatus::Current, None) | (KnowledgePageStatus::Superseded, Some(_)) => {}
             _ => return Err(KnowledgeValidationError::InvalidSupersession),
