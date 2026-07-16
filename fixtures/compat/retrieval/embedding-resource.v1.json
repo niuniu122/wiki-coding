@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "packageId": "@minimax-codex/embedding-granite-97m-r2-avx2",
+  "modelId": "ibm-granite/granite-embedding-97m-multilingual-r2",
+  "architecture": "x64-avx2",
+  "quantization": "qint8",
+  "runtimeAbi": "minimax-embedding-helper-v1",
+  "installation": "explicit_separate_resource",
+  "automaticDownload": false,
+  "candidateSource": "bm25_only",
+  "failureBehavior": "preserve_bm25_with_stable_reason"
+}

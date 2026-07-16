@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "sourceUrl": "https://github.com/minimax-codex/project-catalog",
+  "generatedAt": "2026-07-16T00:00:00Z",
+  "fingerprint": "sha256:86bd577bd854e963b2c8c250983f4c9036e1452b8898c075193694e75b7ca437",
+  "projects": [
+    {
+      "id": "openai/codex",
+      "name": "Codex CLI",
+      "aliases": ["codex"],
+      "description": "A local coding agent and command-line interface for working with software repositories.",
+      "topics": ["coding-agent", "cli", "rust"],
+      "platforms": ["windows", "linux", "macos"],
+      "sourceUrl": "https://github.com/openai/codex",
+      "repositoryUrl": "https://github.com/openai/codex",
+      "maintenance": {}
+    },
+    {
+      "id": "burntsushi/ripgrep",
+      "name": "ripgrep",
+      "aliases": ["rg"],
+      "description": "A fast recursive command-line text and source-code search tool.",
+      "topics": ["search", "text", "cli", "rust"],
+      "platforms": ["windows", "linux", "macos"],
+      "sourceUrl": "https://github.com/BurntSushi/ripgrep",
+      "repositoryUrl": "https://github.com/BurntSushi/ripgrep",
+      "maintenance": {}
+    },
+    {
+      "id": "sharkdp/fd",
+      "name": "fd",
+      "aliases": ["fd-find"],
+      "description": "A simple and fast command-line tool for finding files and directories.",
+      "topics": ["file-search", "find", "cli", "rust"],
+      "platforms": ["windows", "linux", "macos"],
+      "sourceUrl": "https://github.com/sharkdp/fd",
+      "repositoryUrl": "https://github.com/sharkdp/fd",
+      "maintenance": {}
+    },
+    {
+      "id": "sharkdp/bat",
+      "name": "bat",
+      "aliases": [],
+      "description": "A command-line file viewer with syntax highlighting and Git integration.",
+      "topics": ["file-viewer", "syntax-highlighting", "cli", "rust"],
+      "platforms": ["windows", "linux", "macos"],
+      "sourceUrl": "https://github.com/sharkdp/bat",
+      "repositoryUrl": "https://github.com/sharkdp/bat",
+      "maintenance": {}
+    },
+    {
+      "id": "astral-sh/uv",
+      "name": "uv",
+      "aliases": [],
+      "description": "A command-line Python project and package management tool.",
+      "topics": ["python", "package-manager", "project", "cli", "rust"],
+      "platforms": ["windows", "linux", "macos"],
+      "sourceUrl": "https://github.com/astral-sh/uv",
+      "repositoryUrl": "https://github.com/astral-sh/uv",
+      "maintenance": {}
+    },
+    {
+      "id": "aider-ai/aider",
+      "name": "aider",
+      "aliases": [],
+      "description": "A terminal coding assistant for editing and understanding software projects.",
+      "topics": ["coding-assistant", "terminal", "project"],
+      "platforms": ["windows", "linux", "macos"],
+      "sourceUrl": "https://github.com/Aider-AI/aider",
+      "repositoryUrl": "https://github.com/Aider-AI/aider",
+      "maintenance": {}
+    }
+  ]
+}
