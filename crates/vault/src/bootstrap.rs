@@ -50,6 +50,9 @@ pub enum VaultError {
     InvalidPage,
     EmptyTransaction,
     FaultInjected,
+    InvalidConfirmation,
+    NotExpired,
+    Expired,
 }
 
 impl fmt::Display for VaultError {
@@ -73,6 +76,9 @@ impl fmt::Display for VaultError {
             Self::FaultInjected => {
                 "the test interrupted the Wiki transaction at a durable boundary"
             }
+            Self::InvalidConfirmation => "the exact plan-bound confirmation token is required",
+            Self::NotExpired => "the trash plan has not expired and cannot be purged",
+            Self::Expired => "the trash plan has expired and can no longer be undone",
         };
         formatter.write_str(message)
     }

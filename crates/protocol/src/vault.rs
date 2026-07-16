@@ -391,12 +391,21 @@ pub struct TrashEntry {
     pub bytes: u64,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TrashState {
+    Prepared,
+    Applied,
+    Undone,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct TrashManifest {
     pub schema_version: SchemaVersion,
     pub gc_id: GcId,
     pub plan_hash: ContentHash,
+    pub state: TrashState,
     pub entries: Vec<TrashEntry>,
     pub applied_at_unix_ms: u64,
     pub expires_at_unix_ms: u64,
@@ -439,7 +448,7 @@ pub struct ForgetPlan {
 pub struct ForgetReceipt {
     pub schema_version: SchemaVersion,
     pub forget_id: ForgetId,
-    pub evidence_id: EvidenceId,
+    pub evidence_key: ContentHash,
     pub evidence_hash: ContentHash,
     pub transaction_id: TransactionId,
     pub tombstone_relative_path: String,

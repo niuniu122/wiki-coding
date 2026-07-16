@@ -44,9 +44,9 @@ pub use vault::{
     ContentHash, ForgetId, ForgetPlan, ForgetReceipt, GcCandidate, GcClass, GcId, GcPlan,
     GcReceipt, GcReceiptAction, InboxImportReceipt, InboxImportStatus, ProjectId, RawEvidenceKind,
     RawEvidenceManifest, RebuildReceipt, TransactionId, TransactionManifest, TransactionState,
-    TransactionTarget, TrashEntry, TrashManifest, VaultIssue, VaultIssueCode, VaultLintReport,
-    VaultManifest, VaultOwnership, VaultReceipt, VaultRepairReceipt, VaultValidationError,
-    validate_vault_relative_path,
+    TransactionTarget, TrashEntry, TrashManifest, TrashState, VaultIssue, VaultIssueCode,
+    VaultLintReport, VaultManifest, VaultOwnership, VaultReceipt, VaultRepairReceipt,
+    VaultValidationError, validate_vault_relative_path,
 };
 
 /// Human-readable boundary used by architecture checks and documentation.

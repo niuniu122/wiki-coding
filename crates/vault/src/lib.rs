@@ -4,6 +4,8 @@
 //! propose summaries through validated contracts; they do not write files.
 
 mod bootstrap;
+mod forget;
+mod gc;
 mod inbox;
 mod lint;
 mod page;
@@ -15,6 +17,11 @@ mod transaction;
 mod workflow;
 
 pub use bootstrap::{ProjectVault, VaultError, VaultWarning, classify_vault_path};
+pub use forget::{apply_forget_plan, forget_confirmation, plan_forget};
+pub use gc::{
+    apply_gc_plan, gc_apply_confirmation, gc_purge_confirmation, gc_report, purge_gc_plan,
+    read_gc_trash_manifest, undo_gc_plan,
+};
 pub use inbox::{complete_inbox_import, import_inbox_file};
 pub use lint::{lint_vault, repair_vault};
 pub use page::{normalize_wiki_slug, parse_wiki_page, render_wiki_page};
