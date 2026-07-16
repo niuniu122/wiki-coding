@@ -1,0 +1,13 @@
+{
+  "threads": [
+    {
+      "id": "thread-safe",
+      "title": "Safe migration fixture",
+      "createdAt": "2026-07-15T10:00:00.000Z",
+      "updatedAt": "2026-07-15T10:01:00.000Z",
+      "model": "MiniMax-M3",
+      "cwd": "C:/fixture/project",
+      "status": "active"
+    }
+  ]
+}

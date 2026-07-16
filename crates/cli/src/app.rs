@@ -19,9 +19,49 @@ pub enum CliCommand {
     Run(RunArgs),
     Chat(ChatArgs),
     Doctor(DoctorArgs),
-    Migrate,
+    Migrate(MigrateArgs),
     Vault(VaultArgs),
     Index(IndexArgs),
+}
+
+#[derive(Clone, Debug, Args)]
+pub struct MigrateArgs {
+    #[arg(long)]
+    pub json: bool,
+    #[command(subcommand)]
+    pub action: MigrateAction,
+}
+
+#[derive(Clone, Debug, Subcommand)]
+pub enum MigrateAction {
+    Inventory {
+        #[arg(long, default_value = ".mini-codex")]
+        source: PathBuf,
+        #[arg(long, default_value = ".")]
+        target: PathBuf,
+    },
+    DryRun {
+        #[arg(long, default_value = ".mini-codex")]
+        source: PathBuf,
+        #[arg(long, default_value = ".")]
+        target: PathBuf,
+    },
+    Apply {
+        #[arg(long)]
+        plan: PathBuf,
+        #[arg(long)]
+        confirmation: String,
+    },
+    Verify {
+        #[arg(long)]
+        receipt: PathBuf,
+    },
+    Rollback {
+        #[arg(long)]
+        receipt: PathBuf,
+        #[arg(long)]
+        confirmation: String,
+    },
 }
 
 #[derive(Clone, Debug, Args)]
@@ -269,41 +309,5 @@ impl From<ProtocolArg> for minimax_protocol::ProviderProtocolKind {
             ProtocolArg::Responses => Self::Responses,
             ProtocolArg::ChatCompletions => Self::ChatCompletions,
         }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum MaintenanceRoute {
-    Migrate,
-    Vault,
-    Index,
-}
-
-impl MaintenanceRoute {
-    #[must_use]
-    pub const fn owning_phase(self) -> u8 {
-        match self {
-            Self::Migrate => 6,
-            Self::Vault => 4,
-            Self::Index => 5,
-        }
-    }
-
-    #[must_use]
-    pub const fn name(self) -> &'static str {
-        match self {
-            Self::Migrate => "migrate",
-            Self::Vault => "vault",
-            Self::Index => "index",
-        }
-    }
-
-    #[must_use]
-    pub fn not_available(self) -> String {
-        format!(
-            "{} is not available in the Rust development shell until Phase {}",
-            self.name(),
-            self.owning_phase()
-        )
     }
 }

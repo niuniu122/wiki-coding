@@ -5,8 +5,8 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use clap::Parser as _;
 use minimax_cli::{
-    Cli, CliCommand, DriverError, DriverIds, ExitClass, JsonlWriter, MaintenanceRoute,
-    PermissionArg, ProviderPort, RuntimeDriver, exit_for_error, exit_for_report, inspect,
+    Cli, CliCommand, DriverError, DriverIds, ExitClass, JsonlWriter, MigrateAction, PermissionArg,
+    ProviderPort, RuntimeDriver, exit_for_error, exit_for_report, inspect,
 };
 use minimax_protocol::{
     ModelBinding, ModelId, ProviderId, ProviderProtocolKind, RuntimeErrorCode, RuntimeFailure,
@@ -170,14 +170,11 @@ fn clap_routes_all_phase_two_and_later_maintenance_commands() {
         CliCommand::Doctor(_)
     ));
     assert!(matches!(
-        Cli::try_parse_from(["minimax-codex-rust", "migrate"])
+        Cli::try_parse_from(["minimax-codex-rust", "migrate", "inventory"])
             .expect("migrate route")
             .command,
-        CliCommand::Migrate
+        CliCommand::Migrate(args) if matches!(args.action, MigrateAction::Inventory { .. })
     ));
-    assert_eq!(MaintenanceRoute::Vault.owning_phase(), 4);
-    assert_eq!(MaintenanceRoute::Index.owning_phase(), 5);
-    assert_eq!(MaintenanceRoute::Migrate.owning_phase(), 6);
 }
 
 #[test]

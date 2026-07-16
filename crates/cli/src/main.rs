@@ -7,10 +7,11 @@ use clap::Parser as _;
 use minimax_cli::{
     CapabilityIndexAction, ChatArgs, Cli, CliCommand, CommonArgs, DoctorArgs, DriverIds, ExitClass,
     ForgetPlanOutput, GcPlanOutput, HeadlessApprovalPort, HttpProviderPort, IndexAction, IndexArgs,
-    InteractiveApprovalPort, JsonlWriter, MaintenanceRoute, ProjectIndexAction, RunArgs,
+    InteractiveApprovalPort, JsonlWriter, MigrateAction, MigrateArgs, ProjectIndexAction, RunArgs,
     RuntimeDriver, VaultAction, VaultArgs, VaultForgetAction, VaultGcAction, VaultStatusOutput,
-    WikiIndexAction, capability_search, capability_status, exit_for_error, exit_for_report,
-    inspect, project_search, project_status, wiki_search, wiki_status,
+    WikiIndexAction, apply_migration, build_migration_plan, capability_search, capability_status,
+    exit_for_error, exit_for_report, inspect, inventory_migration, project_search, project_status,
+    rollback_migration, verify_migration, wiki_search, wiki_status,
 };
 use minimax_core::{CompactionBudget, PermissionMode};
 use minimax_protocol::{
@@ -46,10 +47,54 @@ async fn execute(cli: Cli) -> ExitClass {
         CliCommand::Run(args) => execute_run(args).await,
         CliCommand::Chat(args) => execute_chat(args).await,
         CliCommand::Doctor(args) => execute_doctor(args),
-        CliCommand::Migrate => unavailable(MaintenanceRoute::Migrate),
+        CliCommand::Migrate(args) => execute_migrate(args),
         CliCommand::Vault(args) => execute_vault(args),
         CliCommand::Index(args) => execute_index(args).await,
     }
+}
+
+fn execute_migrate(args: MigrateArgs) -> ExitClass {
+    let result = match args.action {
+        MigrateAction::Inventory { source, target } => inventory_migration(&source, &target)
+            .and_then(|value| render_migration(args.json, &value, value.summary())),
+        MigrateAction::DryRun { source, target } => build_migration_plan(&source, &target)
+            .and_then(|value| render_migration(args.json, &value, value.summary())),
+        MigrateAction::Apply { plan, confirmation } => apply_migration(&plan, &confirmation)
+            .and_then(|value| render_migration(args.json, &value, value.summary())),
+        MigrateAction::Verify { receipt } => verify_migration(&receipt)
+            .and_then(|value| render_migration(args.json, &value, value.summary())),
+        MigrateAction::Rollback {
+            receipt,
+            confirmation,
+        } => rollback_migration(&receipt, &confirmation)
+            .and_then(|value| render_migration(args.json, &value, value.summary())),
+    };
+    match result {
+        Ok(()) => ExitClass::Completed,
+        Err(error) => {
+            eprintln!("migration failed: {error}");
+            if error.is_usage() {
+                ExitClass::Usage
+            } else {
+                ExitClass::Workspace
+            }
+        }
+    }
+}
+
+fn render_migration<T: serde::Serialize>(
+    json: bool,
+    value: &T,
+    summary: String,
+) -> Result<(), minimax_cli::MigrationError> {
+    if json {
+        let output = serde_json::to_string_pretty(value)
+            .map_err(|_| minimax_cli::MigrationError::Serialization)?;
+        println!("{output}");
+    } else {
+        println!("{summary}");
+    }
+    Ok(())
 }
 
 async fn execute_index(args: IndexArgs) -> ExitClass {
@@ -956,9 +1001,4 @@ fn default_user_config_path() -> PathBuf {
 
 fn environment() -> BTreeMap<String, String> {
     std::env::vars().collect()
-}
-
-fn unavailable(route: MaintenanceRoute) -> ExitClass {
-    eprintln!("{}", route.not_available());
-    ExitClass::Usage
 }

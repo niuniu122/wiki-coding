@@ -5,6 +5,7 @@ pub mod driver;
 pub mod headless;
 pub mod index;
 pub mod maintenance;
+pub mod migration;
 pub mod wiki;
 
 pub use doctor::{CheckStatus, DoctorCheck, DoctorReport, inspect};
@@ -18,6 +19,11 @@ pub use index::{
     wiki_status,
 };
 pub use maintenance::{ForgetPlanOutput, GcPlanOutput, VaultStatusOutput};
+pub use migration::{
+    MigrationError, MigrationInventory, MigrationPlan, MigrationReceipt, MigrationVerifyReport,
+    apply_migration, build_migration_plan, inventory_migration, rollback_migration,
+    verify_migration,
+};
 pub use wiki::{
     MainModelWikiDriver, ProjectVaultBinding, VaultKnowledgePort, WikiDriverError, WikiFaultPoint,
     WikiRunReport,
@@ -27,6 +33,6 @@ pub use wiki::{
 pub const CRATE_ROLE: &str = "composition root for Rust development commands and adapters";
 pub use app::{
     CapabilityIndexAction, ChatArgs, Cli, CliCommand, CommonArgs, DoctorArgs, IndexAction,
-    IndexArgs, MaintenanceRoute, PermissionArg, ProjectIndexAction, ProtocolArg, RunArgs,
+    IndexArgs, MigrateAction, MigrateArgs, PermissionArg, ProjectIndexAction, ProtocolArg, RunArgs,
     VaultAction, VaultArgs, VaultForgetAction, VaultGcAction, WikiIndexAction,
 };
