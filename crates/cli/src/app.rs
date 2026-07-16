@@ -21,7 +21,83 @@ pub enum CliCommand {
     Doctor(DoctorArgs),
     Migrate,
     Vault(VaultArgs),
-    Index,
+    Index(IndexArgs),
+}
+
+#[derive(Clone, Debug, Args)]
+pub struct IndexArgs {
+    #[arg(long)]
+    pub jsonl: bool,
+    #[command(subcommand)]
+    pub action: IndexAction,
+}
+
+#[derive(Clone, Debug, Subcommand)]
+pub enum IndexAction {
+    Capabilities {
+        #[command(subcommand)]
+        action: CapabilityIndexAction,
+    },
+    Projects {
+        #[command(subcommand)]
+        action: ProjectIndexAction,
+    },
+    Wiki {
+        #[command(subcommand)]
+        action: WikiIndexAction,
+    },
+}
+
+#[derive(Clone, Debug, Subcommand)]
+pub enum CapabilityIndexAction {
+    Status,
+    Search {
+        query: String,
+        #[arg(long, default_value_t = 5)]
+        limit: usize,
+    },
+}
+
+#[derive(Clone, Debug, Subcommand)]
+pub enum ProjectIndexAction {
+    Status {
+        #[arg(long)]
+        catalog: PathBuf,
+        #[arg(long)]
+        embedding_resource: Option<PathBuf>,
+    },
+    Search {
+        query: String,
+        #[arg(long)]
+        catalog: PathBuf,
+        #[arg(long)]
+        embedding_resource: Option<PathBuf>,
+        #[arg(long, default_value_t = 5)]
+        limit: usize,
+    },
+}
+
+#[derive(Clone, Debug, Subcommand)]
+pub enum WikiIndexAction {
+    Status {
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        #[arg(long)]
+        vault: PathBuf,
+        #[arg(long)]
+        project_id: String,
+    },
+    Search {
+        query: String,
+        #[arg(long, default_value = ".")]
+        project: PathBuf,
+        #[arg(long)]
+        vault: PathBuf,
+        #[arg(long)]
+        project_id: String,
+        #[arg(long, default_value_t = 5)]
+        limit: usize,
+    },
 }
 
 #[derive(Clone, Debug, Args)]

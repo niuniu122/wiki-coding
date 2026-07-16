@@ -3,8 +3,10 @@ use std::collections::BTreeMap;
 use std::io;
 
 use minimax_protocol::{
-    DiagnosticCode, RuntimeEvent, RuntimeEventV1, RuntimeTerminalOutcome, SchemaVersion, ToolCall,
-    ToolCallId, ToolEffect, ToolInvocation, ToolResult, ToolTerminalStatus, TraceCode, TraceEntry,
+    DiagnosticCode, IndexDomain, IndexStatusRecord, RetrievalDegradedReason, RetrievalExplanation,
+    RetrievalHitRecord, RetrievalMode, RetrievalResponse, RuntimeEvent, RuntimeEventV1,
+    RuntimeTerminalOutcome, SchemaVersion, ToolCall, ToolCallId, ToolEffect, ToolInvocation,
+    ToolResult, ToolTerminalStatus, TraceCode, TraceEntry,
 };
 use minimax_tui::{
     CommandAvailability, CommandIntent, EventRenderer, InteractiveShell, ParsedInput,
@@ -83,8 +85,64 @@ fn parser_rejects_unknown_arguments_and_any_third_permission_mode() {
     }
     assert_eq!(
         CommandIntent::Capabilities(None).availability(),
-        CommandAvailability::NotAvailable { owning_phase: 5 }
+        CommandAvailability::Available
     );
+}
+
+#[test]
+fn retrieval_rendering_exposes_actual_mode_unknown_facts_and_stable_explanations() {
+    let status = IndexStatusRecord {
+        schema_version: SchemaVersion,
+        domain: IndexDomain::Project,
+        documents: 6,
+        mode: RetrievalMode::Bm25,
+        degraded_reason: Some(RetrievalDegradedReason::EmbeddingMissing),
+        source: "https://example.test/catalog".into(),
+        fingerprint: Some(format!("sha256:{}", "a".repeat(64))),
+    };
+    let status_text = EventRenderer::index_status(&status);
+    assert!(status_text.contains("mode=bm25"));
+    assert!(status_text.contains("degraded=embedding_missing"));
+
+    let response = RetrievalResponse {
+        schema_version: SchemaVersion,
+        domain: IndexDomain::Project,
+        query: "fast file search".into(),
+        keywords: vec!["file".into(), "search".into()],
+        mode: RetrievalMode::Bm25,
+        degraded_reason: Some(RetrievalDegradedReason::EmbeddingMissing),
+        results: vec![RetrievalHitRecord {
+            id: "example/search".into(),
+            title: "Search".into(),
+            source_url: Some("https://example.test/source".into()),
+            repository_url: Some("https://example.test/repo".into()),
+            license: None,
+            platforms: vec!["windows".into()],
+            last_activity: None,
+            latest_release: None,
+            maintenance: Vec::new(),
+            confidence_penalty: 3,
+            explanation: RetrievalExplanation {
+                matched_terms: vec!["search".into()],
+                lexical_rank: 1,
+                semantic_rank: None,
+                lexical_score: 1.25,
+                fused_score: None,
+            },
+        }],
+    };
+    let text = EventRenderer::retrieval(&response);
+    for fact in [
+        "query=fast file search",
+        "mode=bm25",
+        "degraded=embedding_missing",
+        "license=unknown",
+        "maintenance=unknown",
+        "matched_terms=search",
+    ] {
+        assert!(text.contains(fact), "missing {fact:?} in {text:?}");
+    }
+    assert!(!text.contains('\u{1b}'));
 }
 
 #[test]

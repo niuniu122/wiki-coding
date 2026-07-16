@@ -14,6 +14,7 @@ pub enum BaselineError {
     ProductEntry,
     ToolEvidence(String),
     VaultEvidence,
+    RetrievalEvidence,
 }
 
 impl fmt::Display for BaselineError {
@@ -32,8 +33,64 @@ impl fmt::Display for BaselineError {
                 write!(formatter, "Rust tool evidence is incomplete: {requirement}")
             }
             Self::VaultEvidence => formatter.write_str("Rust Vault evidence is incomplete"),
+            Self::RetrievalEvidence => formatter.write_str("Rust retrieval evidence is incomplete"),
         }
     }
+}
+
+pub fn validate_rust_retrieval_evidence(root: &Path) -> Result<(), BaselineError> {
+    let raw = std::fs::read_to_string(root.join("fixtures/compat/retrieval/explanations.v1.json"))
+        .map_err(|_| BaselineError::RetrievalEvidence)?;
+    let fixture: serde_json::Value =
+        serde_json::from_str(&raw).map_err(|_| BaselineError::RetrievalEvidence)?;
+    let domains = fixture
+        .get("domains")
+        .and_then(serde_json::Value::as_array)
+        .ok_or(BaselineError::RetrievalEvidence)?;
+    let project_facts = fixture
+        .get("projectFacts")
+        .and_then(serde_json::Value::as_array)
+        .ok_or(BaselineError::RetrievalEvidence)?;
+    if fixture
+        .get("schemaVersion")
+        .and_then(serde_json::Value::as_u64)
+        != Some(1)
+        || domains.len() != 3
+        || project_facts.len() != 8
+        || fixture
+            .get("discoveredProjectExecution")
+            .and_then(serde_json::Value::as_bool)
+            != Some(false)
+        || fixture
+            .get("liveNetwork")
+            .and_then(serde_json::Value::as_bool)
+            != Some(false)
+        || fixture
+            .get("modelDownload")
+            .and_then(serde_json::Value::as_bool)
+            != Some(false)
+        || fixture
+            .get("productEntry")
+            .and_then(serde_json::Value::as_str)
+            != Some("dist/cli.js")
+    {
+        return Err(BaselineError::RetrievalEvidence);
+    }
+    for path in [
+        "fixtures/compat/retrieval/lexical.v1.json",
+        "fixtures/compat/retrieval/projects.v1.json",
+        "fixtures/compat/retrieval/embedding-resource.v1.json",
+        "crates/retrieval/tests/lexical.rs",
+        "crates/retrieval/tests/project_discovery.rs",
+        "crates/retrieval/tests/embedding_resource.rs",
+        "crates/retrieval/tests/benchmark.rs",
+        "crates/cli/tests/index_commands.rs",
+    ] {
+        if !root.join(path).is_file() {
+            return Err(BaselineError::RetrievalEvidence);
+        }
+    }
+    validate_product_entry(root).map_err(|_| BaselineError::RetrievalEvidence)
 }
 
 pub fn validate_rust_vault_evidence(root: &Path) -> Result<(), BaselineError> {

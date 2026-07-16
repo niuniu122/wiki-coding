@@ -71,6 +71,28 @@ fn second_writer_is_busy_and_human_guidance_is_not_schema() {
 }
 
 #[test]
+fn read_only_open_validates_binding_without_taking_or_mutating_the_writer_lease() {
+    let project = tempfile::tempdir().expect("project");
+    let vault_parent = tempfile::tempdir().expect("vault parent");
+    let root = vault_parent.path().join("vault");
+    let writer =
+        ProjectVault::bootstrap(project.path(), &root, project_id("one"), 1).expect("writer");
+    let manifest_before = std::fs::read(root.join(".minimax/manifest.json")).expect("manifest");
+
+    let reader = ProjectVault::open_read_only(project.path(), &root, project_id("one"))
+        .expect("read-only open while writer is held");
+    assert_eq!(reader.manifest(), writer.manifest());
+    assert_eq!(
+        std::fs::read(root.join(".minimax/manifest.json")).expect("manifest after read"),
+        manifest_before
+    );
+    assert!(matches!(
+        ProjectVault::open_read_only(project.path(), &root, project_id("other")),
+        Err(VaultError::ProjectMismatch)
+    ));
+}
+
+#[test]
 fn in_git_path_warns_without_editing_gitignore_and_ownership_is_explicit() {
     let project = tempfile::tempdir().expect("project");
     std::fs::create_dir(project.path().join(".git")).expect("git marker");

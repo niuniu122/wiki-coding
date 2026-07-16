@@ -37,10 +37,7 @@ pub enum CommandAvailability {
 impl CommandIntent {
     #[must_use]
     pub const fn availability(&self) -> CommandAvailability {
-        match self {
-            Self::Capabilities(_) => CommandAvailability::NotAvailable { owning_phase: 5 },
-            _ => CommandAvailability::Available,
-        }
+        CommandAvailability::Available
     }
 
     #[must_use]

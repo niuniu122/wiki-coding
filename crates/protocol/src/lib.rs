@@ -24,8 +24,8 @@ pub use knowledge::{
     WikiWorkflowUsage,
 };
 pub use retrieval::{
-    IndexDomain, RetrievalDegradedReason, RetrievalExplanation, RetrievalHitRecord, RetrievalMode,
-    RetrievalResponse,
+    IndexDomain, IndexStatusRecord, RetrievalDegradedReason, RetrievalExplanation,
+    RetrievalHitRecord, RetrievalMode, RetrievalResponse,
 };
 pub use runtime::{
     AgentLimits, AssistantToolCallBatch, ConversationItem, DiagnosticCode, MessageRole, ModelId,

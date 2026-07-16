@@ -5,10 +5,12 @@ use std::process::ExitCode;
 
 use clap::Parser as _;
 use minimax_cli::{
-    ChatArgs, Cli, CliCommand, CommonArgs, DoctorArgs, DriverIds, ExitClass, ForgetPlanOutput,
-    GcPlanOutput, HeadlessApprovalPort, HttpProviderPort, InteractiveApprovalPort, JsonlWriter,
-    MaintenanceRoute, RunArgs, RuntimeDriver, VaultAction, VaultArgs, VaultForgetAction,
-    VaultGcAction, VaultStatusOutput, exit_for_error, exit_for_report, inspect,
+    CapabilityIndexAction, ChatArgs, Cli, CliCommand, CommonArgs, DoctorArgs, DriverIds, ExitClass,
+    ForgetPlanOutput, GcPlanOutput, HeadlessApprovalPort, HttpProviderPort, IndexAction, IndexArgs,
+    InteractiveApprovalPort, JsonlWriter, MaintenanceRoute, ProjectIndexAction, RunArgs,
+    RuntimeDriver, VaultAction, VaultArgs, VaultForgetAction, VaultGcAction, VaultStatusOutput,
+    WikiIndexAction, capability_search, capability_status, exit_for_error, exit_for_report,
+    inspect, project_search, project_status, wiki_search, wiki_status,
 };
 use minimax_core::{CompactionBudget, PermissionMode};
 use minimax_protocol::{
@@ -46,7 +48,108 @@ async fn execute(cli: Cli) -> ExitClass {
         CliCommand::Doctor(args) => execute_doctor(args),
         CliCommand::Migrate => unavailable(MaintenanceRoute::Migrate),
         CliCommand::Vault(args) => execute_vault(args),
-        CliCommand::Index => unavailable(MaintenanceRoute::Index),
+        CliCommand::Index(args) => execute_index(args).await,
+    }
+}
+
+async fn execute_index(args: IndexArgs) -> ExitClass {
+    match args.action {
+        IndexAction::Capabilities { action } => match action {
+            CapabilityIndexAction::Status => render_index_status(args.jsonl, capability_status()),
+            CapabilityIndexAction::Search { query, limit } => {
+                render_index_search(args.jsonl, capability_search(&query, limit))
+            }
+        },
+        IndexAction::Projects { action } => match action {
+            ProjectIndexAction::Status {
+                catalog,
+                embedding_resource,
+            } => match project_status(&catalog, embedding_resource.as_deref()) {
+                Ok(status) => render_index_status(args.jsonl, status),
+                Err(error) => index_error(error),
+            },
+            ProjectIndexAction::Search {
+                query,
+                catalog,
+                embedding_resource,
+                limit,
+            } => match project_search(&catalog, embedding_resource.as_deref(), &query, limit).await
+            {
+                Ok(response) => render_index_search(args.jsonl, response),
+                Err(error) => index_error(error),
+            },
+        },
+        IndexAction::Wiki { action } => match action {
+            WikiIndexAction::Status {
+                project,
+                vault,
+                project_id,
+            } => {
+                let Some(project_id) = parse_index_project_id(project_id) else {
+                    return ExitClass::Usage;
+                };
+                match wiki_status(&project, &vault, project_id) {
+                    Ok(status) => render_index_status(args.jsonl, status),
+                    Err(error) => index_error(error),
+                }
+            }
+            WikiIndexAction::Search {
+                query,
+                project,
+                vault,
+                project_id,
+                limit,
+            } => {
+                let Some(project_id) = parse_index_project_id(project_id) else {
+                    return ExitClass::Usage;
+                };
+                match wiki_search(&project, &vault, project_id, &query, limit) {
+                    Ok(response) => render_index_search(args.jsonl, response),
+                    Err(error) => index_error(error),
+                }
+            }
+        },
+    }
+}
+
+fn parse_index_project_id(value: String) -> Option<ProjectId> {
+    match ProjectId::new(value) {
+        Ok(project_id) => Some(project_id),
+        Err(_) => {
+            eprintln!("index failed: invalid project ID");
+            None
+        }
+    }
+}
+
+fn render_index_status(jsonl: bool, status: minimax_protocol::IndexStatusRecord) -> ExitClass {
+    let text = EventRenderer::index_status(&status);
+    render_index_value(jsonl, &status, text)
+}
+
+fn render_index_search(jsonl: bool, response: minimax_protocol::RetrievalResponse) -> ExitClass {
+    let text = EventRenderer::retrieval(&response);
+    render_index_value(jsonl, &response, text)
+}
+
+fn render_index_value<T: serde::Serialize>(jsonl: bool, value: &T, text: String) -> ExitClass {
+    if jsonl {
+        let mut writer = JsonlWriter::new(io::stdout().lock());
+        if writer.write_json(value).is_err() {
+            eprintln!("index failed: output stream is unavailable");
+            return ExitClass::Workspace;
+        }
+    } else {
+        println!("{text}");
+    }
+    ExitClass::Completed
+}
+
+fn index_error(error: minimax_cli::IndexError) -> ExitClass {
+    eprintln!("index failed: {error}");
+    match error {
+        minimax_cli::IndexError::Read | minimax_cli::IndexError::Catalog(_) => ExitClass::Usage,
+        minimax_cli::IndexError::Vault(_) => ExitClass::Workspace,
     }
 }
 
@@ -631,7 +734,13 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
                     CommandIntent::Interrupt => println!(
                         "press Ctrl-C during a turn to persist an interrupted terminal outcome"
                     ),
-                    CommandIntent::Capabilities(_) => unreachable!("availability checked above"),
+                    CommandIntent::Capabilities(query) => match query {
+                        Some(query) => println!(
+                            "{}",
+                            EventRenderer::retrieval(&capability_search(&query, 5))
+                        ),
+                        None => println!("{}", EventRenderer::index_status(&capability_status())),
+                    },
                 }
             }
         }

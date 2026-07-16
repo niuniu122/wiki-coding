@@ -6,7 +6,8 @@ use minimax_compat_harness::{
     build_report, load_cargo_architecture, load_compat_manifests, report_json, repository_root,
     validate_architecture, validate_cli_tui_markdown_boundary, validate_core_source_boundary,
     validate_core_source_directory, validate_core_source_text, validate_product_entry,
-    validate_report, validate_rust_command_surface, validate_rust_tool_evidence,
+    validate_report, validate_retrieval_source_boundary, validate_retrieval_source_text,
+    validate_rust_command_surface, validate_rust_retrieval_evidence, validate_rust_tool_evidence,
     validate_rust_vault_evidence, validate_ui_source_text, validate_vault_source_boundary,
     validate_vault_source_text,
 };
@@ -84,6 +85,7 @@ fn rust_command_permission_and_product_baselines_are_executable() {
     validate_rust_command_surface(&manifests.commands).expect("complete Rust command surface");
     validate_rust_tool_evidence(&root, &manifests.baseline).expect("executable Rust tool evidence");
     validate_rust_vault_evidence(&root).expect("executable Rust Vault evidence");
+    validate_rust_retrieval_evidence(&root).expect("executable Rust retrieval evidence");
     validate_product_entry(&root).expect("TypeScript npm product entry");
 }
 
@@ -116,6 +118,20 @@ fn architecture_real_cargo_metadata_passes() {
     validate_core_source_boundary(&root).expect("abstract core source boundary");
     validate_vault_source_boundary(&root).expect("Provider-free Vault source boundary");
     validate_cli_tui_markdown_boundary(&root).expect("Vault-owned Markdown parsing");
+    validate_retrieval_source_boundary(&root).expect("offline retrieval boundary");
+}
+
+#[test]
+fn architecture_rejects_retrieval_network_database_credentials_and_downloads() {
+    for source in [
+        "use reqwest::Client;",
+        "use rusqlite::Connection;",
+        "let key = std::env::var(\"API_KEY\");",
+        "fn download_model() {}",
+        "use minimax_provider::ProviderPort;",
+    ] {
+        assert!(validate_retrieval_source_text("bad.rs", source).is_err());
+    }
 }
 
 #[test]

@@ -3,6 +3,7 @@ pub mod config;
 pub mod doctor;
 pub mod driver;
 pub mod headless;
+pub mod index;
 pub mod maintenance;
 pub mod wiki;
 
@@ -12,6 +13,10 @@ pub use driver::{
     ProviderPort, RunReport, RuntimeDriver,
 };
 pub use headless::{ExitClass, JsonlWriter, exit_for_error, exit_for_report};
+pub use index::{
+    IndexError, capability_search, capability_status, project_search, project_status, wiki_search,
+    wiki_status,
+};
 pub use maintenance::{ForgetPlanOutput, GcPlanOutput, VaultStatusOutput};
 pub use wiki::{
     MainModelWikiDriver, ProjectVaultBinding, VaultKnowledgePort, WikiDriverError, WikiFaultPoint,
@@ -21,6 +26,7 @@ pub use wiki::{
 /// Human-readable boundary used by architecture checks and documentation.
 pub const CRATE_ROLE: &str = "composition root for Rust development commands and adapters";
 pub use app::{
-    ChatArgs, Cli, CliCommand, CommonArgs, DoctorArgs, MaintenanceRoute, PermissionArg,
-    ProtocolArg, RunArgs, VaultAction, VaultArgs, VaultForgetAction, VaultGcAction,
+    CapabilityIndexAction, ChatArgs, Cli, CliCommand, CommonArgs, DoctorArgs, IndexAction,
+    IndexArgs, MaintenanceRoute, PermissionArg, ProjectIndexAction, ProtocolArg, RunArgs,
+    VaultAction, VaultArgs, VaultForgetAction, VaultGcAction, WikiIndexAction,
 };

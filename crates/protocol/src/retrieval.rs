@@ -52,6 +52,22 @@ pub struct RetrievalExplanation {
 pub struct RetrievalHitRecord {
     pub id: String,
     pub title: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub repository_url: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub license: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub platforms: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_activity: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latest_release: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub maintenance: Vec<String>,
+    #[serde(default)]
+    pub confidence_penalty: u8,
     pub explanation: RetrievalExplanation,
 }
 
@@ -66,6 +82,20 @@ pub struct RetrievalResponse {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub degraded_reason: Option<RetrievalDegradedReason>,
     pub results: Vec<RetrievalHitRecord>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+pub struct IndexStatusRecord {
+    pub schema_version: SchemaVersion,
+    pub domain: IndexDomain,
+    pub documents: u64,
+    pub mode: RetrievalMode,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub degraded_reason: Option<RetrievalDegradedReason>,
+    pub source: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fingerprint: Option<String>,
 }
 
 #[cfg(test)]

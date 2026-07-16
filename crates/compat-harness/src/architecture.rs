@@ -12,6 +12,7 @@ const CORE: &str = "minimax-core";
 const PROTOCOL: &str = "minimax-protocol";
 const CLI: &str = "minimax-cli";
 const VAULT: &str = "minimax-vault";
+const RETRIEVAL: &str = "minimax-retrieval";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ArchitecturePackage {
@@ -148,6 +149,39 @@ pub fn validate_vault_source_boundary(root: &Path) -> Result<(), ArchitectureErr
 pub fn validate_cli_tui_markdown_boundary(root: &Path) -> Result<(), ArchitectureError> {
     for directory in [root.join("crates/cli/src"), root.join("crates/tui/src")] {
         validate_source_directory(&directory, validate_ui_source_text)?;
+    }
+    Ok(())
+}
+
+pub fn validate_retrieval_source_boundary(root: &Path) -> Result<(), ArchitectureError> {
+    validate_source_directory(
+        &root.join("crates/retrieval/src"),
+        validate_retrieval_source_text,
+    )
+}
+
+pub fn validate_retrieval_source_text(file: &str, source: &str) -> Result<(), ArchitectureError> {
+    const DENIED: [&str; 15] = [
+        "reqwest",
+        "hyper::",
+        "http::",
+        "Authorization",
+        "Bearer ",
+        "rusqlite",
+        "sqlx",
+        "diesel",
+        "sea_orm",
+        "seaorm",
+        "download_model",
+        "download_resource",
+        "std::env::var(",
+        "std::env::vars(",
+        "minimax_provider",
+    ];
+    if let Some(pattern) = DENIED.iter().find(|pattern| source.contains(*pattern)) {
+        return Err(ArchitectureError::Violation(format!(
+            "retrieval source boundary denied: {file} contains {pattern}"
+        )));
     }
     Ok(())
 }
@@ -316,8 +350,9 @@ fn dependency_allowed(package: &str, dependency: &str) -> bool {
     match package {
         PROTOCOL => false,
         CORE => dependency == PROTOCOL,
-        "minimax-provider" | "minimax-tools" | "minimax-retrieval" | "minimax-vault"
-        | "minimax-tui" => matches!(dependency, CORE | PROTOCOL),
+        "minimax-provider" | "minimax-tools" | RETRIEVAL | "minimax-vault" | "minimax-tui" => {
+            matches!(dependency, CORE | PROTOCOL)
+        }
         CLI => dependency != COMPAT_HARNESS,
         COMPAT_HARNESS => dependency != CLI && dependency != COMPAT_HARNESS,
         _ => false,

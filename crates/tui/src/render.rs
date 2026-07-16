@@ -1,7 +1,8 @@
 use std::collections::BTreeMap;
 
 use minimax_protocol::{
-    ForgetPlan, GcClass, GcPlan, RuntimeEvent, RuntimeEventV1, RuntimeTerminalOutcome,
+    ForgetPlan, GcClass, GcPlan, IndexDomain, IndexStatusRecord, RetrievalDegradedReason,
+    RetrievalMode, RetrievalResponse, RuntimeEvent, RuntimeEventV1, RuntimeTerminalOutcome,
     SessionRecord, SessionStatus, ToolEffect, ToolInvocation, ToolResult, TraceCode, TraceEntry,
     VaultLintReport,
 };
@@ -11,6 +12,96 @@ const MAX_RENDER_CHARS: usize = 16_000;
 pub struct EventRenderer;
 
 impl EventRenderer {
+    #[must_use]
+    pub fn index_status(status: &IndexStatusRecord) -> String {
+        sanitize_bounded(&format!(
+            "index status | domain={} | documents={} | mode={} | degraded={} | source={} | fingerprint={}",
+            domain_name(status.domain),
+            status.documents,
+            mode_name(status.mode),
+            status.degraded_reason.map_or("none", degraded_reason_name),
+            status.source,
+            status.fingerprint.as_deref().unwrap_or("none")
+        ))
+    }
+
+    #[must_use]
+    pub fn retrieval(response: &RetrievalResponse) -> String {
+        let mut lines = vec![format!(
+            "retrieval | domain={} | query={} | mode={} | degraded={} | keywords={}",
+            domain_name(response.domain),
+            response.query,
+            mode_name(response.mode),
+            response
+                .degraded_reason
+                .map_or("none", degraded_reason_name),
+            if response.keywords.is_empty() {
+                "none".to_owned()
+            } else {
+                response.keywords.join(",")
+            }
+        )];
+        for hit in &response.results {
+            let mut facts = vec![
+                format!("id={}", hit.id),
+                format!("title={}", hit.title),
+                format!("lexical_rank={}", hit.explanation.lexical_rank),
+                format!("lexical_score={:.6}", hit.explanation.lexical_score),
+                format!(
+                    "matched_terms={}",
+                    if hit.explanation.matched_terms.is_empty() {
+                        "none".to_owned()
+                    } else {
+                        hit.explanation.matched_terms.join(",")
+                    }
+                ),
+            ];
+            if response.domain == IndexDomain::Project {
+                facts.extend([
+                    format!("source={}", hit.source_url.as_deref().unwrap_or("unknown")),
+                    format!(
+                        "repository={}",
+                        hit.repository_url.as_deref().unwrap_or("unknown")
+                    ),
+                    format!("license={}", hit.license.as_deref().unwrap_or("unknown")),
+                    format!(
+                        "platforms={}",
+                        if hit.platforms.is_empty() {
+                            "unknown".to_owned()
+                        } else {
+                            hit.platforms.join(",")
+                        }
+                    ),
+                    format!(
+                        "last_activity={}",
+                        hit.last_activity.as_deref().unwrap_or("unknown")
+                    ),
+                    format!(
+                        "latest_release={}",
+                        hit.latest_release.as_deref().unwrap_or("unknown")
+                    ),
+                    format!(
+                        "maintenance={}",
+                        if hit.maintenance.is_empty() {
+                            "unknown".to_owned()
+                        } else {
+                            hit.maintenance.join(",")
+                        }
+                    ),
+                    format!("confidence_penalty={}", hit.confidence_penalty),
+                ]);
+            }
+            if let Some(rank) = hit.explanation.semantic_rank {
+                facts.push(format!("semantic_rank={rank}"));
+            }
+            if let Some(score) = hit.explanation.fused_score {
+                facts.push(format!("fused_score={score:.6}"));
+            }
+            lines.push(format!("result | {}", facts.join(" | ")));
+        }
+        sanitize_bounded(&lines.join("\n"))
+    }
+
     #[must_use]
     pub fn vault_lint(report: &VaultLintReport) -> String {
         if report.issues.is_empty() {
@@ -236,6 +327,39 @@ impl EventRenderer {
                 .as_deref()
                 .map_or_else(String::new, |output| format!(" | output={output}"))
         ))
+    }
+}
+
+const fn domain_name(domain: IndexDomain) -> &'static str {
+    match domain {
+        IndexDomain::Capability => "capability",
+        IndexDomain::Project => "project",
+        IndexDomain::Wiki => "wiki",
+    }
+}
+
+const fn mode_name(mode: RetrievalMode) -> &'static str {
+    match mode {
+        RetrievalMode::Exact => "exact",
+        RetrievalMode::Bm25 => "bm25",
+        RetrievalMode::HybridVerified => "hybrid_verified",
+    }
+}
+
+const fn degraded_reason_name(reason: RetrievalDegradedReason) -> &'static str {
+    match reason {
+        RetrievalDegradedReason::EmbeddingMissing => "embedding_missing",
+        RetrievalDegradedReason::IncompatibleCpu => "incompatible_cpu",
+        RetrievalDegradedReason::InvalidManifest => "invalid_manifest",
+        RetrievalDegradedReason::HashMismatch => "hash_mismatch",
+        RetrievalDegradedReason::RuntimeAbiMismatch => "runtime_abi_mismatch",
+        RetrievalDegradedReason::FingerprintMismatch => "fingerprint_mismatch",
+        RetrievalDegradedReason::HelperUnavailable => "helper_unavailable",
+        RetrievalDegradedReason::HelperTimeout => "helper_timeout",
+        RetrievalDegradedReason::HelperCrashed => "helper_crashed",
+        RetrievalDegradedReason::MalformedVector => "malformed_vector",
+        RetrievalDegradedReason::NonFiniteVector => "non_finite_vector",
+        RetrievalDegradedReason::WrongDimension => "wrong_dimension",
     }
 }
 

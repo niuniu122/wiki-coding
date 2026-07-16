@@ -108,7 +108,7 @@ pub struct ProjectVault {
     root: PathBuf,
     manifest: VaultManifest,
     warnings: Vec<VaultWarning>,
-    _lease: WorkspaceLease,
+    _lease: Option<WorkspaceLease>,
 }
 
 impl ProjectVault {
@@ -174,7 +174,46 @@ impl ProjectVault {
             root: vault_root,
             manifest,
             warnings,
-            _lease: lease,
+            _lease: Some(lease),
+        })
+    }
+
+    /// Opens an existing Vault without creating files or acquiring mutation authority.
+    pub fn open_read_only(
+        project_root: impl AsRef<Path>,
+        vault_root: impl AsRef<Path>,
+        project_id: ProjectId,
+    ) -> Result<Self, VaultError> {
+        let project_root = project_root
+            .as_ref()
+            .canonicalize()
+            .map_err(|_| VaultError::InvalidPath)?;
+        let vault_root = vault_root
+            .as_ref()
+            .canonicalize()
+            .map_err(|_| VaultError::InvalidPath)?;
+        let bytes = std::fs::read(vault_root.join(MANIFEST_PATH)).map_err(|_| VaultError::Io)?;
+        let manifest: VaultManifest =
+            serde_json::from_slice(&bytes).map_err(|_| VaultError::UnsupportedSchema)?;
+        let project_fingerprint = content_hash(normalized_path(&project_root).as_bytes());
+        if manifest.project_id != project_id || manifest.project_fingerprint != project_fingerprint
+        {
+            return Err(VaultError::ProjectMismatch);
+        }
+        let mut warnings = vec![VaultWarning::PlaintextLocalFiles];
+        if vault_root.starts_with(&project_root) {
+            warnings.push(VaultWarning::VaultInsideProject);
+        }
+        if has_git_ancestor(&vault_root) {
+            warnings.push(VaultWarning::VaultInsideGitWorkTree);
+        }
+        warnings.sort_unstable();
+        warnings.dedup();
+        Ok(Self {
+            root: vault_root,
+            manifest,
+            warnings,
+            _lease: None,
         })
     }
 

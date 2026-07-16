@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "domains": ["capability", "project", "wiki"],
+  "searchFacts": [
+    "query",
+    "keywords",
+    "mode",
+    "degradedReason",
+    "results"
+  ],
+  "projectFacts": [
+    "sourceUrl",
+    "repositoryUrl",
+    "license",
+    "platforms",
+    "lastActivity",
+    "latestRelease",
+    "maintenance",
+    "confidencePenalty"
+  ],
+  "explanationFacts": [
+    "matchedTerms",
+    "lexicalRank",
+    "semanticRank",
+    "lexicalScore",
+    "fusedScore"
+  ],
+  "unknownFacts": "render_unknown_never_infer",
+  "discoveredProjectExecution": false,
+  "liveNetwork": false,
+  "modelDownload": false,
+  "productEntry": "dist/cli.js"
+}

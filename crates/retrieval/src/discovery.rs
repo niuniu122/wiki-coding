@@ -110,13 +110,26 @@ impl ProjectDiscovery {
                     })
             })
             .collect::<Vec<_>>();
-        if mode == RetrievalMode::Exact || baseline.is_empty() {
+        if mode == RetrievalMode::Exact {
             return ProjectDiscoveryResult {
                 query: query.to_owned(),
                 keywords,
                 mode,
                 degraded_reason: None,
                 hits: baseline.into_iter().take(limit).collect(),
+            };
+        }
+        if baseline.is_empty() {
+            let degraded_reason = match embedding {
+                EmbeddingSelection::Unavailable(reason) => Some(reason),
+                EmbeddingSelection::Verified { .. } => None,
+            };
+            return ProjectDiscoveryResult {
+                query: query.to_owned(),
+                keywords,
+                mode,
+                degraded_reason,
+                hits: Vec::new(),
             };
         }
 
