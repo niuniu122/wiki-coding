@@ -12,18 +12,23 @@ use minimax_core::{
     CompactionError, InvocationEffect, InvocationError, InvocationInput, InvocationMachine,
     InvocationRegistry, InvocationState, LocalCompactor, PermissionMode, RunEffect, RunInput,
     RunMachine, RunState, SessionCommand, SessionEffect, SessionSummary, ToolPort,
+    WikiGenerationError, WikiGenerationFuture, WikiGenerationOutput, WikiGenerationPort,
+    WikiGenerationRequest,
 };
 use minimax_protocol::{
     AgentLimits, AssistantToolCallBatch, CompactionId, CompactionRecord, ConversationItem,
-    JournalRecord, ModelBinding, RecordId, RequestId, RuntimeErrorCode, RuntimeEvent,
-    RuntimeEventV1, RuntimeFailure, SchemaVersion, SessionId, SessionRecord, SessionRecordV1,
-    StreamEvent, ToolDecision, ToolDecisionKind, ToolDefinition, ToolInvocation, ToolResult,
-    ToolResultMessage, ToolTerminalStatus, TurnId, TurnReceipt, TurnRequest,
+    JournalRecord, MessageRole, ModelBinding, ModelMessage, OutputSettings, RecordId, RequestId,
+    RuntimeErrorCode, RuntimeEvent, RuntimeEventV1, RuntimeFailure, SchemaVersion, SessionId,
+    SessionRecord, SessionRecordV1, StreamEvent, TerminalOutcome, ToolDecision, ToolDecisionKind,
+    ToolDefinition, ToolInvocation, ToolResult, ToolResultMessage, ToolTerminalStatus, TurnId,
+    TurnReceipt, TurnRequest, Usage,
 };
 use minimax_provider::{HttpProviderClient, ResolvedCredential};
 use minimax_tools::BuiltinToolPort;
 use minimax_tui::{ApprovalInput, EventRenderer};
-use minimax_vault::{RuntimeStore, RuntimeStoreError};
+use minimax_vault::{
+    FinalizedSessionEvidence, ProjectVault, RuntimeStore, RuntimeStoreError, VaultError,
+};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -39,12 +44,21 @@ pub trait ProviderPort {
 pub struct HttpProviderPort {
     client: HttpProviderClient,
     credential: ResolvedCredential,
+    binding: ModelBinding,
 }
 
 impl HttpProviderPort {
     #[must_use]
-    pub const fn new(client: HttpProviderClient, credential: ResolvedCredential) -> Self {
-        Self { client, credential }
+    pub const fn new(
+        client: HttpProviderClient,
+        credential: ResolvedCredential,
+        binding: ModelBinding,
+    ) -> Self {
+        Self {
+            client,
+            credential,
+            binding,
+        }
     }
 }
 
@@ -64,6 +78,120 @@ impl ProviderPort for HttpProviderPort {
                 .await
         })
     }
+}
+
+impl WikiGenerationPort for HttpProviderPort {
+    fn generate<'a>(&'a self, request: &'a WikiGenerationRequest) -> WikiGenerationFuture<'a> {
+        Box::pin(async move {
+            if request.job.model_binding != self.binding {
+                return Err(WikiGenerationError::BindingMismatch);
+            }
+            let input = wiki_generation_input(request).map_err(|_| WikiGenerationError::Failed)?;
+            let turn = TurnRequest {
+                session_id: SessionId::new(format!("wiki:{}", request.job.job_id.as_str()))
+                    .map_err(|_| WikiGenerationError::Failed)?,
+                turn_id: TurnId::new(format!("wiki:{}:turn", request.job.job_id.as_str()))
+                    .map_err(|_| WikiGenerationError::Failed)?,
+                request_id: RequestId::new(format!("wiki:{}:request", request.job.job_id.as_str()))
+                    .map_err(|_| WikiGenerationError::Failed)?,
+                provider_id: request.job.model_binding.provider_id.clone(),
+                model_id: request.job.model_binding.model_id.clone(),
+                protocol: request.job.model_binding.protocol,
+                messages: vec![
+                    ModelMessage {
+                        role: MessageRole::System,
+                        content: wiki_system_instruction(request.schema_repair_only),
+                    }
+                    .into(),
+                    ModelMessage {
+                        role: MessageRole::User,
+                        content: input,
+                    }
+                    .into(),
+                ],
+                tools: Vec::new(),
+                agent_limits: None,
+                output: OutputSettings::new(request.job.max_output_tokens)
+                    .map_err(|_| WikiGenerationError::Failed)?,
+            }
+            .validate()
+            .map_err(|_| WikiGenerationError::Failed)?;
+            let cancellation = CancellationToken::new();
+            let events = self
+                .client
+                .stream_collect(&turn, self.credential.secret(), &cancellation)
+                .await
+                .map_err(|_| WikiGenerationError::Unavailable)?;
+            let mut raw_json = String::new();
+            let mut usage = Usage::default();
+            let mut completed = false;
+            for event in events {
+                match event {
+                    StreamEvent::VisibleTextDelta { delta } => raw_json.push_str(&delta),
+                    StreamEvent::Usage { usage: value } => usage = value,
+                    StreamEvent::ReasoningFiltered => {}
+                    StreamEvent::Terminal {
+                        outcome: TerminalOutcome::Completed,
+                    } => completed = true,
+                    StreamEvent::Terminal { .. } => return Err(WikiGenerationError::Unavailable),
+                    StreamEvent::ToolCallFragments { .. } => {
+                        return Err(WikiGenerationError::Failed);
+                    }
+                }
+            }
+            if !completed || raw_json.trim().is_empty() {
+                return Err(WikiGenerationError::Failed);
+            }
+            Ok(WikiGenerationOutput { raw_json, usage })
+        })
+    }
+}
+
+fn wiki_system_instruction(schema_repair_only: bool) -> String {
+    let mode = if schema_repair_only {
+        "Repair the previous schema failure."
+    } else {
+        "Summarize only durable project knowledge."
+    };
+    format!(
+        "{mode} Return exactly one JSON object and no Markdown. The object must use schemaVersion=1, the supplied jobId, and a non-empty operations array. Each create/replace page must contain schemaVersion, pageId, topicId, relativePath under wiki/, title, status, sources using supplied sourceId/sourceHash, and body. Never invent evidence, credentials, private reasoning, commands, or facts."
+    )
+}
+
+fn wiki_generation_input(request: &WikiGenerationRequest) -> Result<String, serde_json::Error> {
+    let evidence = request
+        .evidence
+        .iter()
+        .map(|chunk| {
+            serde_json::json!({
+                "sourceId": chunk.source_id.as_str(),
+                "sourceHash": chunk.source_hash.as_str(),
+                "label": chunk.label,
+                "content": chunk.content,
+            })
+        })
+        .collect::<Vec<_>>();
+    let current = request
+        .current
+        .iter()
+        .map(|page| {
+            serde_json::json!({
+                "pageId": page.page_id.as_str(),
+                "topicId": page.topic_id.as_str(),
+                "title": page.title,
+                "content": page.content,
+                "contentHash": page.content_hash.as_str(),
+            })
+        })
+        .collect::<Vec<_>>();
+    serde_json::to_string(&serde_json::json!({
+        "jobId": request.job.job_id.as_str(),
+        "sourceId": request.job.source_id.as_str(),
+        "sourceHash": request.job.source_hash.as_str(),
+        "evidence": evidence,
+        "currentWiki": current,
+        "schemaRepairOnly": request.schema_repair_only,
+    }))
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -390,7 +518,12 @@ impl<P: ProviderPort> RuntimeDriver<P> {
             tool_definitions,
             agent_limits,
         };
-        if driver.store.machine().active_session().is_none() {
+        let active_is_finalized = driver
+            .store
+            .machine()
+            .active_session()
+            .is_some_and(|session| driver.store.session_is_finalized(&session.session_id));
+        if driver.store.machine().active_session().is_none() || active_is_finalized {
             driver.create_session(binding)?;
         }
         Ok(driver)
@@ -421,6 +554,23 @@ impl<P: ProviderPort> RuntimeDriver<P> {
     #[must_use]
     pub fn session(&self, session_id: &SessionId) -> Option<SessionRecord> {
         self.store.machine().sessions().get(session_id).cloned()
+    }
+
+    pub fn finalize_active_session(
+        &self,
+        vault: &ProjectVault,
+        finalized_at_unix_ms: u64,
+    ) -> Result<FinalizedSessionEvidence, VaultError> {
+        let session_id = self
+            .active_session_id()
+            .ok_or(VaultError::SessionNotFound)?;
+        self.store
+            .finalize_session(vault, &session_id, finalized_at_unix_ms)
+    }
+
+    #[must_use]
+    pub const fn provider(&self) -> &P {
+        &self.provider
     }
 
     pub fn create_session(&mut self, binding: ModelBinding) -> Result<SessionId, DriverError> {

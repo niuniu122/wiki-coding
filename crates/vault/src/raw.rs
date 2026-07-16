@@ -31,6 +31,42 @@ pub struct FinalizedSessionEvidence {
     pub events_hash: ContentHash,
 }
 
+pub fn read_finalized_session(
+    vault: &ProjectVault,
+    evidence: &FinalizedSessionEvidence,
+) -> Result<minimax_protocol::SessionRecord, VaultError> {
+    let path = vault
+        .root()
+        .join("raw/sessions")
+        .join(safe_session_directory(&evidence.session_id))
+        .join("events.jsonl");
+    let bytes = std::fs::read(path).map_err(|_| VaultError::Io)?;
+    if content_hash(&bytes) != evidence.events_hash {
+        return Err(VaultError::Conflict);
+    }
+    let records = parse_records(&bytes)?;
+    if records
+        .iter()
+        .any(|record| record_session_id(record) != Some(&evidence.session_id))
+    {
+        return Err(VaultError::RecoveryRequired);
+    }
+    let machine = SessionMachine::replay(records).map_err(|_| VaultError::RecoveryRequired)?;
+    let session = machine
+        .sessions()
+        .get(&evidence.session_id)
+        .cloned()
+        .ok_or(VaultError::SessionNotFound)?;
+    if session.binding != evidence.binding
+        || session.created_at_unix_ms != evidence.created_at_unix_ms
+        || session.updated_at_unix_ms != evidence.updated_at_unix_ms
+        || session.turns.len() != usize::try_from(evidence.turn_count).unwrap_or(usize::MAX)
+    {
+        return Err(VaultError::Conflict);
+    }
+    Ok(session)
+}
+
 pub fn finalize_runtime_session(
     project_root: impl AsRef<Path>,
     vault: &ProjectVault,
@@ -42,7 +78,37 @@ pub fn finalize_runtime_session(
     let journal_path = runtime_dir.join("sessions.jsonl");
     let mut bytes = std::fs::read(&journal_path).map_err(|_| VaultError::Io)?;
     repair_final_fragment(vault.root(), &journal_path, &mut bytes)?;
-    let all_records = parse_records(&bytes)?;
+    finalize_runtime_bytes(
+        &runtime_dir,
+        vault,
+        session_id,
+        finalized_at_unix_ms,
+        &bytes,
+    )
+}
+
+pub(crate) fn finalize_runtime_session_from_open_store(
+    runtime_dir: &Path,
+    journal_path: &Path,
+    vault: &ProjectVault,
+    session_id: &SessionId,
+    finalized_at_unix_ms: u64,
+) -> Result<FinalizedSessionEvidence, VaultError> {
+    let bytes = std::fs::read(journal_path).map_err(|_| VaultError::Io)?;
+    if !bytes.is_empty() && !bytes.ends_with(b"\n") {
+        return Err(VaultError::RecoveryRequired);
+    }
+    finalize_runtime_bytes(runtime_dir, vault, session_id, finalized_at_unix_ms, &bytes)
+}
+
+fn finalize_runtime_bytes(
+    runtime_dir: &Path,
+    vault: &ProjectVault,
+    session_id: &SessionId,
+    finalized_at_unix_ms: u64,
+    bytes: &[u8],
+) -> Result<FinalizedSessionEvidence, VaultError> {
+    let all_records = parse_records(bytes)?;
     let machine =
         SessionMachine::replay(all_records.clone()).map_err(|_| VaultError::RecoveryRequired)?;
     let session = machine
@@ -110,7 +176,7 @@ pub fn finalize_runtime_session(
         }
     })?;
 
-    let marker_path = finalization_marker_path(&runtime_dir, session_id);
+    let marker_path = finalization_marker_path(runtime_dir, session_id);
     if let Some(parent) = marker_path.parent() {
         std::fs::create_dir_all(parent).map_err(|_| VaultError::Io)?;
     }

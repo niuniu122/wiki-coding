@@ -1,4 +1,5 @@
 pub mod app;
+pub mod binding;
 pub mod config;
 pub mod doctor;
 pub mod driver;
@@ -8,6 +9,7 @@ pub mod maintenance;
 pub mod migration;
 pub mod wiki;
 
+pub use binding::{ResolvedProjectVault, resolve_project_vault};
 pub use doctor::{CheckStatus, DoctorCheck, DoctorReport, inspect};
 pub use driver::{
     DriverError, DriverIds, HeadlessApprovalPort, HttpProviderPort, InteractiveApprovalPort,
@@ -25,8 +27,9 @@ pub use migration::{
     verify_migration,
 };
 pub use wiki::{
-    MainModelWikiDriver, ProjectVaultBinding, VaultKnowledgePort, WikiDriverError, WikiFaultPoint,
-    WikiRunReport,
+    MainModelWikiDriver, PreparedWikiInputs, ProjectVaultBinding, VaultKnowledgePort,
+    WikiDriverError, WikiFaultPoint, WikiRunReport, finalize_active_session_wiki,
+    prepare_wiki_inputs,
 };
 
 /// Human-readable boundary used by architecture checks and documentation.

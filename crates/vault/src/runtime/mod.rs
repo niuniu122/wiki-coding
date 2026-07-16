@@ -8,7 +8,9 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use minimax_core::{SessionCommand, SessionEffect, SessionMachine};
-use minimax_protocol::{RecordId, RuntimeErrorCode, SessionRecordV1};
+use minimax_protocol::{RecordId, RuntimeErrorCode, SessionId, SessionRecordV1};
+
+use crate::{FinalizedSessionEvidence, ProjectVault, VaultError};
 
 use self::index::RuntimeIndex;
 use self::journal::{JournalLoad, RuntimeJournal};
@@ -112,6 +114,26 @@ impl RuntimeStore {
         self.machine = next;
         self.current_index = RuntimeIndex::ensure(&self.runtime_dir, &self.journal, &self.machine)?;
         Ok(())
+    }
+
+    #[must_use]
+    pub fn session_is_finalized(&self, session_id: &SessionId) -> bool {
+        crate::raw::finalization_marker_path(&self.runtime_dir, session_id).is_file()
+    }
+
+    pub fn finalize_session(
+        &self,
+        vault: &ProjectVault,
+        session_id: &SessionId,
+        finalized_at_unix_ms: u64,
+    ) -> Result<FinalizedSessionEvidence, VaultError> {
+        crate::raw::finalize_runtime_session_from_open_store(
+            &self.runtime_dir,
+            self.journal.path(),
+            vault,
+            session_id,
+            finalized_at_unix_ms,
+        )
     }
 
     pub fn apply_command(

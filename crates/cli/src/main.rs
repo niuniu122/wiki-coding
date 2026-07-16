@@ -9,11 +9,12 @@ use minimax_cli::{
     ForgetPlanOutput, GcPlanOutput, HeadlessApprovalPort, HttpProviderPort, IndexAction, IndexArgs,
     InteractiveApprovalPort, JsonlWriter, MigrateAction, MigrateArgs, ProjectIndexAction, RunArgs,
     RuntimeDriver, VaultAction, VaultArgs, VaultForgetAction, VaultGcAction, VaultStatusOutput,
-    WikiIndexAction, apply_migration, build_migration_plan, capability_search, capability_status,
-    exit_for_error, exit_for_report, inspect, inventory_migration, project_search, project_status,
-    rollback_migration, verify_migration, wiki_search, wiki_status,
+    WikiIndexAction, WikiRunReport, apply_migration, build_migration_plan, capability_search,
+    capability_status, exit_for_error, exit_for_report, finalize_active_session_wiki, inspect,
+    inventory_migration, project_search, project_status, resolve_project_vault, rollback_migration,
+    verify_migration, wiki_search, wiki_status,
 };
-use minimax_core::{CompactionBudget, PermissionMode};
+use minimax_core::{CompactionBudget, PermissionMode, WikiGenerationPort};
 use minimax_protocol::{
     ContentHash, EvidenceId, GcId, KnowledgePatch, ModelId, ProjectId, SessionId,
 };
@@ -495,9 +496,94 @@ fn unix_time_ms() -> u64 {
         .unwrap_or_default()
 }
 
+fn prepare_project_vault(common: &CommonArgs) -> Option<minimax_cli::ProjectVaultBinding> {
+    match resolve_project_vault(
+        &common.project,
+        common.vault.as_deref(),
+        common.project_id.as_deref(),
+        unix_time_ms(),
+    ) {
+        Ok(resolved) => {
+            if resolved.created {
+                eprintln!(
+                    "Vault bound: {} | project={} | plaintext local files; override only before first binding with --vault and --project-id",
+                    resolved.binding.vault_root.display(),
+                    resolved.binding.project_id.as_str()
+                );
+            }
+            Some(resolved.binding)
+        }
+        Err(error) => {
+            eprintln!("Vault binding failed: {error}");
+            None
+        }
+    }
+}
+
+async fn finalize_active_wiki<P>(
+    driver: &RuntimeDriver<P>,
+    binding: &minimax_cli::ProjectVaultBinding,
+) -> Result<Option<WikiRunReport>, minimax_cli::WikiDriverError>
+where
+    P: minimax_cli::ProviderPort + WikiGenerationPort,
+{
+    finalize_active_session_wiki(driver, binding, unix_time_ms()).await
+}
+
+fn render_wiki_report(jsonl: bool, report: &WikiRunReport) -> ExitClass {
+    if jsonl {
+        let mut writer = JsonlWriter::new(io::stdout().lock());
+        for event in &report.events {
+            if writer.write_json(event).is_err() {
+                return ExitClass::Workspace;
+            }
+        }
+        if writer.write_json(&report.receipt).is_err() {
+            return ExitClass::Workspace;
+        }
+    } else {
+        println!(
+            "Wiki workflow | outcome={:?} | code={} | model={}/{} | usage={:?}",
+            report.receipt.outcome,
+            report.receipt.code,
+            report.receipt.model_binding.provider_id.as_str(),
+            report.receipt.model_binding.model_id.as_str(),
+            report.receipt.usage
+        );
+    }
+    ExitClass::Completed
+}
+
+async fn finish_chat_session<P>(
+    driver: &RuntimeDriver<P>,
+    binding: &minimax_cli::ProjectVaultBinding,
+    base_exit: ExitClass,
+) -> ExitClass
+where
+    P: minimax_cli::ProviderPort + WikiGenerationPort,
+{
+    match finalize_active_wiki(driver, binding).await {
+        Ok(Some(report)) => {
+            if render_wiki_report(false, &report) == ExitClass::Completed {
+                base_exit
+            } else {
+                ExitClass::Workspace
+            }
+        }
+        Ok(None) => base_exit,
+        Err(error) => {
+            eprintln!("Wiki workflow failed: {error}");
+            ExitClass::Workspace
+        }
+    }
+}
+
 async fn execute_run(args: RunArgs) -> ExitClass {
     let Some((config, provider)) = prepare_provider(&args.common, CredentialMode::Headless) else {
         return ExitClass::Usage;
+    };
+    let Some(vault_binding) = prepare_project_vault(&args.common) else {
+        return ExitClass::Workspace;
     };
     let driver = if args.agent {
         RuntimeDriver::open_with_builtin_tools(
@@ -574,7 +660,23 @@ async fn execute_run(args: RunArgs) -> ExitClass {
         report
     };
     match report {
-        Ok(report) => exit_for_report(&report),
+        Ok(report) => {
+            let run_exit = exit_for_report(&report);
+            match finalize_active_wiki(&driver, &vault_binding).await {
+                Ok(Some(wiki)) => {
+                    if render_wiki_report(args.jsonl, &wiki) == ExitClass::Completed {
+                        run_exit
+                    } else {
+                        ExitClass::Workspace
+                    }
+                }
+                Ok(None) => run_exit,
+                Err(error) => {
+                    eprintln!("Wiki workflow failed: {error}");
+                    ExitClass::Workspace
+                }
+            }
+        }
         Err(error) => {
             eprintln!("run failed: {error}");
             exit_for_error(&error)
@@ -586,6 +688,9 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
     let Some((config, provider)) = prepare_provider(&args.common, CredentialMode::Interactive)
     else {
         return ExitClass::Usage;
+    };
+    let Some(vault_binding) = prepare_project_vault(&args.common) else {
+        return ExitClass::Workspace;
     };
     if let Some(prompt) = args.prompt {
         let mut driver = match RuntimeDriver::open(
@@ -600,7 +705,8 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
                 return exit_for_error(&error);
             }
         };
-        return render_chat_turn(&mut driver, prompt, config.max_output_tokens).await;
+        let exit = render_chat_turn(&mut driver, prompt, config.max_output_tokens).await;
+        return finish_chat_session(&driver, &vault_binding, exit).await;
     }
 
     let hooks = CrosstermTerminalHooks;
@@ -630,7 +736,7 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
             return exit_for_error(&error);
         }
     };
-    println!("MiniMax Codex Rust development shell. Use /exit to leave.");
+    println!("MiniMax Codex Rust shell. Use /exit to leave.");
     let mut trace_expanded = false;
     loop {
         print!("> ");
@@ -639,9 +745,11 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
         }
         let line = match session.read_line() {
             Ok(Some(line)) => line,
-            Ok(None) => return ExitClass::Completed,
+            Ok(None) => {
+                return finish_chat_session(&driver, &vault_binding, ExitClass::Completed).await;
+            }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => {
-                return ExitClass::Interrupted;
+                return finish_chat_session(&driver, &vault_binding, ExitClass::Interrupted).await;
             }
             Err(_) => return ExitClass::Workspace,
         };
@@ -668,7 +776,10 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
                     continue;
                 }
                 match intent {
-                    CommandIntent::Exit => return ExitClass::Completed,
+                    CommandIntent::Exit => {
+                        return finish_chat_session(&driver, &vault_binding, ExitClass::Completed)
+                            .await;
+                    }
                     CommandIntent::ChatSubmit(prompt) => {
                         let exit =
                             render_chat_turn(&mut driver, prompt, config.max_output_tokens).await;
@@ -710,10 +821,22 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
                             permission_name(mode)
                         );
                     }
-                    CommandIntent::NewSession => match driver.create_session(config.binding()) {
-                        Ok(id) => println!("new session: {}", id.as_str()),
-                        Err(error) => eprintln!("new session failed: {error}"),
-                    },
+                    CommandIntent::NewSession => {
+                        match finalize_active_wiki(&driver, &vault_binding).await {
+                            Ok(Some(wiki)) => {
+                                let _ = render_wiki_report(false, &wiki);
+                            }
+                            Ok(None) => {}
+                            Err(error) => {
+                                eprintln!("new session failed: Wiki workflow failed: {error}");
+                                continue;
+                            }
+                        }
+                        match driver.create_session(config.binding()) {
+                            Ok(id) => println!("new session: {}", id.as_str()),
+                            Err(error) => eprintln!("new session failed: {error}"),
+                        }
+                    }
                     CommandIntent::ListSessions => match driver.list_sessions() {
                         Ok(sessions) => {
                             let rows = sessions
@@ -978,7 +1101,8 @@ fn prepare_provider(
             return None;
         }
     };
-    Some((config, HttpProviderPort::new(client, credential)))
+    let binding = config.binding();
+    Some((config, HttpProviderPort::new(client, credential, binding)))
 }
 
 fn resolve_common(

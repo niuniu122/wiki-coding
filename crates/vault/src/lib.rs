@@ -26,7 +26,7 @@ pub use inbox::{complete_inbox_import, import_inbox_file};
 pub use lint::{lint_vault, repair_vault};
 pub use page::{normalize_wiki_slug, parse_wiki_page, read_wiki_pages, render_wiki_page};
 pub use path::content_hash as hash_vault_bytes;
-pub use raw::{FinalizedSessionEvidence, finalize_runtime_session};
+pub use raw::{FinalizedSessionEvidence, finalize_runtime_session, read_finalized_session};
 pub use rebuild::rebuild_compiled_wiki;
 pub use runtime::{RuntimeStore, RuntimeStoreError};
 pub use transaction::{

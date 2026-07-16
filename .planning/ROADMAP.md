@@ -198,7 +198,7 @@ Plans:
 | 4. Vault and Main-Model Wiki | 3/3 | Complete   | 2026-07-16 |
 | 5. Retrieval and Project Discovery | 3/3 | Complete   | 2026-07-16 |
 | 6. Migration, Release, and Cutover | 3/3 | Complete | 2026-07-16 |
-| 7. Close Milestone Integration Gaps | 0/4 | In progress | - |
+| 7. Close Milestone Integration Gaps | 1/4 | In progress | - |
 
 ### Phase 7: Close milestone integration gaps
 
@@ -213,11 +213,11 @@ Plans:
   4. One official npm artifact contains the fixed Rust launcher, native binary, and explicit TypeScript legacy command; its installed default is smoke-tested.
   5. Machine-readable hosted evidence is bound to the cutover product fingerprint and final Windows/Linux jobs.
 
-**Plans:** 0/4 plans complete
+**Plans:** 1/4 plans complete
 
 Plans:
 
-- [ ] 07-01: Wire runtime finalization, Vault binding, and the production main-model Wiki workflow
+- [x] 07-01: Wire runtime finalization, Vault binding, and the production main-model Wiki workflow
 - [ ] 07-02: Restore automatic BM25-first project discovery and executable command contracts
 - [ ] 07-03: Build one complete Rust-plus-legacy distribution and bind hosted cutover evidence
 - [ ] 07-04: Run cross-phase chain tests, hosted native gates, and the final milestone audit

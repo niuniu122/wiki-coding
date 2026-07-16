@@ -3,10 +3,10 @@ use std::fmt;
 use std::path::PathBuf;
 
 use minimax_core::{
-    DurabilityGate, DurabilitySignals, KnowledgeCommitError, KnowledgeEffect, KnowledgeGuardError,
-    KnowledgeInput, KnowledgePatchValidator, KnowledgePort, KnowledgeValidationContext,
-    MainModelWikiWorkflow, WikiCurrentExcerpt, WikiEvidenceChunk, WikiGenerationError,
-    WikiGenerationPort,
+    CurrentWikiPage, DurabilityGate, DurabilitySignals, KnowledgeCommitError, KnowledgeEffect,
+    KnowledgeGuardError, KnowledgeInput, KnowledgePatchValidator, KnowledgePort,
+    KnowledgeValidationContext, MainModelWikiWorkflow, WikiCurrentExcerpt, WikiEvidenceChunk,
+    WikiGenerationError, WikiGenerationPort,
 };
 use minimax_protocol::{
     KnowledgeOperation, KnowledgePage, KnowledgePageStatus, KnowledgePatch, KnowledgeReceipt,
@@ -15,8 +15,11 @@ use minimax_protocol::{
 use minimax_vault::{
     FinalizedSessionEvidence, KnowledgeWorkflowStore, PreparedWikiTransaction, ProjectVault,
     StoredGeneration, VaultError, WikiChange, hash_vault_bytes, knowledge_job_for_session,
-    read_wiki_pages, recover_wiki_transaction, render_wiki_page, wiki_transaction_exists,
+    read_finalized_session, read_wiki_pages, recover_wiki_transaction, render_wiki_page,
+    wiki_transaction_exists,
 };
+
+use crate::driver::{ProviderPort, RuntimeDriver};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ProjectVaultBinding {
@@ -47,6 +50,180 @@ pub enum WikiFaultPoint {
 pub struct WikiRunReport {
     pub events: Vec<WikiWorkflowEvent>,
     pub receipt: KnowledgeReceipt,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PreparedWikiInputs {
+    pub signals: DurabilitySignals,
+    pub evidence: Vec<WikiEvidenceChunk>,
+    pub current: Vec<WikiCurrentExcerpt>,
+    pub validation: KnowledgeValidationContext,
+}
+
+pub fn prepare_wiki_inputs(
+    binding: &ProjectVaultBinding,
+    evidence: &FinalizedSessionEvidence,
+) -> Result<PreparedWikiInputs, WikiDriverError> {
+    let vault = binding.open()?;
+    let session = read_finalized_session(&vault, evidence)?;
+    let transcript = session
+        .turns
+        .iter()
+        .map(|turn| {
+            serde_json::json!({
+                "turnId": turn.turn_id.as_str(),
+                "status": turn.status,
+                "user": turn.user_message.content,
+                "assistant": turn.assistant_message.as_ref().map(|message| message.content.as_str()),
+            })
+        })
+        .collect::<Vec<_>>();
+    let mut content = serde_json::to_string(&transcript).map_err(|_| WikiDriverError::Workflow)?;
+    truncate_utf8(&mut content, 192 * 1024);
+    let signals = durability_signals(&content);
+    let chunks = vec![WikiEvidenceChunk {
+        source_id: evidence.evidence_id.clone(),
+        source_hash: evidence.events_hash.clone(),
+        label: format!("session {}", evidence.session_id.as_str()),
+        content,
+    }];
+
+    let pages = read_wiki_pages(&vault)?;
+    let mut current = Vec::new();
+    let mut validation_pages = Vec::new();
+    for page in pages.into_values() {
+        let rendered = render_wiki_page(&page)?;
+        let content_hash = hash_vault_bytes(&rendered);
+        if page.status == KnowledgePageStatus::Current {
+            let mut page_content = page.body.clone();
+            truncate_utf8(&mut page_content, 16 * 1024);
+            current.push(WikiCurrentExcerpt {
+                page_id: page.page_id.clone(),
+                topic_id: page.topic_id.clone(),
+                title: page.title.clone(),
+                content: page_content,
+                content_hash: content_hash.clone(),
+            });
+        }
+        validation_pages.push(CurrentWikiPage {
+            page_id: page.page_id,
+            topic_id: page.topic_id,
+            relative_path: page.relative_path,
+            status: page.status,
+            superseded_by: page.superseded_by,
+            content_hash,
+        });
+    }
+    current.sort_by(|left, right| left.page_id.cmp(&right.page_id));
+    current.truncate(32);
+    validation_pages.sort_by(|left, right| left.page_id.cmp(&right.page_id));
+    let mut allowed_evidence = BTreeMap::new();
+    allowed_evidence.insert(evidence.evidence_id.clone(), evidence.events_hash.clone());
+    Ok(PreparedWikiInputs {
+        signals,
+        evidence: chunks,
+        current,
+        validation: KnowledgeValidationContext {
+            job_id: knowledge_job_for_session(evidence)?.job_id,
+            evidence: allowed_evidence,
+            pages: validation_pages,
+        },
+    })
+}
+
+pub async fn finalize_active_session_wiki<P>(
+    driver: &RuntimeDriver<P>,
+    binding: &ProjectVaultBinding,
+    finalized_at_unix_ms: u64,
+) -> Result<Option<WikiRunReport>, WikiDriverError>
+where
+    P: ProviderPort + WikiGenerationPort,
+{
+    let Some(session_id) = driver.active_session_id() else {
+        return Ok(None);
+    };
+    if driver
+        .session(&session_id)
+        .is_none_or(|session| session.turns.is_empty())
+    {
+        return Ok(None);
+    }
+    let vault = binding.open()?;
+    let evidence = driver.finalize_active_session(&vault, finalized_at_unix_ms)?;
+    drop(vault);
+    let prepared = prepare_wiki_inputs(binding, &evidence)?;
+    let knowledge = VaultKnowledgePort::new(binding.clone());
+    MainModelWikiDriver::new(binding.clone(), driver.provider(), knowledge)
+        .run(
+            &evidence,
+            prepared.signals,
+            prepared.evidence,
+            prepared.current,
+            prepared.validation,
+        )
+        .await
+        .map(Some)
+}
+
+fn durability_signals(content: &str) -> DurabilitySignals {
+    let lower = content.to_lowercase();
+    DurabilitySignals {
+        decisions: marker_count(&lower, &["决定", "选择", "采用", "decision", "choose"]),
+        constraints: marker_count(
+            &lower,
+            &[
+                "必须",
+                "不能",
+                "不要",
+                "只允许",
+                "must",
+                "never",
+                "constraint",
+            ],
+        ),
+        preferences: marker_count(&lower, &["希望", "偏好", "prefer", "want"]),
+        architecture_changes: marker_count(
+            &lower,
+            &[
+                "架构",
+                "architecture",
+                "sqlite",
+                "vault",
+                "bm25",
+                "embedding",
+            ],
+        ),
+        durable_behavior_changes: marker_count(
+            &lower,
+            &["实现", "修改", "修复", "implement", "change", "fix"],
+        ),
+        diagnosed_lessons: marker_count(&lower, &["原因", "复盘", "root cause", "lesson"]),
+        todos_or_risks: marker_count(&lower, &["待办", "风险", "todo", "risk", "pending"]),
+        repeated_only: false,
+        lookup_only: lower.contains('?') || lower.contains('？'),
+        inconclusive_failure: lower.contains("failed") || lower.contains("失败"),
+    }
+}
+
+fn marker_count(content: &str, markers: &[&str]) -> u16 {
+    u16::try_from(
+        markers
+            .iter()
+            .filter(|marker| content.contains(**marker))
+            .count(),
+    )
+    .unwrap_or(u16::MAX)
+}
+
+fn truncate_utf8(value: &mut String, max_bytes: usize) {
+    if value.len() <= max_bytes {
+        return;
+    }
+    let mut boundary = max_bytes;
+    while !value.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    value.truncate(boundary);
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

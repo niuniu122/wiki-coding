@@ -5,16 +5,16 @@ milestone_name: milestone
 current_phase: 7
 current_phase_name: Close Milestone Integration Gaps
 status: executing
-stopped_at: Phase 7 closure planned from the v1.0 integration audit
-last_updated: "2026-07-16T19:20:00Z"
+stopped_at: Plan 07-01 complete; implementing automatic discovery and command contracts
+last_updated: "2026-07-16T20:00:00Z"
 last_activity: 2026-07-16
-last_activity_desc: Milestone audit found six cross-phase blockers and created Phase 7 closure work
+last_activity_desc: Runtime sessions now finalize into the bound Vault and production Wiki workflow
 progress:
   total_phases: 7
   completed_phases: 6
   total_plans: 22
-  completed_plans: 18
-  percent: 82
+  completed_plans: 19
+  percent: 86
 ---
 
 # Project State
@@ -29,11 +29,11 @@ See: .planning/PROJECT.md (updated 2026-07-15)
 ## Current Position
 
 Phase: 7 (Close Milestone Integration Gaps) — EXECUTING
-Plan: 07-01 of 4
+Plan: 07-02 of 4
 Status: Closing audit blockers
 Last activity: 2026-07-16 — v1.0 integration audit created the closure phase
 
-Progress: [████████░░] 82%
+Progress: [█████████░] 86%
 
 ## Performance Metrics
 

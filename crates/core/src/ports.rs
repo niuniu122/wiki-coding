@@ -41,6 +41,15 @@ pub trait WikiGenerationPort: Send + Sync {
     fn generate<'a>(&'a self, request: &'a WikiGenerationRequest) -> WikiGenerationFuture<'a>;
 }
 
+impl<T> WikiGenerationPort for &T
+where
+    T: WikiGenerationPort + ?Sized,
+{
+    fn generate<'a>(&'a self, request: &'a WikiGenerationRequest) -> WikiGenerationFuture<'a> {
+        (**self).generate(request)
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum KnowledgeCommitError {
     Conflict,

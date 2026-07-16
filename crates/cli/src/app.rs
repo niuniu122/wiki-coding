@@ -269,6 +269,12 @@ pub struct CommonArgs {
     #[arg(long)]
     pub project_config: Option<PathBuf>,
     #[arg(long)]
+    pub vault: Option<PathBuf>,
+    #[arg(long)]
+    pub project_id: Option<String>,
+    #[arg(long)]
+    pub embedding_resource: Option<PathBuf>,
+    #[arg(long)]
     pub provider_id: Option<String>,
     #[arg(long)]
     pub endpoint: Option<String>,
