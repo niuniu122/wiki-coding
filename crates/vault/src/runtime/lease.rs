@@ -11,7 +11,10 @@ pub(crate) struct WorkspaceLease {
 
 impl WorkspaceLease {
     pub(crate) fn acquire(runtime_dir: &Path) -> Result<Self, RuntimeStoreError> {
-        let path = runtime_dir.join("writer.lock");
+        Self::acquire_path(&runtime_dir.join("writer.lock"))
+    }
+
+    pub(crate) fn acquire_path(path: &Path) -> Result<Self, RuntimeStoreError> {
         let file = OpenOptions::new()
             .read(true)
             .write(true)

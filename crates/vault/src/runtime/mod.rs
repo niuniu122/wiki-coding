@@ -1,6 +1,6 @@
 mod index;
 mod journal;
-mod lease;
+pub(crate) mod lease;
 mod recovery;
 
 use std::collections::BTreeMap;
@@ -25,6 +25,7 @@ pub enum RuntimeStoreError {
     RecordTooLarge,
     IndexTooLarge,
     IndexConflict,
+    Finalized,
     Command(RuntimeErrorCode),
 }
 
@@ -37,6 +38,7 @@ impl fmt::Display for RuntimeStoreError {
             Self::RecordTooLarge => "a runtime journal record exceeds the one MiB limit",
             Self::IndexTooLarge => "the derived runtime index exceeds the one MiB limit",
             Self::IndexConflict => "the derived runtime index conflicts with the journal",
+            Self::Finalized => "the session is finalized and cannot accept more runtime records",
             Self::Command(code) => return code.fmt(formatter),
         };
         formatter.write_str(message)
@@ -90,6 +92,11 @@ impl RuntimeStore {
     }
 
     pub fn append(&mut self, record: SessionRecordV1) -> Result<(), RuntimeStoreError> {
+        if let Some(session_id) = record_session_id(&record)
+            && crate::raw::finalization_marker_path(&self.runtime_dir, session_id).is_file()
+        {
+            return Err(RuntimeStoreError::Finalized);
+        }
         if let Some(existing) = self.records_by_id.get(&record.record_id) {
             return if existing == &record {
                 Ok(())
@@ -139,5 +146,24 @@ impl RuntimeStore {
     #[must_use]
     pub fn repair_directory(&self) -> PathBuf {
         self.runtime_dir.join("repairs")
+    }
+}
+
+pub(crate) fn record_session_id(record: &SessionRecordV1) -> Option<&minimax_protocol::SessionId> {
+    use minimax_protocol::JournalRecord;
+
+    match &record.record {
+        JournalRecord::SessionCreated { session } => Some(&session.session_id),
+        JournalRecord::SessionActivated { session_id, .. }
+        | JournalRecord::TurnStarted { session_id, .. }
+        | JournalRecord::TurnDelta { session_id, .. }
+        | JournalRecord::TurnTerminal { session_id, .. }
+        | JournalRecord::ToolRequested { session_id, .. }
+        | JournalRecord::ToolDecisionRecorded { session_id, .. }
+        | JournalRecord::ToolStarted { session_id, .. }
+        | JournalRecord::ToolTerminal { session_id, .. }
+        | JournalRecord::RecoveryApplied { session_id, .. }
+        | JournalRecord::CompactionStored { session_id, .. }
+        | JournalRecord::TraceStored { session_id, .. } => Some(session_id),
     }
 }
