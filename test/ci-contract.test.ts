@@ -193,7 +193,7 @@ test("offline evaluation scripts are exact and never alias the live smoke comman
   const packageJson = JSON.parse(await readFile(resolve("package.json"), "utf8")) as {scripts?: Record<string, string>};
   assert.equal(packageJson.scripts?.["eval:retrieval"], "tsx src/eval/capability-retrieval-report.ts");
   assert.equal(packageJson.scripts?.["eval:provider"], "tsx src/eval/provider-conformance.ts");
-  assert.equal(packageJson.scripts?.["check:rust"], "cargo fmt --all -- --check && cargo-clippy clippy --workspace --all-targets --locked -- -D warnings");
+  assert.equal(packageJson.scripts?.["check:rust"], "cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked -- -D warnings");
   assert.equal(packageJson.scripts?.["test:rust"], "cargo test --workspace --locked");
   assert.equal(packageJson.scripts?.["verify:rust-contracts"], "cargo run -p minimax-compat-harness --locked -- verify");
   assert.equal(packageJson.scripts?.["build:rust:release"], "cargo build -p minimax-cli --release --locked");
