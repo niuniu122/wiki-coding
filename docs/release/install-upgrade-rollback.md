@@ -2,7 +2,7 @@
 
 ## Supported base artifacts
 
-The v1 release matrix is `windows-x86_64-msvc` and `linux-x86_64-gnu`. Each release has one versioned `.tar.gz`, a `.sha256` sidecar, `RELEASE-MANIFEST.json`, the Rust executable, and both project licenses. A `*-gnullvm-dev` archive is local development evidence only and is not a supported Windows release.
+The v1 release matrix is `windows-x86_64-msvc` and `linux-x86_64-gnu`. Each release has one versioned `.tar.gz`, a `.sha256` sidecar, `RELEASE-MANIFEST.json`, the shell-free `bin/minimax-codex.cjs` launcher, one Rust executable, and both project licenses. A `*-gnullvm-dev` archive is local development evidence only and is not a supported Windows release.
 
 Before installation, compare the archive SHA-256 with the sidecar and inspect `RELEASE-MANIFEST.json`. The manifest must name the expected version/platform, match the executable hash, and say `embeddingIncluded: false`.
 
@@ -11,8 +11,9 @@ Before installation, compare the archive SHA-256 with the sidecar and inspect `R
 1. Download the base archive and matching `.sha256` from the same version.
 2. Verify SHA-256 with the operating-system checksum tool.
 3. Extract into a versioned directory such as `minimax-codex/versions/0.1.0`.
-4. Point the stable `minimax-codex` launcher location at that version only after `minimax-codex doctor` succeeds.
-5. Keep the prior versioned directory until the new version has passed normal work.
+4. Run the native executable's `doctor` command, then confirm `node bin/minimax-codex.cjs doctor` reaches that same executable.
+5. Point the stable `minimax-codex` command at that version only after both checks succeed.
+6. Keep the prior versioned directory until the new version has passed normal work.
 
 The archive and launcher never download an embedding model, read a credential, or migrate data automatically.
 
@@ -24,7 +25,9 @@ Never overwrite the existing version directory. This keeps binary rollback indep
 
 ## Binary rollback
 
-Point the stable launcher back to the previous verified versioned directory. Migration receipts and imported evidence remain untouched. During the support window, `minimax-codex-legacy` runs the TypeScript entry directly.
+Point the stable launcher back to the previous verified versioned directory. Migration receipts and imported evidence remain untouched. During the v0.1 support window (and for at least 90 days after the first published Rust-default build), `minimax-codex-legacy` runs the TypeScript entry directly. It is never selected automatically.
+
+The detailed entrypoint and removal contract is in `docs/release/cutover.md`.
 
 ## Data rollback
 

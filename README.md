@@ -1,15 +1,36 @@
 # MiniMax Codex
 
 A contract-first, Codex-style interactive CLI for MiniMax and compatible
-Providers. The CLI keeps Ink at the view boundary while the runtime kernel owns
-session, Provider, context, storage, and command-lifecycle policy.
+Providers. The supported default is the Rust runtime: typed protocol/core ports,
+Provider adapters, bounded tools, BM25-first retrieval, and an Obsidian-compatible
+per-project Vault. SQLite is not used.
 
 ## Run
 
+Supported Windows x64 MSVC and Linux x64 GNU releases are versioned archives.
+Verify the `.sha256`, extract the archive, then run the native executable or its
+packaged launcher:
+
 ```bash
+node bin/minimax-codex.cjs doctor
+node bin/minimax-codex.cjs run --prompt "inspect this project"
+```
+
+When installed as a platform npm release, `minimax-codex` is that fixed Rust
+launcher. `minimax-codex-legacy` is the explicit TypeScript fallback during the
+documented support window; the launcher never selects it automatically.
+
+For source development:
+
+```bash
+cargo run -p minimax-cli -- doctor
 npm install
 npm run dev
 ```
+
+`npm run dev` is the legacy TypeScript development reference, not the default
+release entry. See `docs/release/install-upgrade-rollback.md` and
+`docs/release/cutover.md` before installation or migration.
 
 Inside the CLI:
 
