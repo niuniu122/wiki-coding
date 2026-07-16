@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "tokenizerVersion": "mixed-zh-en-v1",
+  "domains": ["capability", "project", "wiki"],
+  "exactPrecedence": true,
+  "bm25": {"k1": 1.2, "b": 0.75},
+  "noManufacturedMatches": true,
+  "wikiOrdinarySearch": "current_only",
+  "snapshotPublication": "expected_hash_atomic"
+}

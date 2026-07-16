@@ -5,6 +5,7 @@
 
 mod event;
 mod knowledge;
+mod retrieval;
 mod runtime;
 mod session;
 mod tool;
@@ -21,6 +22,10 @@ pub use knowledge::{
     KnowledgeValidationError, MAX_KNOWLEDGE_BODY_BYTES, MAX_KNOWLEDGE_OPERATIONS,
     MAX_KNOWLEDGE_SOURCES, PageId, SourceCitation, TopicId, WikiWorkflowEvent, WikiWorkflowState,
     WikiWorkflowUsage,
+};
+pub use retrieval::{
+    IndexDomain, RetrievalDegradedReason, RetrievalExplanation, RetrievalHitRecord, RetrievalMode,
+    RetrievalResponse,
 };
 pub use runtime::{
     AgentLimits, AssistantToolCallBatch, ConversationItem, DiagnosticCode, MessageRole, ModelId,
