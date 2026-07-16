@@ -141,7 +141,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 04-03: Implement lint/rebuild plus GC, trash/undo/purge, and forget workflows
+- [x] 04-03: Implement lint/rebuild plus GC, trash/undo/purge, and forget workflows
 
 ### Phase 5: Retrieval and Project Discovery
 
@@ -156,9 +156,13 @@ Plans:
   4. Missing, damaged, incompatible, or slow embedding resources degrade truthfully without crashing.
   5. A verified local model/vector fingerprint is required before hybrid mode appears.
 
-**Plans**: 3 plans
+**Plans**: 0/3 plans executed
 
 Plans:
+
+- [ ] 05-01-PLAN.md
+- [ ] 05-02-PLAN.md
+- [ ] 05-03-PLAN.md
 
 - [ ] 05-01: Port exact/BM25/RRF core and build three isolated lexical indexes
 - [ ] 05-02: Restore project catalog workflow and wire a concrete optional embedding provider
@@ -192,5 +196,5 @@ Plans:
 | 2. Usable Rust Agent Shell | 3/3 | Complete   | 2026-07-15 |
 | 3. Safe Tool Completion | 2/2 | Complete | 2026-07-15 |
 | 4. Vault and Main-Model Wiki | 3/3 | Complete   | 2026-07-16 |
-| 5. Retrieval and Project Discovery | 0/3 | Not started | - |
+| 5. Retrieval and Project Discovery | 0/3 | Planned    |  |
 | 6. Migration, Release, and Cutover | 0/3 | Not started | - |
