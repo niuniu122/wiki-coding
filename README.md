@@ -124,6 +124,13 @@ The Vault crate owns Markdown parsing and transactions but has no Provider,
 HTTP, credential, SQLite, or model-download path. Wiki generation is a narrow
 port supplied by the CLI with the exact session model binding.
 
+During the legacy support window, the TypeScript reference keeps its own typed
+boundary: `ApplicationKernel` owns command concurrency and
+`StrictProviderGateway` owns protocol and transport validation. Its Ink view
+dispatches typed commands and renders runtime events; it does not own Provider
+or tool authority. These names document the explicit legacy implementation,
+not the Rust default entry.
+
 ## Source development
 
 Rust 1.97.0 and Node.js 20 are pinned for the complete compatibility and release
@@ -143,6 +150,11 @@ npm run build
 the default product entry. `npm run smoke:provider` is the only live Provider
 smoke command and must be invoked explicitly with separate authorization. CI
 has no Provider credentials and uses fixtures only.
+
+`npm run check` and `npm run build` compile the smoke source but do not execute
+it. Offline tests statically inspect the smoke safety boundary. Automated
+scripts never invoke `npm run smoke:provider`; only the operator can choose the
+live command.
 
 Release verification deterministically packages both distributions, extracts
 and starts the actual packaged Rust default, verifies the legacy mapping, checks

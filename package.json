@@ -34,7 +34,8 @@
     "build:rust:release": "cargo build -p minimax-cli --release --locked",
     "package:rust": "node scripts/release/package-rust.mjs",
     "verify:rust-release": "node scripts/release/verify-rust-release.mjs",
-    "verify:release": "npm run check && npm test && npm run check:rust && npm run test:rust && npm run verify:rust-contracts && npm run build && npm run eval:retrieval && npm run eval:provider && npm run build:rust:release && npm run package:rust && npm run verify:rust-release",
+    "verify:milestone-flow": "node scripts/release/verify-milestone-flow.mjs",
+    "verify:release": "npm run check && npm test && npm run check:rust && npm run test:rust && npm run verify:rust-contracts && npm run build && npm run eval:retrieval && npm run eval:provider && npm run build:rust:release && npm run package:rust && npm run verify:rust-release && npm run verify:milestone-flow",
     "smoke:provider": "tsx src/smoke/provider-smoke.ts"
   },
   "dependencies": {

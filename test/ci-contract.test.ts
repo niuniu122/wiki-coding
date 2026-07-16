@@ -40,6 +40,7 @@ jobs:
       - run: npm run build:rust:release
       - run: npm run package:rust
       - run: npm run verify:rust-release
+      - run: npm run verify:milestone-flow
 `;
 
 test("the committed workflow satisfies the structural offline CI contract", async () => {
@@ -199,6 +200,7 @@ test("offline evaluation scripts are exact and never alias the live smoke comman
   assert.equal(packageJson.scripts?.["build:rust:release"], "cargo build -p minimax-cli --release --locked");
   assert.equal(packageJson.scripts?.["package:rust"], "node scripts/release/package-rust.mjs");
   assert.equal(packageJson.scripts?.["verify:rust-release"], "node scripts/release/verify-rust-release.mjs");
+  assert.equal(packageJson.scripts?.["verify:milestone-flow"], "node scripts/release/verify-milestone-flow.mjs");
   assert.doesNotMatch(`${packageJson.scripts?.["eval:retrieval"]} ${packageJson.scripts?.["eval:provider"]}`, /smoke|download|provider-smoke/i);
 });
 
