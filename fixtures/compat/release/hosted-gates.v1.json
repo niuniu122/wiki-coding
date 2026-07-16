@@ -2,17 +2,17 @@
   "schemaVersion": 1,
   "evidenceClass": "hosted_release_gate",
   "workflow": "CI",
-  "runId": 29474558013,
-  "runUrl": "https://github.com/niuniu122/minimax-codex/actions/runs/29474558013",
+  "runId": 29483617803,
+  "runUrl": "https://github.com/niuniu122/minimax-codex/actions/runs/29483617803",
   "branch": "codex/rust-rewrite",
-  "headSha": "5b730caaa018bd89aa439fa8ea8f9eff1a6c773f",
-  "treeSha": "b4c19d5f776850808d138cf51a694789eb67be38",
+  "headSha": "366c35e9169c561bb008400b529c2423169749cd",
+  "treeSha": "78afa7ca18d737b9b05375e42566f7ad2026295b",
   "productFingerprint": "5a54c5e7c2000baedc7b81ebb798849345c7a70b764918dce58253cdb0800f84",
   "productFileCount": 402,
   "conclusion": "success",
   "jobs": [
     {
-      "jobId": 87544656845,
+      "jobId": 87572824126,
       "platform": "windows-x86_64-msvc",
       "conclusion": "success",
       "environment": {
@@ -26,27 +26,27 @@
         "rustcHost": "x86_64-pc-windows-msvc"
       },
       "package": {
-        "archiveSha256": "e8166795ad9354e4c5041213c702610ca088b84bf30db7a04ad905e3632b491d",
-        "binarySha256": "a5ab802f58ad8f896a4a13b57f457658bfecc1074fcfa7c3e0dad343057f248e",
-        "compressedBytes": 4000125,
+        "archiveSha256": "4693e87551427707ba0c2027c55a4193028037c88497a0e2e3378db942fb78f1",
+        "binarySha256": "8977ab8269eac08bddc561b05f9e74299cfa1a5deedcf7a478800d8d9c8dbdbc",
+        "compressedBytes": 4226007,
         "embeddingIncluded": false,
         "supportTier": "hosted_release"
       },
       "performance": {
-        "coldStartSamplesMs": [27.905, 21.398, 20.675, 20.156, 21.638, 23.042, 24.363, 22.638, 23.657],
-        "coldStartP95Ms": 27.905,
-        "idleRssSamplesBytes": [7213056, 7213056, 7213056, 7213056, 7213056],
-        "idleRssMaximumBytes": 7213056,
-        "wikiBm25P95Ms": 1.366
+        "coldStartSamplesMs": [28.657, 23.476, 23.335, 22.698, 22.662, 25.575, 22.141, 22.204, 22.276],
+        "coldStartP95Ms": 28.657,
+        "idleRssSamplesBytes": [7233536, 7233536, 7233536, 7233536, 7233536],
+        "idleRssMaximumBytes": 7233536,
+        "wikiBm25P95Ms": 1.247
       }
     },
     {
-      "jobId": 87544656868,
+      "jobId": 87572824127,
       "platform": "linux-x86_64-gnu",
       "conclusion": "success",
       "environment": {
         "os": "linux",
-        "osRelease": "6.17.0-1020-azure",
+        "osRelease": "6.17.0-1018-azure",
         "architecture": "x64",
         "cpuModel": "AMD EPYC 7763 64-Core Processor",
         "logicalCpuCount": 4,
@@ -55,18 +55,18 @@
         "rustcHost": "x86_64-unknown-linux-gnu"
       },
       "package": {
-        "archiveSha256": "3bb2af46252e85762688d2bbd36d7d7c4e93ccc6066aa020d2516f5d2e37eecf",
-        "binarySha256": "39091bda938bbb16e78ce8804538fc33c3a56fbeaab9066ab54408e789232040",
-        "compressedBytes": 4745674,
+        "archiveSha256": "502913e3a1f6d425b4dba278bd394a87110e173c70c3cf69717d35f5d5165749",
+        "binarySha256": "52e9ff40be16465b2f18d102ccbd0fa8b012fd6c4b70e80a3c86ce952491d3d6",
+        "compressedBytes": 4975757,
         "embeddingIncluded": false,
         "supportTier": "hosted_release"
       },
       "performance": {
-        "coldStartSamplesMs": [4.102, 3.622, 3.589, 3.583, 3.91, 3.54, 3.627, 3.523, 4.113],
-        "coldStartP95Ms": 4.113,
-        "idleRssSamplesBytes": [5664768, 5664768, 5664768, 5664768, 5664768],
-        "idleRssMaximumBytes": 5664768,
-        "wikiBm25P95Ms": 2.099
+        "coldStartSamplesMs": [4.16, 3.571, 3.552, 3.641, 3.532, 3.663, 3.664, 3.981, 3.624],
+        "coldStartP95Ms": 4.16,
+        "idleRssSamplesBytes": [5804032, 5804032, 5804032, 5804032, 5804032],
+        "idleRssMaximumBytes": 5804032,
+        "wikiBm25P95Ms": 1.319
       }
     }
   ],
