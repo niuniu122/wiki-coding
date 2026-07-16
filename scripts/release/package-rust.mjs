@@ -29,6 +29,11 @@ const binaryBytes = readFileSync(binary);
 if (binaryBytes.length === 0 || binaryBytes.length > 50 * 1024 * 1024) {
   fail("release binary must be non-empty and at most 50 MiB before packaging");
 }
+const launcher = resolve(root, "bin/minimax-codex.cjs");
+if (!existsSync(launcher) || !lstatSync(launcher).isFile() || lstatSync(launcher).isSymbolicLink()) {
+  fail("release launcher is missing or unsafe");
+}
+const launcherBytes = readFileSync(launcher);
 
 const packageName = `minimax-codex-v${version}-${platform}`;
 const executable = platform.startsWith("windows-") ? "minimax-codex.exe" : "minimax-codex";
@@ -40,12 +45,16 @@ const manifest = {
   platform,
   binary: executable,
   binarySha256: sha256(binaryBytes),
+  launcher: "bin/minimax-codex.cjs",
+  launcherSha256: sha256(launcherBytes),
   embeddingIncluded: false,
   supportTier: platform.endsWith("-dev") ? "development_only" : "hosted_release",
   rustToolchain: "1.97.0"
 };
 const entries = [
   {name: `${packageName}/`, bytes: Buffer.alloc(0), mode: 0o755, type: "5"},
+  {name: `${packageName}/bin/`, bytes: Buffer.alloc(0), mode: 0o755, type: "5"},
+  {name: `${packageName}/bin/minimax-codex.cjs`, bytes: launcherBytes, mode: 0o755, type: "0"},
   {name: `${packageName}/${executable}`, bytes: binaryBytes, mode: 0o755, type: "0"},
   {name: `${packageName}/LICENSE-APACHE`, bytes: readFileSync(resolve(root, "LICENSE-APACHE")), mode: 0o644, type: "0"},
   {name: `${packageName}/LICENSE-MIT`, bytes: readFileSync(resolve(root, "LICENSE-MIT")), mode: 0o644, type: "0"},

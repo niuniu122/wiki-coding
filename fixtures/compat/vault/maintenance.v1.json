@@ -13,5 +13,5 @@
     {"id": "forget_wiki_first", "rawDeletionAfterWiki": true, "nonSecretTombstone": true}
   ],
   "liveProvider": false,
-  "productEntry": "dist/cli.js"
+  "productEntry": "bin/minimax-codex.cjs"
 }

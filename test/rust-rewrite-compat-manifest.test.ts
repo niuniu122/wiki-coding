@@ -124,8 +124,10 @@ export function validateCompatFixtures(fixtures: CompatFixtures): void {
   );
 
   const statusManifest = asRecord(fixtures.status);
+  assert.equal(statusManifest.productEntry, "bin/minimax-codex.cjs");
   for (const value of asArray(statusManifest.items)) {
     const item = asRecord(value);
+    const id = asString(item.id);
     const status = asString(item.status);
     assert.equal(STATUSES.has(status), true, `unsupported status: ${status}`);
     const evidence = asArray(item.evidence).map(asString);
@@ -135,6 +137,9 @@ export function validateCompatFixtures(fixtures: CompatFixtures): void {
         0,
         "matched compatibility item requires evidence"
       );
+    }
+    if (id.startsWith("rust.")) {
+      assert.notEqual(status, "pending", `mandatory Rust compatibility item is pending: ${id}`);
     }
   }
 

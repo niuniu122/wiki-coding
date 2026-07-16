@@ -5,12 +5,12 @@ use minimax_compat_harness::{
     ArchitectureError, ArchitectureGraph, ArchitecturePackage, ManifestError, ParityStatus,
     build_report, load_cargo_architecture, load_compat_manifests, report_json, repository_root,
     validate_architecture, validate_cli_tui_markdown_boundary, validate_core_source_boundary,
-    validate_core_source_directory, validate_core_source_text, validate_migration_source_boundary,
-    validate_migration_source_text, validate_product_entry, validate_report,
-    validate_retrieval_source_boundary, validate_retrieval_source_text,
-    validate_rust_command_surface, validate_rust_retrieval_evidence, validate_rust_tool_evidence,
-    validate_rust_vault_evidence, validate_ui_source_text, validate_vault_source_boundary,
-    validate_vault_source_text,
+    validate_core_source_directory, validate_core_source_text, validate_cutover_evidence,
+    validate_migration_source_boundary, validate_migration_source_text, validate_product_entry,
+    validate_report, validate_retrieval_source_boundary, validate_retrieval_source_text,
+    validate_rust_command_surface, validate_rust_provider_profiles,
+    validate_rust_retrieval_evidence, validate_rust_tool_evidence, validate_rust_vault_evidence,
+    validate_ui_source_text, validate_vault_source_boundary, validate_vault_source_text,
 };
 
 #[test]
@@ -47,6 +47,10 @@ fn compat_report_contains_every_baseline_item_exactly_once() {
     let mut expected_ids = BTreeSet::from([
         "rust.permission_modes".to_owned(),
         "rust.product_entry".to_owned(),
+        "rust.migration".to_owned(),
+        "rust.release_gate".to_owned(),
+        "rust.retrieval".to_owned(),
+        "rust.vault".to_owned(),
         "rust.requirement.TOOL-01".to_owned(),
         "rust.requirement.TOOL-02".to_owned(),
         "rust.requirement.TOOL-03".to_owned(),
@@ -80,14 +84,32 @@ fn compat_report_contains_every_baseline_item_exactly_once() {
 }
 
 #[test]
-fn rust_command_permission_and_product_baselines_are_executable() {
+fn rust_command_permission_provider_and_product_baselines_are_executable() {
     let root = repository_root();
     let manifests = load_compat_manifests(&root).expect("strict manifests");
     validate_rust_command_surface(&manifests.commands).expect("complete Rust command surface");
     validate_rust_tool_evidence(&root, &manifests.baseline).expect("executable Rust tool evidence");
     validate_rust_vault_evidence(&root).expect("executable Rust Vault evidence");
     validate_rust_retrieval_evidence(&root).expect("executable Rust retrieval evidence");
-    validate_product_entry(&root).expect("TypeScript npm product entry");
+    validate_rust_provider_profiles(&manifests.providers)
+        .expect("executable Rust Provider profile evidence");
+    validate_product_entry(&root).expect("Rust npm product entry");
+    validate_cutover_evidence(&root, &manifests.baseline).expect("hosted cutover evidence");
+}
+
+#[test]
+fn cutover_rejects_a_pending_mandatory_rust_item() {
+    let root = repository_root();
+    let manifests = load_compat_manifests(&root).expect("strict manifests");
+    let mut baseline = manifests.baseline;
+    let release = baseline
+        .items
+        .iter_mut()
+        .find(|item| item.id == "rust.release_gate")
+        .expect("release item");
+    release.status = ParityStatus::Pending;
+    release.evidence.clear();
+    assert!(validate_cutover_evidence(&root, &baseline).is_err());
 }
 
 #[test]

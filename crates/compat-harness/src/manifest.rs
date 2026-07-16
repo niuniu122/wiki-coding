@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 const SUPPORTED_SCHEMA_VERSION: u16 = 1;
 const BASELINE_COMMIT: &str = "84784f5";
-const PRODUCT_ENTRY: &str = "dist/cli.js";
+const PRODUCT_ENTRY: &str = "bin/minimax-codex.cjs";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -167,7 +167,7 @@ fn validate_manifests(manifests: &CompatManifests) -> Result<(), ManifestError> 
     }
     if manifests.baseline.product_entry != PRODUCT_ENTRY {
         return Err(ManifestError::Validation(
-            "compatibility product entry must remain dist/cli.js".to_owned(),
+            "compatibility product entry must be the evidence-gated Rust launcher".to_owned(),
         ));
     }
     ensure_unique(

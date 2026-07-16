@@ -91,11 +91,17 @@ function verifyPackage(directory, sourceBinary, limits, expectedPlatform) {
   if (rootName !== `minimax-codex-v${manifest.version}-${manifest.platform}`) fail("release archive name does not match its manifest");
   const expectedBinary = manifest.platform.startsWith("windows-") ? "minimax-codex.exe" : "minimax-codex";
   if (manifest.binary !== expectedBinary) fail("release manifest binary name does not match its platform");
+  if (manifest.launcher !== "bin/minimax-codex.cjs") fail("release manifest launcher path is invalid");
   const expectedSupportTier = manifest.platform.endsWith("-dev") ? "development_only" : "hosted_release";
   if (manifest.supportTier !== expectedSupportTier) fail("release support tier does not match its platform");
   if (manifest.binarySha256 !== sha256(readFileSync(sourceBinary))) fail("packaged binary hash does not match the release binary");
+  if (manifest.launcherSha256 !== sha256(readFileSync(join(root, manifest.launcher)))) {
+    fail("packaged launcher hash does not match the repository launcher");
+  }
   const expectedEntries = [
     `${rootName}/`,
+    `${rootName}/bin/`,
+    `${rootName}/bin/minimax-codex.cjs`,
     `${rootName}/LICENSE-APACHE`,
     `${rootName}/LICENSE-MIT`,
     `${rootName}/RELEASE-MANIFEST.json`,
@@ -111,6 +117,9 @@ function verifyPackage(directory, sourceBinary, limits, expectedPlatform) {
   }
   if (sha256(entries.get(`${rootName}/${manifest.binary}`).bytes) !== manifest.binarySha256) {
     fail("binary inside the release archive does not match the manifest");
+  }
+  if (sha256(entries.get(`${rootName}/${manifest.launcher}`).bytes) !== manifest.launcherSha256) {
+    fail("launcher inside the release archive does not match the manifest");
   }
   return {
     archive: archive.replaceAll("\\", "/"),

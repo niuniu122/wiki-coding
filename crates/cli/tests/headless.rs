@@ -207,7 +207,7 @@ fn doctor_is_actionable_and_never_serializes_secret_material() {
 }
 
 #[test]
-fn npm_product_entry_remains_typescript() {
+fn npm_product_entry_uses_rust_launcher_and_keeps_legacy_typescript() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .nth(2)
@@ -216,7 +216,8 @@ fn npm_product_entry_remains_typescript() {
         &std::fs::read_to_string(root.join("package.json")).expect("package.json"),
     )
     .expect("package JSON");
-    assert_eq!(package["bin"]["minimax-codex"], "dist/cli.js");
+    assert_eq!(package["bin"]["minimax-codex"], "bin/minimax-codex.cjs");
+    assert_eq!(package["bin"]["minimax-codex-legacy"], "dist/cli.js");
 }
 
 fn binding() -> ModelBinding {

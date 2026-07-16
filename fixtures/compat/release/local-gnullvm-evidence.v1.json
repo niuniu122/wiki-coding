@@ -14,9 +14,10 @@
     "rustcHost": "x86_64-pc-windows-gnullvm"
   },
   "package": {
-    "archiveSha256": "a1e8b01a20324a510a51adc5f353134dd969da8f5053c8372054abfc60d4c2a4",
+    "archiveSha256": "270c5d360489ce9b855ab71ca700cfc2a7432024a6aea7c1f31d796edd609e0c",
     "binarySha256": "4ca52d35f26c1d4531fa633657e02b6164526a27f461b939456e6ecf9e99997e",
-    "compressedBytes": 2983900,
+    "launcherSha256": "8670e53e09266fdb32495a71769deda543809ac6188c1e61b795cc43b6f4b558",
+    "compressedBytes": 2984946,
     "embeddingIncluded": false,
     "supportTier": "development_only"
   },
@@ -31,11 +32,11 @@
     "migrationNetworkOrCredentialPaths": 0
   },
   "performance": {
-    "coldStartSamplesMs": [22.414, 21.127, 19.834, 19.221, 18.589, 19.015, 18.859, 21.365, 19.958],
-    "coldStartP95Ms": 22.414,
-    "idleRssSamplesBytes": [4788224, 4788224, 4788224, 4788224, 4788224],
-    "idleRssMaximumBytes": 4788224,
-    "wikiBm25P95Ms": 2.17
+    "coldStartSamplesMs": [102.021, 21.614, 21.398, 22.155, 24.488, 21.351, 21.847, 21.75, 19.362],
+    "coldStartP95Ms": 102.021,
+    "idleRssSamplesBytes": [4800512, 4800512, 4800512, 4800512, 4800512],
+    "idleRssMaximumBytes": 4800512,
+    "wikiBm25P95Ms": 2.75
   },
   "offline": true,
   "providerCalls": 0,

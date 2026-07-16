@@ -1,9 +1,13 @@
+use std::collections::BTreeMap;
 use std::fmt;
 use std::path::Path;
 
+use minimax_protocol::ProviderProtocolKind;
+use minimax_provider::{ConfigLayer, resolve_config};
 use minimax_tui::{CommandAvailability, CommandIntent, ParsedInput, parse_input};
+use serde::Deserialize;
 
-use crate::{BaselineStatus, CommandManifest, ParityStatus};
+use crate::{BaselineStatus, CommandManifest, ParityStatus, ProviderManifest};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BaselineError {
@@ -15,6 +19,8 @@ pub enum BaselineError {
     ToolEvidence(String),
     VaultEvidence,
     RetrievalEvidence,
+    ProviderEvidence,
+    CutoverEvidence,
 }
 
 impl fmt::Display for BaselineError {
@@ -27,13 +33,15 @@ impl fmt::Display for BaselineError {
             Self::PackageRead => formatter.write_str("cannot read package.json"),
             Self::PackageParse => formatter.write_str("package.json is invalid"),
             Self::ProductEntry => {
-                formatter.write_str("the npm product entry must remain dist/cli.js")
+                formatter.write_str("the npm product entry must be the fixed Rust launcher with an explicit legacy entry")
             }
             Self::ToolEvidence(requirement) => {
                 write!(formatter, "Rust tool evidence is incomplete: {requirement}")
             }
             Self::VaultEvidence => formatter.write_str("Rust Vault evidence is incomplete"),
             Self::RetrievalEvidence => formatter.write_str("Rust retrieval evidence is incomplete"),
+            Self::ProviderEvidence => formatter.write_str("Rust Provider profile evidence is incomplete"),
+            Self::CutoverEvidence => formatter.write_str("Rust cutover evidence is incomplete"),
         }
     }
 }
@@ -72,7 +80,7 @@ pub fn validate_rust_retrieval_evidence(root: &Path) -> Result<(), BaselineError
         || fixture
             .get("productEntry")
             .and_then(serde_json::Value::as_str)
-            != Some("dist/cli.js")
+            != Some("bin/minimax-codex.cjs")
     {
         return Err(BaselineError::RetrievalEvidence);
     }
@@ -114,7 +122,7 @@ pub fn validate_rust_vault_evidence(root: &Path) -> Result<(), BaselineError> {
         || fixture
             .get("productEntry")
             .and_then(serde_json::Value::as_str)
-            != Some("dist/cli.js")
+            != Some("bin/minimax-codex.cjs")
         || cases.len() != 8
         || cases
             .iter()
@@ -175,6 +183,339 @@ pub fn validate_rust_tool_evidence(
     Ok(())
 }
 
+pub fn validate_rust_provider_profiles(manifest: &ProviderManifest) -> Result<(), BaselineError> {
+    let expected = [
+        (
+            "minimax_official",
+            "builtin",
+            "provider:minimax/official",
+            &["responses"][..],
+            &["MINIMAX_API_KEY"][..],
+        ),
+        (
+            "minimax_hashsight",
+            "builtin",
+            "provider:minimax/hashsight",
+            &["chat_completions"][..],
+            &["HASHSIGHT_API_KEY"][..],
+        ),
+        (
+            "custom_openai_compatible",
+            "user",
+            "provider:user/{profile}",
+            &["responses", "chat_completions"][..],
+            &[][..],
+        ),
+    ];
+    for (id, source, provider_id, protocols, credentials) in expected {
+        let profile = manifest
+            .profile_classes
+            .iter()
+            .find(|profile| profile.id == id)
+            .ok_or(BaselineError::ProviderEvidence)?;
+        if profile.source != source
+            || profile.provider_profile_id != provider_id
+            || profile
+                .protocols
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                != protocols
+            || profile
+                .credential_bindings
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                != credentials
+        {
+            return Err(BaselineError::ProviderEvidence);
+        }
+    }
+
+    let official = resolve_config(None, None, &BTreeMap::new(), ConfigLayer::default())
+        .map_err(|_| BaselineError::ProviderEvidence)?;
+    if official.provider_id.as_str() != "minimax-official"
+        || official.endpoint != "https://api.minimax.io/v1"
+        || official.protocol != ProviderProtocolKind::Responses
+        || official.environment_key != "MINIMAX_API_KEY"
+    {
+        return Err(BaselineError::ProviderEvidence);
+    }
+    let hashsight = resolve_config(
+        None,
+        None,
+        &BTreeMap::new(),
+        ConfigLayer {
+            provider_id: Some("minimax-hashsight".to_owned()),
+            endpoint: Some("https://www.hashsight.cn/v1".to_owned()),
+            protocol: Some(ProviderProtocolKind::ChatCompletions),
+            environment_key: Some("HASHSIGHT_API_KEY".to_owned()),
+            ..ConfigLayer::default()
+        },
+    )
+    .map_err(|_| BaselineError::ProviderEvidence)?;
+    if hashsight.provider_id.as_str() != "minimax-hashsight"
+        || hashsight.endpoint != "https://www.hashsight.cn/v1"
+        || hashsight.protocol != ProviderProtocolKind::ChatCompletions
+        || hashsight.environment_key != "HASHSIGHT_API_KEY"
+    {
+        return Err(BaselineError::ProviderEvidence);
+    }
+    let custom = resolve_config(
+        None,
+        None,
+        &BTreeMap::new(),
+        ConfigLayer {
+            provider_id: Some("custom-fixture".to_owned()),
+            endpoint: Some("https://example.test/v1".to_owned()),
+            protocol: Some(ProviderProtocolKind::Responses),
+            environment_key: Some("CUSTOM_API_KEY".to_owned()),
+            ..ConfigLayer::default()
+        },
+    )
+    .map_err(|_| BaselineError::ProviderEvidence)?;
+    if custom.provider_id.as_str() != "custom-fixture"
+        || custom.endpoint != "https://example.test/v1"
+        || custom.protocol != ProviderProtocolKind::Responses
+        || custom.environment_key != "CUSTOM_API_KEY"
+    {
+        return Err(BaselineError::ProviderEvidence);
+    }
+    Ok(())
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct HostedReleaseGate {
+    schema_version: u16,
+    evidence_class: String,
+    workflow: String,
+    run_id: u64,
+    run_url: String,
+    branch: String,
+    head_sha: String,
+    tree_sha: String,
+    conclusion: String,
+    jobs: Vec<HostedJob>,
+    licenses: HostedLicenses,
+    security: HostedSecurity,
+    offline: bool,
+    provider_calls: u64,
+    credentials_read: u64,
+    model_downloads: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct HostedJob {
+    job_id: u64,
+    platform: String,
+    conclusion: String,
+    environment: HostedEnvironment,
+    package: HostedPackage,
+    performance: HostedPerformance,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct HostedEnvironment {
+    os: String,
+    os_release: String,
+    architecture: String,
+    cpu_model: String,
+    logical_cpu_count: u64,
+    node: String,
+    rustc_release: String,
+    rustc_host: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct HostedPackage {
+    archive_sha256: String,
+    binary_sha256: String,
+    compressed_bytes: u64,
+    embedding_included: bool,
+    support_tier: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct HostedPerformance {
+    cold_start_samples_ms: Vec<f64>,
+    cold_start_p95_ms: f64,
+    idle_rss_samples_bytes: Vec<u64>,
+    idle_rss_maximum_bytes: u64,
+    wiki_bm25_p95_ms: f64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct HostedLicenses {
+    packages_checked: u64,
+    invalid: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct HostedSecurity {
+    unsafe_files: u64,
+    unsafe_workspace_lint: String,
+    database_packages: u64,
+    migration_network_or_credential_paths: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct ReleaseThresholds {
+    schema_version: u16,
+    cold_start_ms: f64,
+    idle_rss_bytes: u64,
+    base_compressed_bytes: u64,
+    wiki_bm25_p95_ms: f64,
+}
+
+pub fn validate_cutover_evidence(
+    root: &Path,
+    baseline: &BaselineStatus,
+) -> Result<(), BaselineError> {
+    validate_hosted_release_gate(root)?;
+    if baseline
+        .items
+        .iter()
+        .any(|item| item.id.starts_with("rust.") && item.status == ParityStatus::Pending)
+    {
+        return Err(BaselineError::CutoverEvidence);
+    }
+    for required in [
+        "rust.provider_profiles",
+        "rust.migration",
+        "rust.release_gate",
+        "rust.product_entry",
+    ] {
+        let item = baseline
+            .items
+            .iter()
+            .find(|item| item.id == required)
+            .ok_or(BaselineError::CutoverEvidence)?;
+        if item.status != ParityStatus::Matched
+            || item.evidence.is_empty()
+            || item.evidence.iter().any(|path| !root.join(path).is_file())
+        {
+            return Err(BaselineError::CutoverEvidence);
+        }
+    }
+    Ok(())
+}
+
+fn validate_hosted_release_gate(root: &Path) -> Result<(), BaselineError> {
+    let gate: HostedReleaseGate = serde_json::from_str(
+        &std::fs::read_to_string(root.join("fixtures/compat/release/hosted-gates.v1.json"))
+            .map_err(|_| BaselineError::CutoverEvidence)?,
+    )
+    .map_err(|_| BaselineError::CutoverEvidence)?;
+    let thresholds: ReleaseThresholds = serde_json::from_str(
+        &std::fs::read_to_string(root.join("fixtures/compat/release/thresholds.v1.json"))
+            .map_err(|_| BaselineError::CutoverEvidence)?,
+    )
+    .map_err(|_| BaselineError::CutoverEvidence)?;
+    if gate.schema_version != 1
+        || gate.evidence_class != "hosted_release_gate"
+        || gate.workflow != "CI"
+        || gate.run_id == 0
+        || gate.run_url
+            != format!(
+                "https://github.com/niuniu122/minimax-codex/actions/runs/{}",
+                gate.run_id
+            )
+        || gate.branch != "codex/rust-rewrite"
+        || !valid_hex(&gate.head_sha, 40)
+        || !valid_hex(&gate.tree_sha, 40)
+        || gate.conclusion != "success"
+        || gate.jobs.len() != 2
+        || gate.licenses.packages_checked == 0
+        || gate.licenses.invalid != 0
+        || gate.security.unsafe_files != 0
+        || gate.security.unsafe_workspace_lint != "forbid"
+        || gate.security.database_packages != 0
+        || gate.security.migration_network_or_credential_paths != 0
+        || !gate.offline
+        || gate.provider_calls != 0
+        || gate.credentials_read != 0
+        || gate.model_downloads != 0
+        || thresholds.schema_version != 1
+    {
+        return Err(BaselineError::CutoverEvidence);
+    }
+    let mut platforms = BTreeMap::new();
+    for job in &gate.jobs {
+        if platforms
+            .insert(job.platform.as_str(), job.job_id)
+            .is_some()
+            || job.job_id == 0
+            || job.conclusion != "success"
+            || job.environment.architecture != "x64"
+            || job.environment.os_release.trim().is_empty()
+            || job.environment.cpu_model.trim().is_empty()
+            || job.environment.logical_cpu_count == 0
+            || !job.environment.node.starts_with('v')
+            || job.environment.rustc_release != "1.97.0"
+            || !valid_hex(&job.package.archive_sha256, 64)
+            || !valid_hex(&job.package.binary_sha256, 64)
+            || job.package.compressed_bytes > thresholds.base_compressed_bytes
+            || job.package.embedding_included
+            || job.package.support_tier != "hosted_release"
+            || job.performance.cold_start_samples_ms.len() != 9
+            || job.performance.idle_rss_samples_bytes.len() != 5
+            || !job
+                .performance
+                .cold_start_samples_ms
+                .iter()
+                .all(|sample| sample.is_finite() && *sample > 0.0)
+            || job.performance.cold_start_p95_ms > thresholds.cold_start_ms
+            || job.performance.idle_rss_maximum_bytes > thresholds.idle_rss_bytes
+            || job.performance.wiki_bm25_p95_ms > thresholds.wiki_bm25_p95_ms
+            || job.performance.idle_rss_samples_bytes.iter().max().copied()
+                != Some(job.performance.idle_rss_maximum_bytes)
+            || job
+                .performance
+                .cold_start_samples_ms
+                .iter()
+                .copied()
+                .reduce(f64::max)
+                != Some(job.performance.cold_start_p95_ms)
+        {
+            return Err(BaselineError::CutoverEvidence);
+        }
+        let valid_environment = match job.platform.as_str() {
+            "windows-x86_64-msvc" => {
+                job.environment.os == "win32"
+                    && job.environment.rustc_host == "x86_64-pc-windows-msvc"
+            }
+            "linux-x86_64-gnu" => {
+                job.environment.os == "linux"
+                    && job.environment.rustc_host == "x86_64-unknown-linux-gnu"
+            }
+            _ => false,
+        };
+        if !valid_environment {
+            return Err(BaselineError::CutoverEvidence);
+        }
+    }
+    if !platforms.contains_key("windows-x86_64-msvc") || !platforms.contains_key("linux-x86_64-gnu")
+    {
+        return Err(BaselineError::CutoverEvidence);
+    }
+    Ok(())
+}
+
+fn valid_hex(value: &str, length: usize) -> bool {
+    value.len() == length
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 impl std::error::Error for BaselineError {}
 
 pub fn validate_rust_command_surface(manifest: &CommandManifest) -> Result<(), BaselineError> {
@@ -218,9 +559,46 @@ pub fn validate_product_entry(root: &Path) -> Result<(), BaselineError> {
         .get("bin")
         .and_then(|bin| bin.get("minimax-codex"))
         .and_then(serde_json::Value::as_str)
-        != Some("dist/cli.js")
+        != Some("bin/minimax-codex.cjs")
+        || package
+            .get("bin")
+            .and_then(|bin| bin.get("minimax-codex-legacy"))
+            .and_then(serde_json::Value::as_str)
+            != Some("dist/cli.js")
+        || package
+            .get("scripts")
+            .and_then(|scripts| scripts.get("start"))
+            .and_then(serde_json::Value::as_str)
+            != Some("node bin/minimax-codex.cjs")
     {
         return Err(BaselineError::ProductEntry);
+    }
+    let launcher = std::fs::read_to_string(root.join("bin/minimax-codex.cjs"))
+        .map_err(|_| BaselineError::ProductEntry)?;
+    for required in [
+        "\"win32:x64\": \"minimax-codex.exe\"",
+        "\"linux:x64\": \"minimax-codex\"",
+        "spawnSync(binaryPath, process.argv.slice(2)",
+        "shell: false",
+        "lstatSync",
+        "isSymbolicLink",
+        "minimax-codex-legacy",
+    ] {
+        if !launcher.contains(required) {
+            return Err(BaselineError::ProductEntry);
+        }
+    }
+    for forbidden in [
+        "http://",
+        "https://",
+        "fetch(",
+        "execSync(",
+        "process.env",
+        "dist/cli",
+    ] {
+        if launcher.contains(forbidden) {
+            return Err(BaselineError::ProductEntry);
+        }
     }
     Ok(())
 }

@@ -29,5 +29,5 @@
   "discoveredProjectExecution": false,
   "liveNetwork": false,
   "modelDownload": false,
-  "productEntry": "dist/cli.js"
+  "productEntry": "bin/minimax-codex.cjs"
 }

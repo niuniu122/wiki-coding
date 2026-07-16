@@ -165,6 +165,15 @@
       ]
     },
     {
+      "id": "rust.migration",
+      "status": "matched",
+      "evidence": [
+        "crates/cli/src/migration.rs",
+        "crates/cli/tests/migration.rs",
+        "fixtures/compat/migration/typescript-v1/config.json"
+      ]
+    },
+    {
       "id": "rust.permission_modes",
       "status": "matched",
       "evidence": [
@@ -177,25 +186,40 @@
       "id": "rust.product_entry",
       "status": "matched",
       "evidence": [
+        "bin/minimax-codex.cjs",
         "crates/cli/tests/headless.rs",
         "crates/compat-harness/src/baseline.rs",
-        "package.json"
+        "fixtures/compat/release/hosted-gates.v1.json",
+        "package.json",
+        "test/launcher.test.ts"
       ]
     },
     {
       "id": "rust.provider_profile.custom_openai_compatible",
-      "status": "pending",
-      "evidence": []
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/provider/tests/config_credentials.rs",
+        "fixtures/compat/providers.v1.json"
+      ]
     },
     {
       "id": "rust.provider_profile.minimax_hashsight",
-      "status": "pending",
-      "evidence": []
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/provider/tests/config_credentials.rs",
+        "fixtures/compat/providers.v1.json"
+      ]
     },
     {
       "id": "rust.provider_profile.minimax_official",
-      "status": "pending",
-      "evidence": []
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/provider/tests/config_credentials.rs",
+        "fixtures/compat/providers.v1.json"
+      ]
     },
     {
       "id": "rust.provider_protocol.chat_completions",
@@ -215,6 +239,16 @@
         "fixtures/compat/provider-streams/chat-completions.valid.jsonl",
         "fixtures/compat/provider-streams/invalid-cases.v1.json",
         "fixtures/compat/provider-streams/responses.valid.jsonl"
+      ]
+    },
+    {
+      "id": "rust.release_gate",
+      "status": "matched",
+      "evidence": [
+        ".github/workflows/ci.yml",
+        "fixtures/compat/release/hosted-gates.v1.json",
+        "scripts/release/package-rust.mjs",
+        "scripts/release/verify-rust-release.mjs"
       ]
     },
     {
@@ -261,6 +295,24 @@
         "crates/tools/tests/process_tools.rs",
         "crates/tools/tests/workspace_tools.rs",
         "fixtures/compat/tools/denial-matrix.v1.json"
+      ]
+    },
+    {
+      "id": "rust.retrieval",
+      "status": "matched",
+      "evidence": [
+        "crates/retrieval/tests/benchmark.rs",
+        "crates/retrieval/tests/project_discovery.rs",
+        "fixtures/compat/retrieval/explanations.v1.json"
+      ]
+    },
+    {
+      "id": "rust.vault",
+      "status": "matched",
+      "evidence": [
+        "crates/vault/tests/maintenance.rs",
+        "crates/vault/tests/retention.rs",
+        "fixtures/compat/vault/maintenance.v1.json"
       ]
     },
     {
