@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "workflow": "main_model_wiki",
+  "cases": [
+    {"id": "no_op", "providerCalls": 0, "outcome": "no_op"},
+    {"id": "pinned_create", "providerCalls": 1, "outcome": "synthesized"},
+    {"id": "schema_repair", "providerCalls": 2, "outcome": "synthesized"},
+    {"id": "unavailable", "providerCalls": 1, "outcome": "pending"},
+    {"id": "explicit_rebind", "providerCalls": 1, "outcome": "synthesized"},
+    {"id": "invalid_source", "providerCalls": 1, "outcome": "failed", "wikiWrites": 0}
+  ],
+  "separateUsage": true,
+  "toolAccess": false,
+  "liveProvider": false
+}

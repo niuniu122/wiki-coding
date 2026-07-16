@@ -10,6 +10,7 @@ mod path;
 mod raw;
 pub mod runtime;
 mod transaction;
+mod workflow;
 
 pub use bootstrap::{ProjectVault, VaultError, VaultWarning, classify_vault_path};
 pub use inbox::{complete_inbox_import, import_inbox_file};
@@ -19,6 +20,11 @@ pub use raw::{FinalizedSessionEvidence, finalize_runtime_session};
 pub use runtime::{RuntimeStore, RuntimeStoreError};
 pub use transaction::{
     PreparedWikiTransaction, TransactionFaultPoint, WikiChange, recover_wiki_transaction,
+    wiki_transaction_exists,
+};
+pub use workflow::{
+    KnowledgeWorkflowHistory, KnowledgeWorkflowStore, StoredGeneration, ensure_knowledge_job,
+    find_evaluation_missing, knowledge_job_for_session,
 };
 
 /// Human-readable boundary used by architecture checks and documentation.

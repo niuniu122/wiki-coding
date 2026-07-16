@@ -293,6 +293,7 @@ pub enum KnowledgeInput {
     Evaluated(DurabilityDecision),
     GeneratedPatch { patch: KnowledgePatch, usage: Usage },
     SchemaRejected { code: String, usage: Usage },
+    UnsafeGenerationRejected { code: String, usage: Usage },
     SemanticRejected { code: String },
     GenerationUnavailable { code: String },
     PatchValidated { patch_hash: ContentHash },
@@ -378,6 +379,14 @@ impl MainModelWikiWorkflow {
             }
             (WikiWorkflowState::Generating, KnowledgeInput::SchemaRejected { code, usage }) => {
                 self.after_schema_rejection(code, usage, evidence, current)
+            }
+            (
+                WikiWorkflowState::Generating,
+                KnowledgeInput::UnsafeGenerationRejected { code, usage },
+            ) => {
+                validate_code(&code)?;
+                self.usage = Some(merge_usage(self.usage, usage));
+                self.failed(code)
             }
             (WikiWorkflowState::Generating, KnowledgeInput::GenerationUnavailable { code }) => {
                 self.pending(code)

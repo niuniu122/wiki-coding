@@ -148,9 +148,9 @@ impl ProjectVault {
             serde_json::to_vec_pretty(&manifest).map_err(|_| VaultError::Io)?;
         manifest_bytes.push(b'\n');
         atomic_create_or_same(&manifest_path, &manifest_bytes)?;
-        create_human_file_if_missing(&vault_root.join("AGENTS.md"), AGENT_GUIDANCE)?;
-        atomic_create_or_same(&vault_root.join("wiki/index.md"), EMPTY_INDEX)?;
-        atomic_create_or_same(&vault_root.join("log.md"), EMPTY_LOG)?;
+        create_file_if_missing(&vault_root.join("AGENTS.md"), AGENT_GUIDANCE)?;
+        create_file_if_missing(&vault_root.join("wiki/index.md"), EMPTY_INDEX)?;
+        create_file_if_missing(&vault_root.join("log.md"), EMPTY_LOG)?;
 
         let mut warnings = vec![VaultWarning::PlaintextLocalFiles];
         let vault_location = vault_root
@@ -239,7 +239,7 @@ fn normalized_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/").to_lowercase()
 }
 
-fn create_human_file_if_missing(path: &Path, bytes: &[u8]) -> Result<(), VaultError> {
+fn create_file_if_missing(path: &Path, bytes: &[u8]) -> Result<(), VaultError> {
     if path.exists() {
         Ok(())
     } else {

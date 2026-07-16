@@ -162,6 +162,11 @@ pub fn recover_wiki_transaction(
     .roll_forward()
 }
 
+#[must_use]
+pub fn wiki_transaction_exists(vault: &ProjectVault, transaction_id: &TransactionId) -> bool {
+    transaction_directory(vault.root(), transaction_id).exists()
+}
+
 pub(crate) fn transaction_is_committed(
     vault: &ProjectVault,
     transaction_id: &TransactionId,

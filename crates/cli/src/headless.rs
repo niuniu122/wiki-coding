@@ -1,6 +1,9 @@
 use std::io::{self, Write};
 
-use minimax_protocol::{RuntimeErrorCode, RuntimeEventV1, RuntimeTerminalOutcome, TurnReceipt};
+use minimax_protocol::{
+    KnowledgeReceipt, RuntimeErrorCode, RuntimeEventV1, RuntimeTerminalOutcome, TurnReceipt,
+    WikiWorkflowEvent,
+};
 use minimax_vault::RuntimeStoreError;
 
 use crate::{DriverError, RunReport};
@@ -43,6 +46,18 @@ impl<W: Write> JsonlWriter<W> {
             self.write_event(event)?;
         }
         Ok(())
+    }
+
+    pub fn write_wiki_event(&mut self, event: &WikiWorkflowEvent) -> io::Result<()> {
+        serde_json::to_writer(&mut self.writer, event).map_err(io::Error::other)?;
+        self.writer.write_all(b"\n")?;
+        self.writer.flush()
+    }
+
+    pub fn write_wiki_receipt(&mut self, receipt: &KnowledgeReceipt) -> io::Result<()> {
+        serde_json::to_writer(&mut self.writer, receipt).map_err(io::Error::other)?;
+        self.writer.write_all(b"\n")?;
+        self.writer.flush()
     }
 
     #[must_use]
