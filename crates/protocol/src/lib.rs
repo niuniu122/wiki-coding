@@ -4,14 +4,22 @@
 //! depend on orchestration, providers, tools, retrieval, storage, or the UI.
 
 mod event;
+mod knowledge;
 mod runtime;
 mod session;
 mod tool;
+mod vault;
 
 pub use event::{
     ProtocolErrorCode, ProviderProtocolKind, SCHEMA_VERSION, SchemaVersion, SessionId, StreamEvent,
     StreamEventV1, TerminalOutcome, ToolCallFragment, ToolCallId, TurnId, Usage,
     parse_stream_event_v1,
+};
+pub use knowledge::{
+    EvidenceId, KnowledgeJobId, KnowledgeOperation, KnowledgePage, KnowledgePageStatus,
+    KnowledgePatch, KnowledgeReceipt, KnowledgeReceiptOutcome, KnowledgeValidationError,
+    MAX_KNOWLEDGE_BODY_BYTES, MAX_KNOWLEDGE_OPERATIONS, MAX_KNOWLEDGE_SOURCES, PageId,
+    SourceCitation, TopicId, WikiWorkflowEvent, WikiWorkflowState, WikiWorkflowUsage,
 };
 pub use runtime::{
     AgentLimits, AssistantToolCallBatch, ConversationItem, DiagnosticCode, MessageRole, ModelId,
@@ -30,6 +38,11 @@ pub use tool::{
     MAX_TOOL_RESULT_BYTES, ToolCall, ToolDecision, ToolDecisionKind, ToolDefinition, ToolEffect,
     ToolInvocation, ToolResult, ToolTerminalStatus, ToolValidationError, V1_TOOL_NAMES,
     validate_unique_call_ids,
+};
+pub use vault::{
+    ContentHash, ProjectId, RawEvidenceKind, RawEvidenceManifest, TransactionId,
+    TransactionManifest, TransactionState, TransactionTarget, VaultManifest, VaultOwnership,
+    VaultReceipt, VaultValidationError, validate_vault_relative_path,
 };
 
 /// Human-readable boundary used by architecture checks and documentation.
