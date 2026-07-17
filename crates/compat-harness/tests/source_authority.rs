@@ -191,6 +191,32 @@ impl SyntheticRepository {
         )
         .expect("synthetic package should be written");
     }
+
+    fn replace_typescript_sources(&self, sources: &[(&str, &str)]) {
+        for (path, contents) in sources {
+            write_file(&self.root, path, contents);
+        }
+        let mut manifest: Value = serde_json::from_str(&manifest_json(&self.root))
+            .expect("synthetic manifest should parse");
+        let mut entries = sources
+            .iter()
+            .map(|(path, _)| {
+                serde_json::json!({
+                    "path": path,
+                    "sha256": sha256_file(&self.root.join(path)),
+                    "purpose": "inertShrinkingEvidence"
+                })
+            })
+            .collect::<Vec<_>>();
+        entries.sort_by(|left, right| {
+            left["path"]
+                .as_str()
+                .expect("entry path should be text")
+                .cmp(right["path"].as_str().expect("entry path should be text"))
+        });
+        manifest["transitionalTypeScript"]["entries"] = Value::Array(entries);
+        write_manifest(&self.root, &manifest);
+    }
 }
 
 impl Drop for SyntheticRepository {
@@ -427,6 +453,109 @@ fn evaluator_package_scripts_are_rust_only_and_ordered_before_release_builds() {
         scripts.get("verify:agent").and_then(Value::as_str),
         Some("npm run verify:rust-contracts && npm run eval:provider && npm run eval:retrieval")
     );
+}
+
+#[test]
+fn discovered_test_graph_rejects_transitive_typescript_evaluators() {
+    let root = repository_root();
+    let current_test_hash = sha256_file(&root.join("test/test-discovery.test.ts"));
+    let current_manifest = mutated_manifest(&root, |manifest| {
+        let entry = manifest["transitionalTypeScript"]["entries"]
+            .as_array_mut()
+            .expect("TypeScript authority entries should be an array")
+            .iter_mut()
+            .find(|entry| entry["path"] == "test/test-discovery.test.ts")
+            .expect("test discovery regression source should be classified");
+        entry["sha256"] = Value::String(current_test_hash);
+    });
+    let manifest = parse_source_authority(&root, &current_manifest)
+        .expect("the RED test hash adjustment should preserve source authority shape");
+    validate_source_authority(&root, &manifest).expect_err(
+        "discovered test/provider-conformance.test.ts and \
+         test/capability-retrieval-report.test.ts reach forbidden src/eval TypeScript evaluators",
+    );
+
+    let cases: &[(&str, &[(&str, &str)])] = &[
+        (
+            "direct static import with emitted JavaScript mapping",
+            &[
+                (
+                    "test/direct.test.ts",
+                    "import '../src/eval/provider-conformance.js';\n",
+                ),
+                (
+                    "src/eval/provider-conformance.ts",
+                    "export const evaluator = true;\n",
+                ),
+            ],
+        ),
+        (
+            "indirect import with normalized dot segments",
+            &[
+                ("test/indirect.test.ts", "import './support/./bridge.js';\n"),
+                (
+                    "test/support/bridge.ts",
+                    "import '../../src/other/../eval/capability-retrieval-report.js';\n",
+                ),
+                (
+                    "src/eval/capability-retrieval-report.ts",
+                    "export const evaluator = true;\n",
+                ),
+            ],
+        ),
+        (
+            "re-export from TypeScript evaluator",
+            &[
+                (
+                    "test/reexport.test.ts",
+                    "export {runProviderConformanceReport} from '../src/eval/provider-conformance.js';\n",
+                ),
+                (
+                    "src/eval/provider-conformance.ts",
+                    "export const runProviderConformanceReport = true;\n",
+                ),
+            ],
+        ),
+        (
+            "literal dynamic import through a cycle",
+            &[
+                ("test/dynamic.test.ts", "await import('./cycle-a.js');\n"),
+                ("test/cycle-a.ts", "export * from './cycle-b.js';\n"),
+                (
+                    "test/cycle-b.ts",
+                    "import './cycle-a.js';\nawait import('../src/eval/provider-conformance.js');\n",
+                ),
+                (
+                    "src/eval/provider-conformance.ts",
+                    "export const evaluator = true;\n",
+                ),
+            ],
+        ),
+        (
+            "Windows separator resolving to TSX",
+            &[
+                (
+                    "test/windows.test.ts",
+                    "import '..\\\\src\\\\eval\\\\provider-conformance.js';\n",
+                ),
+                (
+                    "src/eval/provider-conformance.tsx",
+                    "export const evaluator = true;\n",
+                ),
+            ],
+        ),
+    ];
+    for (label, sources) in cases {
+        let repository = SyntheticRepository::new();
+        repository.replace_typescript_sources(sources);
+        let manifest = repository.load();
+        let error = validate_source_authority(&repository.root, &manifest)
+            .expect_err("every transitive evaluator route must fail closed");
+        assert!(
+            error.to_string().contains("TypeScript evaluator"),
+            "{label}: expected evaluator reachability rejection, got {error:?}"
+        );
+    }
 }
 
 #[test]

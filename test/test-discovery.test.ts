@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import {spawn} from "node:child_process";
 import {once} from "node:events";
-import {mkdtemp, mkdir, readFile, rm, symlink, writeFile} from "node:fs/promises";
+import {access, mkdtemp, mkdir, readFile, rm, symlink, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
-import {dirname, join, resolve} from "node:path";
+import {dirname, extname, join, relative, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
 import test from "node:test";
 import {
@@ -11,6 +11,59 @@ import {
   importTestFiles,
   testModuleUrl
 } from "./test-discovery.js";
+
+const LOCAL_DEPENDENCY_PATTERN = /(?:\b(?:import|export)\s+(?:[^"'`]*?\s+from\s+)?|\bimport\s*\(\s*)["']([^"']+)["']/g;
+
+async function auditEvaluatorReachability(
+  repositoryRoot: string,
+  testFiles: readonly string[]
+): Promise<string[]> {
+  const root = resolve(repositoryRoot);
+  const evaluatorRoot = resolve(root, "src/eval");
+  const queue = testFiles.map((path) => ({path: resolve(path), trace: [resolve(path)]}));
+  const visited = new Set<string>();
+  const violations = new Set<string>();
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current || visited.has(current.path)) continue;
+    visited.add(current.path);
+    const source = await readFile(current.path, "utf8");
+    for (const match of source.matchAll(LOCAL_DEPENDENCY_PATTERN)) {
+      const specifier = match[1];
+      if (!specifier?.startsWith(".")) continue;
+      const dependency = await resolveTestDependency(current.path, specifier);
+      if (!dependency) continue;
+      const trace = [...current.trace, dependency];
+      if (dependency === evaluatorRoot || dependency.startsWith(`${evaluatorRoot}\\`) || dependency.startsWith(`${evaluatorRoot}/`)) {
+        violations.add(trace.map((path) => relative(root, path).replaceAll("\\", "/")).join(" -> "));
+      } else {
+        queue.push({path: dependency, trace});
+      }
+    }
+  }
+  return [...violations].sort();
+}
+
+async function resolveTestDependency(importer: string, specifier: string): Promise<string | undefined> {
+  const normalized = specifier.replaceAll("\\", "/");
+  const raw = resolve(dirname(importer), normalized);
+  const extension = extname(raw);
+  const candidates = extension === ".js" || extension === ".jsx"
+    ? [raw.slice(0, -extension.length) + ".ts", raw.slice(0, -extension.length) + ".tsx"]
+    : extension
+      ? [raw]
+      : [raw + ".ts", raw + ".tsx", join(raw, "index.ts"), join(raw, "index.tsx")];
+  for (const candidate of candidates) {
+    try {
+      await access(candidate);
+      return resolve(candidate);
+    } catch {
+      // Continue through the deterministic candidate list.
+    }
+  }
+  return undefined;
+}
 
 test("discovery recursively returns only test modules in stable absolute-path order", async () => {
   const root = await mkdtemp(join(tmpdir(), "minimax-test-discovery-"));
@@ -143,4 +196,53 @@ test("the project runner delegates to discovery instead of maintaining a test re
   assert.match(runner, /discoverTestFiles/);
   assert.match(runner, /importTestFiles/);
   assert.doesNotMatch(runner, /\.test\.(?:js|jsx|ts|tsx)/);
+});
+
+test("discovered tests cannot reach TypeScript evaluators directly or transitively", async () => {
+  const testRoot = dirname(fileURLToPath(import.meta.url));
+  const repositoryRoot = resolve(testRoot, "..");
+  const evaluatorTests = (await discoverTestFiles(testRoot)).filter((path) =>
+    path.endsWith("provider-conformance.test.ts") ||
+    path.endsWith("capability-retrieval-report.test.ts")
+  );
+  const violations = await auditEvaluatorReachability(repositoryRoot, evaluatorTests);
+
+  assert.deepEqual(
+    violations,
+    [],
+    `discovered TypeScript evaluator reachability must be empty:\n${violations.join("\n")}`
+  );
+});
+
+test("dependency audit normalizes indirect re-export dynamic and platform paths", async () => {
+  const root = await mkdtemp(join(tmpdir(), "minimax-test-dependency-red-"));
+  try {
+    const files = new Map<string, string>([
+      ["test/direct.test.ts", "import '../src/eval/provider-conformance.js';\n"],
+      ["test/indirect.test.ts", "import './support/./bridge.js';\n"],
+      ["test/support/bridge.ts", "import '../../src/other/../eval/capability-retrieval-report.js';\n"],
+      ["test/reexport.test.ts", "export {providerReport} from '../src/eval/provider-conformance.js';\n"],
+      ["test/dynamic.test.ts", "await import('./cycle-a.js');\n"],
+      ["test/cycle-a.ts", "export * from './cycle-b.js';\n"],
+      ["test/cycle-b.ts", "import './cycle-a.js';\nawait import('../src/eval/provider-conformance.js');\n"],
+      ["test/windows.test.ts", String.raw`import '..\src\eval\provider-conformance.js';` + "\n"],
+      ["src/eval/provider-conformance.ts", "export const providerReport = true;\n"],
+      ["src/eval/capability-retrieval-report.ts", "export const retrievalReport = true;\n"]
+    ]);
+    await Promise.all([...files].map(async ([path, source]) => {
+      const absolute = join(root, path);
+      await mkdir(dirname(absolute), {recursive: true});
+      await writeFile(absolute, source, "utf8");
+    }));
+
+    const discovered = await discoverTestFiles(join(root, "test"));
+    const violations = await auditEvaluatorReachability(root, discovered);
+    assert.deepEqual(
+      violations,
+      [],
+      `normalized direct and transitive evaluator paths must fail closed:\n${violations.join("\n")}`
+    );
+  } finally {
+    await rm(root, {recursive: true, force: true});
+  }
 });
