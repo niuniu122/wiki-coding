@@ -49,7 +49,6 @@ const npmEntries = [
   {name: "package/README.md", bytes: readFileSync(resolve(root, "README.md")), mode: 0o644, type: "0"},
   {name: "package/LICENSE-APACHE", bytes: readFileSync(resolve(root, "LICENSE-APACHE")), mode: 0o644, type: "0"},
   {name: "package/LICENSE-MIT", bytes: readFileSync(resolve(root, "LICENSE-MIT")), mode: 0o644, type: "0"},
-  ...treeEntries("dist", "package/dist"),
   {name: "package/docs/", bytes: Buffer.alloc(0), mode: 0o755, type: "5"},
   ...treeEntries("docs/release", "package/docs/release")
 ];
@@ -64,7 +63,6 @@ const manifest = {
   binarySha256: sha256(binaryBytes),
   launcher: "bin/minimax-codex.cjs",
   launcherSha256: sha256(launcherBytes),
-  legacy: "dist/cli.js",
   npmPackage: npmArchiveName,
   npmPackageSha256: npmArchiveSha256,
   embeddingIncluded: false,
