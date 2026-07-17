@@ -499,6 +499,38 @@ fn receipt_hash_is_required_and_forgery_is_detected() {
 }
 
 #[test]
+fn verify_reports_source_drift_and_rejects_target_drift_without_writing() {
+    let project = tempfile::tempdir().expect("project");
+    let source = project.path().join(".mini-codex");
+    copy_fixture(&source);
+    let plan = build_migration_plan(&source, project.path()).expect("plan");
+    let plan_path = write_plan(project.path(), &plan);
+    apply_migration(&plan_path, &plan.confirmation()).expect("apply");
+    let receipt_path = project.path().join(format!(
+        ".minimax/migrations/v1/{}/receipt.json",
+        plan.migration_id
+    ));
+
+    let drift = source.join("new-unsupported.txt");
+    std::fs::write(&drift, "source drift").expect("source drift");
+    let before_verify = tree_hash(project.path());
+    let report = verify_migration(&receipt_path).expect("source drift report");
+    assert!(!report.source_unchanged);
+    assert_eq!(report.targets_verified, 3);
+    assert_eq!(before_verify, tree_hash(project.path()));
+
+    std::fs::remove_file(drift).expect("restore source");
+    let target = project.path().join(".minimax/config.json");
+    std::fs::write(&target, "target drift").expect("target drift");
+    let before_failed_verify = tree_hash(project.path());
+    assert_eq!(
+        verify_migration(&receipt_path),
+        Err(MigrationError::TargetChanged)
+    );
+    assert_eq!(before_failed_verify, tree_hash(project.path()));
+}
+
+#[test]
 fn recomputed_forged_receipt_cannot_claim_an_unowned_project_file() {
     #[derive(serde::Serialize)]
     #[serde(rename_all = "camelCase")]
