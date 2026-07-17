@@ -209,7 +209,7 @@ Plans:
 | 7. Close Milestone Integration Gaps | 4/4 | Complete | 2026-07-16 |
 | 8. Codex-style Subprocess Sandbox Hardening | 3/3 | Complete | 2026-07-17 |
 | 9. Capability Workspace and Non-Programmer Harness | 3/3 | Complete | 2026-07-17 |
-| 10. Rust Authority and Source Boundaries | 3/4 | Gap closure planned | - |
+| 10. Rust Authority and Source Boundaries | 4/4 | Complete | 2026-07-17 |
 | 11. Rust Verification and Evaluation Authority | 0/3 | Not started | - |
 | 12. Fixture Compatibility and Rust Migration | 0/2 | Not started | - |
 | 13. Thin npm and Native Release | 0/3 | Not started | - |
@@ -291,14 +291,14 @@ Plans:
   3. Runtime commands write only the Rust-owned `.minimax` schemas; no supported or legacy command can create or mutate `.mini-codex` state after the authority cutover.
   4. The Rust CLI and the current npm-installed command remain usable after the authority boundary is enforced, before TypeScript source is deleted.
 
-**Plans:** 3/4 plans complete; gap closure planned
+**Plans:** 4/4 plans complete
 
 Plans:
 
 - [x] 10-01-PLAN.md
 - [x] 10-02-PLAN.md
 - [x] 10-03-PLAN.md
-- [ ] 10-04-PLAN.md
+- [x] 10-04-PLAN.md
 
 **Wave 1**
 

@@ -4,17 +4,17 @@ milestone: v3.0
 milestone_name: Rust Convergence
 current_phase: 10
 current_phase_name: rust-authority-and-source-boundaries
-status: executing
-stopped_at: Completed 10-03-PLAN.md
-last_updated: "2026-07-17T14:20:12.055Z"
+status: verifying
+stopped_at: Completed 10-04-PLAN.md
+last_updated: "2026-07-17T14:41:07.424Z"
 last_activity: 2026-07-17
-last_activity_desc: Phase 10 execution started
+last_activity_desc: Phase 10 complete; ready for verification
 progress:
   total_phases: 14
-  completed_phases: 9
+  completed_phases: 10
   total_plans: 44
-  completed_plans: 31
-  percent: 64
+  completed_plans: 32
+  percent: 71
 ---
 
 # Project State
@@ -27,10 +27,10 @@ See: `.planning/PROJECT.md` (updated 2026-07-15)
 
 ## Current Position
 
-Phase: 10 (rust-authority-and-source-boundaries) — EXECUTING
-Plan: 1 of 4
-Status: Executing Phase 10
-Last activity: 2026-07-17 — Phase 10 execution started
+Phase: 10 (rust-authority-and-source-boundaries) — VERIFYING
+Plan: 4 of 4
+Status: Phase complete — ready for verification
+Last activity: 2026-07-17 — Completed Phase 10 Rust authority and source boundaries
 
 ## Previous Phase 7 Hosted Baseline (superseded)
 
@@ -113,6 +113,8 @@ No package publication, tag, PR, merge, live Provider request, credential read, 
 - [Phase 10]: Installed identity requires matching direct and launcher versions plus the exact packaged binary SHA-256 under a controlled environment.
 - [Phase 10]: CI runs Rust contracts before transitional Node checks and every package or installed smoke step.
 - [Phase 10]: Milestone evidence is selected by the actual rustc host so GNU-LLVM development evidence cannot satisfy a hosted tier.
+- [Phase 10]: npm development uses the exact locked Cargo CLI route; installed startup remains on the fixed native launcher. — This removes direct TypeScript product execution while preserving argv forwarding and the cross-platform npm shim.
+- [Phase 10]: Both offline authority preflights share a structural package-script policy that preserves only transitional test, evaluation, and smoke TypeScript routes. — One fail-closed classifier prevents compatibility and source-authority checks from drifting apart without executing package scripts.
 
 ## Performance Metrics
 
@@ -121,9 +123,10 @@ No package publication, tag, PR, merge, live Provider request, credential read, 
 | Phase 10 P01 | 29min | 2 tasks | 5 files |
 | Phase 10 P02 | 31min | 2 tasks | 9 files |
 | Phase 10 P03 | 31min | 3 tasks | 8 files |
+| Phase 10 P04 | 20min | 2 tasks | 8 files |
 
 ## Session
 
-**Last session:** 2026-07-17T13:23:30.539Z
-**Stopped at:** Completed 10-03-PLAN.md
+**Last session:** 2026-07-17T14:41:07.403Z
+**Stopped at:** Completed 10-04-PLAN.md
 **Resume file:** None
