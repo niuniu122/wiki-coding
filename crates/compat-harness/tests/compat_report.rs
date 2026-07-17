@@ -96,6 +96,18 @@ fn rust_command_permission_provider_and_product_baselines_are_executable() {
     validate_rust_provider_profiles(&manifests.providers)
         .expect("executable Rust Provider profile evidence");
     validate_product_entry(&root).expect("Rust npm product entry");
+    let package: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(root.join("package.json")).expect("package manifest"),
+    )
+    .expect("package JSON");
+    assert_eq!(
+        package["scripts"]["dev"], "cargo run -p minimax-cli --locked --",
+        "development must execute the Rust CLI source"
+    );
+    assert_eq!(
+        package["scripts"]["start"], "node bin/minimax-codex.cjs",
+        "start must remain the thin packaged Rust launcher"
+    );
     assert_launcher_contract(&root);
     validate_cutover_candidate(&root, &manifests.baseline)
         .expect("hosted cutover candidate prerequisites");

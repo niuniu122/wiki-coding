@@ -250,11 +250,18 @@ fn npm_product_entry_uses_only_rust_launcher() {
     let scripts = package["scripts"]
         .as_object()
         .expect("package scripts object");
+    assert_eq!(
+        scripts["dev"], "cargo run -p minimax-cli --locked --",
+        "npm run dev must execute the Rust CLI source"
+    );
+    assert_eq!(scripts["start"], "node bin/minimax-codex.cjs");
     assert!(!scripts.contains_key("start:legacy"));
     assert!(scripts.values().all(|script| {
-        script
-            .as_str()
-            .is_none_or(|script| !script.contains("dist/cli.js"))
+        script.as_str().is_none_or(|script| {
+            !script.contains("dist/cli.js")
+                && !script.contains("minimax-codex-legacy")
+                && !script.contains("tsx src/cli.tsx")
+        })
     }));
 }
 

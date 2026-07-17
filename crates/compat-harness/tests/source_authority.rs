@@ -82,7 +82,20 @@ impl SyntheticRepository {
         write_file(
             &root,
             "package.json",
-            r#"{"bin":{"minimax-codex":"bin/minimax-codex.cjs"}}"#,
+            r#"{
+  "bin": {"minimax-codex": "bin/minimax-codex.cjs"},
+  "scripts": {
+    "dev": "cargo run -p minimax-cli --locked --",
+    "start": "node bin/minimax-codex.cjs",
+    "build": "tsc -p tsconfig.json",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "test": "tsx test/run-tests.ts",
+    "test:launcher": "tsx --test test/launcher.test.ts",
+    "eval:retrieval": "tsx src/eval/capability-retrieval-report.ts",
+    "eval:provider": "tsx src/eval/provider-conformance.ts",
+    "smoke:provider": "tsx src/smoke/provider-smoke.ts"
+  }
+}"#,
         );
         for path in [
             "bin/minimax-codex.cjs",
@@ -93,6 +106,12 @@ impl SyntheticRepository {
         ] {
             write_file(&root, path, "\"use strict\";\n");
         }
+        write_file(
+            &root,
+            CI_WORKFLOW,
+            &fs::read_to_string(repository_root().join(CI_WORKFLOW))
+                .expect("committed CI workflow should be readable"),
+        );
         write_file(&root, "src/legacy.ts", "export {};\n");
         for path in [
             "test/fixtures/executors/diag-large.js",
@@ -155,6 +174,20 @@ impl SyntheticRepository {
         mutate(&mut manifest);
         write_manifest(&self.root, &manifest);
     }
+
+    fn set_package_script(&self, name: &str, command: &str) {
+        let path = self.root.join("package.json");
+        let mut package: Value = serde_json::from_str(
+            &fs::read_to_string(&path).expect("synthetic package should be readable"),
+        )
+        .expect("synthetic package should parse");
+        package["scripts"][name] = Value::String(command.to_owned());
+        fs::write(
+            path,
+            serde_json::to_string_pretty(&package).expect("synthetic package should serialize"),
+        )
+        .expect("synthetic package should be written");
+    }
 }
 
 impl Drop for SyntheticRepository {
@@ -203,6 +236,17 @@ fn assert_validation_rejected(
         error.to_string().contains(expected),
         "{label}: expected {expected:?} in {error:?}"
     );
+}
+
+fn package_scripts(root: &Path) -> serde_json::Map<String, Value> {
+    let package: Value = serde_json::from_str(
+        &fs::read_to_string(root.join("package.json")).expect("package.json should be readable"),
+    )
+    .expect("package.json should parse");
+    package["scripts"]
+        .as_object()
+        .expect("package scripts should be an object")
+        .clone()
 }
 
 #[test]
@@ -302,6 +346,72 @@ fn repository_source_inventory() {
     let manifest = load_source_authority(&root).expect("committed source authority should load");
     validate_source_authority(&root, &manifest)
         .expect("committed repository should satisfy source authority");
+}
+
+#[test]
+fn repository_product_scripts_are_rust_owned() {
+    let root = repository_root();
+    let scripts = package_scripts(&root);
+    assert_eq!(
+        scripts.get("dev").and_then(Value::as_str),
+        Some("cargo run -p minimax-cli --locked --"),
+        "package dev route must execute the Rust CLI source with npm argv forwarding"
+    );
+    assert_eq!(
+        scripts.get("start").and_then(Value::as_str),
+        Some("node bin/minimax-codex.cjs"),
+        "package start route must remain the thin Rust launcher"
+    );
+}
+
+#[test]
+fn rejects_typescript_and_legacy_product_script_routes() {
+    for (label, script, command) in [
+        ("dev TypeScript CLI", "dev", "tsx src/cli.tsx"),
+        ("start TSX CLI", "start", "tsx src/other-cli.tsx"),
+        ("compiled legacy alias", "preview", "node dist/cli.js"),
+        (
+            "named legacy alias",
+            "launch:product",
+            "minimax-codex-legacy",
+        ),
+        (
+            "equivalent TypeScript alias",
+            "serve",
+            "tsx src/other-entry.ts",
+        ),
+    ] {
+        assert_validation_rejected(
+            label,
+            |repository| repository.set_package_script(script, command),
+            "TypeScript/legacy product entry",
+        );
+    }
+}
+
+#[test]
+fn transitional_package_scripts_remain_allowed() {
+    let repository = SyntheticRepository::new();
+    let manifest = repository.load();
+    validate_source_authority(&repository.root, &manifest).expect(
+        "tests, static checks, evaluations, and smoke remain transitional through Phase 11",
+    );
+
+    let scripts = package_scripts(&repository.root);
+    for (name, expected) in [
+        ("build", "tsc -p tsconfig.json"),
+        ("check", "tsc -p tsconfig.json --noEmit"),
+        ("test", "tsx test/run-tests.ts"),
+        ("test:launcher", "tsx --test test/launcher.test.ts"),
+        (
+            "eval:retrieval",
+            "tsx src/eval/capability-retrieval-report.ts",
+        ),
+        ("eval:provider", "tsx src/eval/provider-conformance.ts"),
+        ("smoke:provider", "tsx src/smoke/provider-smoke.ts"),
+    ] {
+        assert_eq!(scripts.get(name).and_then(Value::as_str), Some(expected));
+    }
 }
 
 #[test]

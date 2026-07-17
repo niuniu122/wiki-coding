@@ -272,6 +272,11 @@ test("jobs contains only the verification job", () => {
 
 test("offline evaluation scripts are exact and never alias the live smoke command", async () => {
   const packageJson = JSON.parse(await readFile(resolve("package.json"), "utf8")) as {scripts?: Record<string, string>};
+  assert.equal(packageJson.scripts?.["dev"], "cargo run -p minimax-cli --locked --");
+  assert.equal(packageJson.scripts?.["start"], "node bin/minimax-codex.cjs");
+  assert.equal(packageJson.scripts?.["check"], "tsc -p tsconfig.json --noEmit");
+  assert.equal(packageJson.scripts?.["test"], "tsx test/run-tests.ts");
+  assert.equal(packageJson.scripts?.["test:launcher"], "tsx --test test/launcher.test.ts");
   assert.equal(packageJson.scripts?.["eval:retrieval"], "tsx src/eval/capability-retrieval-report.ts");
   assert.equal(packageJson.scripts?.["eval:provider"], "tsx src/eval/provider-conformance.ts");
   assert.equal(packageJson.scripts?.["check:rust"], "cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked -- -D warnings");
