@@ -36,12 +36,12 @@ const ARGUMENT_SHAPES = new Set(["none", "optional", "required"]);
 interface CompatFixtures {
   commands: unknown;
   providers: unknown;
-  status: unknown;
+  publicContract: unknown;
   invalidCases: unknown;
   validStreams: readonly unknown[];
 }
 
-test("Rust rewrite compatibility fixtures preserve the locked public baseline", async () => {
+test("Rust compatibility fixtures preserve the immutable public contract", async () => {
   const fixtures = await loadCompatFixtures();
   assert.doesNotThrow(() => validateCompatFixtures(fixtures));
 });
@@ -70,24 +70,24 @@ test("compatibility validation rejects secret values", async () => {
   );
 });
 
-test("compatibility validation rejects matched status without evidence", async () => {
+test("compatibility validation rejects contract status without Rust evidence", async () => {
   const fixtures = await loadCompatFixtures();
-  const status = structuredClone(asRecord(fixtures.status));
-  const matched = asRecord(asArray(status.items).find((item) => {
+  const publicContract = structuredClone(asRecord(fixtures.publicContract));
+  const matched = asRecord(asArray(publicContract.items).find((item) => {
     return asRecord(item).status === "matched";
   }));
   matched.evidence = [];
 
   assert.throws(
-    () => validateCompatFixtures({...fixtures, status}),
-    /matched compatibility item requires evidence/i
+    () => validateCompatFixtures({...fixtures, publicContract}),
+    /public contract item requires Rust evidence/i
   );
 });
 
 export function validateCompatFixtures(fixtures: CompatFixtures): void {
   assertSchemaVersion(fixtures.commands, "commands");
   assertSchemaVersion(fixtures.providers, "providers");
-  assertSchemaVersion(fixtures.status, "baseline status");
+  assertSchemaVersion(fixtures.publicContract, "public contract");
   assertSchemaVersion(fixtures.invalidCases, "invalid provider cases");
 
   const commandManifest = asRecord(fixtures.commands);
@@ -123,23 +123,29 @@ export function validateCompatFixtures(fixtures: CompatFixtures): void {
     [...PROTOCOLS]
   );
 
-  const statusManifest = asRecord(fixtures.status);
-  assert.equal(statusManifest.productEntry, "bin/minimax-codex.cjs");
-  for (const value of asArray(statusManifest.items)) {
-    const item = asRecord(value);
+  const contractManifest = asRecord(fixtures.publicContract);
+  assert.equal(contractManifest.contractVersion, "v1");
+  assert.equal(contractManifest.provenanceCommit, "84784f5");
+  assert.match(asString(contractManifest.contentFingerprint), /^sha256:[a-f0-9]{64}$/u);
+  assert.equal(contractManifest.productEntry, "bin/minimax-codex.cjs");
+  const requiredItemIds = asArray(contractManifest.requiredItemIds).map(asString);
+  const contractItems = asArray(contractManifest.items).map(asRecord);
+  assert.deepEqual(
+    contractItems.map((item) => asString(item.id)).sort(),
+    [...requiredItemIds].sort()
+  );
+  assert.equal(new Set(requiredItemIds).size, requiredItemIds.length);
+  for (const item of contractItems) {
     const id = asString(item.id);
     const status = asString(item.status);
+    assert.match(id, /^contract\./u);
+    assert.doesNotMatch(id, /^(?:rust|typescript)\./u);
     assert.equal(STATUSES.has(status), true, `unsupported status: ${status}`);
     const evidence = asArray(item.evidence).map(asString);
-    if (status === "matched") {
-      assert.notEqual(
-        evidence.length,
-        0,
-        "matched compatibility item requires evidence"
-      );
-    }
-    if (id.startsWith("rust.")) {
-      assert.notEqual(status, "pending", `mandatory Rust compatibility item is pending: ${id}`);
+    assert.notEqual(evidence.length, 0, "public contract item requires Rust evidence");
+    assert.notEqual(status, "pending", `public contract item is pending: ${id}`);
+    if (status === "approved_difference") {
+      assert.match(asString(item.approvedDifference), /^difference\.command\./u);
     }
   }
 
@@ -192,11 +198,11 @@ export function validateCompatFixtures(fixtures: CompatFixtures): void {
 }
 
 async function loadCompatFixtures(): Promise<CompatFixtures> {
-  const [commands, providers, status, invalidCases, responses, chatCompletions] =
+  const [commands, providers, publicContract, invalidCases, responses, chatCompletions] =
     await Promise.all([
       readJson("../fixtures/compat/commands.v1.json"),
       readJson("../fixtures/compat/providers.v1.json"),
-      readJson("../fixtures/compat/baseline-status.v1.json"),
+      readJson("../fixtures/compat/public-contract.v1.json"),
       readJson("../fixtures/compat/provider-streams/invalid-cases.v1.json"),
       readJsonLines("../fixtures/compat/provider-streams/responses.valid.jsonl"),
       readJsonLines(
@@ -206,7 +212,7 @@ async function loadCompatFixtures(): Promise<CompatFixtures> {
   return {
     commands,
     providers,
-    status,
+    publicContract,
     invalidCases,
     validStreams: [...responses, ...chatCompletions]
   };

@@ -10,7 +10,7 @@ use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
 
 use crate::source_authority::validate_package_product_scripts;
-use crate::{BaselineStatus, CommandManifest, ParityStatus, ProviderManifest};
+use crate::{CommandManifest, ParityStatus, ProviderManifest, PublicContractManifest};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum BaselineError {
@@ -151,7 +151,7 @@ pub fn validate_rust_vault_evidence(root: &Path) -> Result<(), BaselineError> {
 
 pub fn validate_rust_tool_evidence(
     root: &Path,
-    baseline: &BaselineStatus,
+    public_contract: &PublicContractManifest,
 ) -> Result<(), BaselineError> {
     let e2e = std::fs::read_to_string(root.join("fixtures/compat/tools/e2e.v1.json"))
         .map_err(|_| BaselineError::ToolEvidence("e2e fixture".to_owned()))?;
@@ -173,8 +173,8 @@ pub fn validate_rust_tool_evidence(
     }
 
     for requirement in ["TOOL-01", "TOOL-02", "TOOL-03", "TOOL-04", "TOOL-05"] {
-        let id = format!("rust.requirement.{requirement}");
-        let item = baseline
+        let id = format!("contract.requirement.{requirement}");
+        let item = public_contract
             .items
             .iter()
             .find(|item| item.id == id)
@@ -402,31 +402,33 @@ struct CommandDifference {
 
 pub fn validate_cutover_evidence(
     root: &Path,
-    baseline: &BaselineStatus,
+    public_contract: &PublicContractManifest,
 ) -> Result<(), BaselineError> {
     validate_hosted_release_gate(root)?;
-    validate_cutover_candidate(root, baseline)
+    validate_cutover_candidate(root, public_contract)
 }
 
 pub fn validate_cutover_candidate(
     root: &Path,
-    baseline: &BaselineStatus,
+    public_contract: &PublicContractManifest,
 ) -> Result<(), BaselineError> {
     validate_command_behavior_evidence(root)?;
-    if baseline
+    if public_contract
         .items
         .iter()
-        .any(|item| item.id.starts_with("rust.") && item.status == ParityStatus::Pending)
+        .any(|item| item.status == ParityStatus::Pending)
     {
         return Err(BaselineError::CutoverEvidence);
     }
     for required in [
-        "rust.provider_profiles",
-        "rust.migration",
-        "rust.release_gate",
-        "rust.product_entry",
+        "contract.provider_profile.minimax_official",
+        "contract.provider_profile.minimax_hashsight",
+        "contract.provider_profile.custom_openai_compatible",
+        "contract.migration",
+        "contract.release_gate",
+        "contract.product_entry",
     ] {
-        let item = baseline
+        let item = public_contract
             .items
             .iter()
             .find(|item| item.id == required)

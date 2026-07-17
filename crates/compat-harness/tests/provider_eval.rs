@@ -412,7 +412,7 @@ impl FixtureRepository {
             "fixtures/compat/provider-streams/invalid-cases.v1.json",
             "fixtures/compat/providers.v1.json",
             "fixtures/compat/commands.v1.json",
-            "fixtures/compat/baseline-status.v1.json",
+            "fixtures/compat/public-contract.v1.json",
         ] {
             let destination = root.join(relative);
             fs::create_dir_all(destination.parent().expect("fixture parent"))

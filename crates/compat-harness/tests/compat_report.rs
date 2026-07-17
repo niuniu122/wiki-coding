@@ -78,11 +78,50 @@ fn compat_report_contains_every_contract_item_exactly_once() {
 }
 
 #[test]
+fn public_contract_manifest_fails_closed_on_schema_identity_and_evidence_drift() {
+    let root = repository_root();
+
+    let unknown = CompatManifestFixture::new(&root);
+    unknown.rewrite_contract(|contract| {
+        contract["unexpected"] = serde_json::json!(true);
+    });
+    assert!(load_compat_manifests(&unknown.root).is_err());
+
+    let fingerprint = CompatManifestFixture::new(&root);
+    fingerprint.rewrite_contract(|contract| {
+        contract["contentFingerprint"] = serde_json::json!(format!("sha256:{}", "0".repeat(64)));
+    });
+    assert!(load_compat_manifests(&fingerprint.root).is_err());
+
+    let duplicate = CompatManifestFixture::new(&root);
+    duplicate.rewrite_contract(|contract| {
+        let items = contract["items"].as_array_mut().expect("contract items");
+        items.push(items[0].clone());
+    });
+    assert!(load_compat_manifests(&duplicate.root).is_err());
+
+    let lost = CompatManifestFixture::new(&root);
+    lost.rewrite_contract(|contract| {
+        contract["items"]
+            .as_array_mut()
+            .expect("contract items")
+            .pop();
+    });
+    assert!(load_compat_manifests(&lost.root).is_err());
+
+    let missing_evidence = CompatManifestFixture::new(&root);
+    fs::remove_file(missing_evidence.root.join("crates/cli/src/migration.rs"))
+        .expect("remove fixture evidence");
+    assert!(load_compat_manifests(&missing_evidence.root).is_err());
+}
+
+#[test]
 fn rust_command_permission_provider_and_product_baselines_are_executable() {
     let root = repository_root();
     let manifests = load_compat_manifests(&root).expect("strict manifests");
     validate_rust_command_surface(&manifests.commands).expect("complete Rust command surface");
-    validate_rust_tool_evidence(&root, &manifests.baseline).expect("executable Rust tool evidence");
+    validate_rust_tool_evidence(&root, &manifests.public_contract)
+        .expect("executable Rust tool evidence");
     validate_rust_vault_evidence(&root).expect("executable Rust Vault evidence");
     validate_rust_retrieval_evidence(&root).expect("executable Rust retrieval evidence");
     validate_rust_provider_profiles(&manifests.providers)
@@ -101,7 +140,7 @@ fn rust_command_permission_provider_and_product_baselines_are_executable() {
         "start must remain the thin packaged Rust launcher"
     );
     assert_launcher_contract(&root);
-    validate_cutover_candidate(&root, &manifests.baseline)
+    validate_cutover_candidate(&root, &manifests.public_contract)
         .expect("hosted cutover candidate prerequisites");
 }
 
@@ -109,22 +148,22 @@ fn rust_command_permission_provider_and_product_baselines_are_executable() {
 fn hosted_cutover_evidence_matches_current_product() {
     let root = repository_root();
     let manifests = load_compat_manifests(&root).expect("strict manifests");
-    validate_cutover_evidence(&root, &manifests.baseline).expect("hosted cutover evidence");
+    validate_cutover_evidence(&root, &manifests.public_contract).expect("hosted cutover evidence");
 }
 
 #[test]
 fn cutover_rejects_a_pending_mandatory_rust_item() {
     let root = repository_root();
     let manifests = load_compat_manifests(&root).expect("strict manifests");
-    let mut baseline = manifests.baseline;
-    let release = baseline
+    let mut public_contract = manifests.public_contract;
+    let release = public_contract
         .items
         .iter_mut()
-        .find(|item| item.id == "rust.release_gate")
+        .find(|item| item.id == "contract.release_gate")
         .expect("release item");
     release.status = ParityStatus::Pending;
     release.evidence.clear();
-    assert!(validate_cutover_candidate(&root, &baseline).is_err());
+    assert!(validate_cutover_candidate(&root, &public_contract).is_err());
 }
 
 #[test]
@@ -467,6 +506,73 @@ struct LauncherFixture {
     root: PathBuf,
     launcher: PathBuf,
     node: PathBuf,
+}
+
+struct CompatManifestFixture {
+    root: PathBuf,
+}
+
+impl CompatManifestFixture {
+    fn new(repository_root: &Path) -> Self {
+        let unique = format!(
+            "minimax-public-contract-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock after epoch")
+                .as_nanos()
+        );
+        let root = std::env::temp_dir().join(unique);
+        for relative in [
+            "fixtures/compat/commands.v1.json",
+            "fixtures/compat/providers.v1.json",
+            "fixtures/compat/public-contract.v1.json",
+        ] {
+            let destination = root.join(relative);
+            fs::create_dir_all(destination.parent().expect("fixture parent"))
+                .expect("create fixture parent");
+            fs::copy(repository_root.join(relative), destination).expect("copy manifest fixture");
+        }
+        let contract: serde_json::Value = serde_json::from_str(
+            &fs::read_to_string(root.join("fixtures/compat/public-contract.v1.json"))
+                .expect("public contract fixture"),
+        )
+        .expect("public contract JSON");
+        for evidence in contract["items"]
+            .as_array()
+            .expect("contract items")
+            .iter()
+            .flat_map(|item| item["evidence"].as_array().expect("contract evidence"))
+            .map(|evidence| evidence.as_str().expect("evidence path"))
+        {
+            let path = root.join(evidence);
+            if !path.exists() {
+                fs::create_dir_all(path.parent().expect("evidence parent"))
+                    .expect("create evidence parent");
+                fs::write(path, []).expect("write evidence placeholder");
+            }
+        }
+        Self { root }
+    }
+
+    fn rewrite_contract(&self, mutate: impl FnOnce(&mut serde_json::Value)) {
+        let path = self.root.join("fixtures/compat/public-contract.v1.json");
+        let mut contract: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).expect("public contract fixture"))
+                .expect("public contract JSON");
+        mutate(&mut contract);
+        fs::write(
+            path,
+            serde_json::to_vec_pretty(&contract).expect("serialize public contract"),
+        )
+        .expect("rewrite public contract");
+    }
+}
+
+impl Drop for CompatManifestFixture {
+    fn drop(&mut self) {
+        fs::remove_dir_all(&self.root).expect("remove public contract fixture");
+    }
 }
 
 impl LauncherFixture {

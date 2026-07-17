@@ -226,7 +226,7 @@
       { "path": "test/release-package.test.ts", "sha256": "98f9c8fe0fced70127b4b03e481ffa2c645be29db2efa5aea7d477408f040a0e", "purpose": "inertShrinkingEvidence" },
       { "path": "test/run-tests.ts", "sha256": "2c1eecd526d79fc08c48c8e01b6f4d30ca7b556a0d5ec50bfb6ce8ab04e5eaed", "purpose": "inertShrinkingEvidence" },
       { "path": "test/runtime-connection-contract.test.ts", "sha256": "4e503fc097ebb4ad505dfb2125ef5e63ca90534d3ebe4f14cdea44adb492e7b1", "purpose": "inertShrinkingEvidence" },
-      { "path": "test/rust-rewrite-compat-manifest.test.ts", "sha256": "493403e05b4f55c4484542f56c552f94c48de846c707b6b3a613a10c4437816a", "purpose": "inertShrinkingEvidence" },
+      { "path": "test/rust-rewrite-compat-manifest.test.ts", "sha256": "e90f21d83a26566dddab7651953e77df0992ec4ee2f0f0b5872c1b58ec090669", "purpose": "inertShrinkingEvidence" },
       { "path": "test/secret-store.test.ts", "sha256": "9bc82c4892ed8af64cdec8090a3ae00961fd0f3e500e4cdfb6af1d1196da93d9", "purpose": "inertShrinkingEvidence" },
       { "path": "test/session-service.test.ts", "sha256": "16320e7d66cf709c9862c8759eca2e9bbdbd0f2e185f3805c6f5d722ec237583", "purpose": "inertShrinkingEvidence" },
       { "path": "test/shutdown-coordinator.test.ts", "sha256": "477f5f026a86f9bc1a79370cd8c5b2dadbc10a9395a6c1f4f4ad58889818bd32", "purpose": "inertShrinkingEvidence" },

@@ -1,7 +1,7 @@
-//! Cross-implementation compatibility checks for the Rust rewrite.
+//! Public-contract compatibility checks for the Rust product.
 //!
-//! This non-published crate may observe all production crates in order to prove
-//! behavioral parity with the existing TypeScript implementation.
+//! This non-published crate observes production crates and immutable fixtures;
+//! it never needs a second executable product implementation.
 
 pub mod architecture;
 pub mod baseline;
@@ -30,8 +30,8 @@ pub use coverage::{
     CoverageResponsibility, CoverageSource, load_coverage_matrix, validate_coverage_matrix,
 };
 pub use manifest::{
-    BaselineStatus, CommandManifest, CompatManifests, ManifestError, ParityStatus,
-    ProviderManifest, StatusItem, load_compat_manifests, repository_root,
+    CommandManifest, CompatManifests, ManifestError, ParityStatus, ProviderManifest,
+    PublicContractManifest, StatusItem, load_compat_manifests, repository_root,
 };
 pub use provider_eval::{
     PROVIDER_EVALUATION_GOLDEN, PROVIDER_EVALUATION_MANIFEST, ProviderCheckReport,
@@ -52,4 +52,4 @@ pub use source_authority::{
 };
 
 /// Human-readable boundary used by architecture checks and documentation.
-pub const CRATE_ROLE: &str = "non-production parity harness across TypeScript and Rust boundaries";
+pub const CRATE_ROLE: &str = "non-production public-contract and Rust compatibility harness";

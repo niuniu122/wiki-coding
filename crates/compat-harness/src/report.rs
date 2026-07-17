@@ -28,54 +28,20 @@ pub struct ReportEntry {
 #[must_use]
 pub fn build_report(manifests: &CompatManifests) -> CompatReport {
     let mut entries = Vec::new();
-    for item in &manifests.baseline.items {
-        let expanded_ids = match item.id.as_str() {
-            "typescript.public_commands" | "rust.public_commands" => {
-                let implementation = item.id.split('.').next().unwrap_or_default();
-                manifests
-                    .commands
-                    .commands
-                    .iter()
-                    .flat_map(|command| {
-                        std::iter::once(command.name.as_str())
-                            .chain(command.aliases.iter().map(String::as_str))
-                    })
-                    .map(|command| format!("{implementation}.command.{command}"))
-                    .collect::<Vec<_>>()
-            }
-            "typescript.provider_profiles" | "rust.provider_profiles" => {
-                let implementation = item.id.split('.').next().unwrap_or_default();
-                manifests
-                    .providers
-                    .profile_classes
-                    .iter()
-                    .map(|profile| format!("{implementation}.provider_profile.{}", profile.id))
-                    .collect()
-            }
-            "typescript.provider_protocols" | "rust.provider_protocols" => {
-                let implementation = item.id.split('.').next().unwrap_or_default();
-                manifests
-                    .providers
-                    .protocols
-                    .iter()
-                    .map(|protocol| format!("{implementation}.provider_protocol.{protocol}"))
-                    .collect()
-            }
-            _ => vec![item.id.clone()],
-        };
+    for item in &manifests.public_contract.items {
         let mut evidence = item.evidence.clone();
         evidence.sort();
-        entries.extend(expanded_ids.into_iter().map(|id| ReportEntry {
-            id,
+        entries.push(ReportEntry {
+            id: item.id.clone(),
             status: item.status.clone(),
-            evidence: evidence.clone(),
-            difference: item.difference.clone(),
-        }));
+            evidence,
+            difference: item.approved_difference.clone(),
+        });
     }
     entries.sort_by(|left, right| left.id.cmp(&right.id));
     CompatReport {
         schema_version: REPORT_SCHEMA_VERSION,
-        baseline_commit: manifests.baseline.baseline_commit.clone(),
+        baseline_commit: manifests.public_contract.provenance_commit.clone(),
         entries,
     }
 }

@@ -110,7 +110,7 @@ fn verify_repository(root: &Path, require_hosted_evidence: bool) -> Result<(), S
     verify_retrieval_evaluation(root).map_err(|error| error.to_string())?;
     let first_manifests = load_compat_manifests(root).map_err(|error| error.to_string())?;
     validate_rust_command_surface(&first_manifests.commands).map_err(|error| error.to_string())?;
-    validate_rust_tool_evidence(root, &first_manifests.baseline)
+    validate_rust_tool_evidence(root, &first_manifests.public_contract)
         .map_err(|error| error.to_string())?;
     validate_rust_vault_evidence(root).map_err(|error| error.to_string())?;
     validate_rust_retrieval_evidence(root).map_err(|error| error.to_string())?;
@@ -118,10 +118,10 @@ fn verify_repository(root: &Path, require_hosted_evidence: bool) -> Result<(), S
         .map_err(|error| error.to_string())?;
     validate_product_entry(root).map_err(|error| error.to_string())?;
     if require_hosted_evidence {
-        validate_cutover_evidence(root, &first_manifests.baseline)
+        validate_cutover_evidence(root, &first_manifests.public_contract)
             .map_err(|error| error.to_string())?;
     } else {
-        validate_cutover_candidate(root, &first_manifests.baseline)
+        validate_cutover_candidate(root, &first_manifests.public_contract)
             .map_err(|error| error.to_string())?;
     }
     verify_provider_fixtures(root)?;
