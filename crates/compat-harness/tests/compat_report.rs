@@ -174,6 +174,98 @@ fn compatibility_rejects_unknown_differences_live_rows_and_typescript_execution_
 }
 
 #[test]
+fn compatibility_source_boundary_rejects_forbidden_references_in_derived_module_closure() {
+    let repository = repository_root();
+
+    let control = HermeticCompatibilityFixture::new(&repository);
+    verify_fixture_compatibility(&control.root, false)
+        .expect("static compatibility authority literals remain inert");
+
+    for (relative, source, reference_class) in [
+        (
+            "crates/compat-harness/src/provider_eval.rs",
+            r#"
+#[allow(dead_code)]
+fn compatibility_boundary_node_process_probe() {
+    let _command = std::process::Command::new("node").arg("dist/cli.js");
+}
+"#,
+            "process",
+        ),
+        (
+            "crates/compat-harness/src/migration_support.rs",
+            r#"
+#[allow(dead_code)]
+fn compatibility_boundary_typescript_read_probe() {
+    let _source = std::fs::read_to_string("src/cli.tsx");
+}
+"#,
+            "source",
+        ),
+        (
+            "crates/compat-harness/src/migration_support.rs",
+            r#"
+#[allow(dead_code)]
+fn compatibility_boundary_typescript_build_probe() {
+    let _command = std::process::Command::new("npm").args(["run", "build"]);
+}
+"#,
+            "process",
+        ),
+    ] {
+        let fixture = HermeticCompatibilityFixture::new(&repository);
+        fixture.append_compat_source(relative, source);
+        let error = verify_fixture_compatibility(&fixture.root, false)
+            .expect_err("executable legacy reference must fail closed");
+        assert!(error.contains(relative), "missing mutated path: {error}");
+        assert!(
+            error.contains(reference_class),
+            "missing reference class {reference_class}: {error}"
+        );
+    }
+
+    let unresolved = HermeticCompatibilityFixture::new(&repository);
+    unresolved.append_compat_source(
+        "crates/compat-harness/src/lib.rs",
+        "\npub mod missing_compatibility_boundary_probe;\n",
+    );
+    let error = verify_fixture_compatibility(&unresolved.root, false)
+        .expect_err("unresolved module declaration must fail closed");
+    assert!(
+        error.contains("missing_compatibility_boundary_probe"),
+        "{error}"
+    );
+
+    let orphan = HermeticCompatibilityFixture::new(&repository);
+    orphan.write_compat_source(
+        "crates/compat-harness/src/orphan_compatibility_boundary_probe.rs",
+        "pub const ORPHAN_COMPATIBILITY_BOUNDARY_PROBE: bool = true;\n",
+    );
+    let error = verify_fixture_compatibility(&orphan.root, false)
+        .expect_err("orphan Rust source must fail closed");
+    assert!(
+        error.contains("orphan_compatibility_boundary_probe.rs"),
+        "{error}"
+    );
+
+    let linked = HermeticCompatibilityFixture::new(&repository);
+    linked.append_compat_source(
+        "crates/compat-harness/src/lib.rs",
+        "\npub mod linked_compatibility_boundary_probe;\n",
+    );
+    linked.symlink_compat_source(
+        "crates/compat-harness/src/report.rs",
+        "crates/compat-harness/src/linked_compatibility_boundary_probe.rs",
+    );
+    let error = verify_fixture_compatibility(&linked.root, false)
+        .expect_err("symlinked Rust module must fail closed");
+    assert!(
+        error.contains("linked_compatibility_boundary_probe.rs"),
+        "{error}"
+    );
+}
+
+#[test]
 fn rust_command_permission_provider_and_product_baselines_are_executable() {
     let root = repository_root();
     let manifests = load_compat_manifests(&root).expect("strict manifests");
@@ -621,6 +713,22 @@ impl HermeticCompatibilityFixture {
         let mut source = fs::read_to_string(&path).expect("compatibility source");
         source.push_str(suffix);
         fs::write(path, source).expect("rewrite compatibility source");
+    }
+
+    fn write_compat_source(&self, relative: &str, source: &str) {
+        let path = self.root.join(relative);
+        fs::create_dir_all(path.parent().expect("compatibility source parent"))
+            .expect("create compatibility source parent");
+        fs::write(path, source).expect("write compatibility source");
+    }
+
+    fn symlink_compat_source(&self, target: &str, link: &str) {
+        let target = self.root.join(target);
+        let link = self.root.join(link);
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(target, link).expect("symlink compatibility source");
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(target, link).expect("symlink compatibility source");
     }
 }
 
