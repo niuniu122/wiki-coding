@@ -156,7 +156,7 @@ impl ProjectDiscovery {
             Ok(output) => output,
             Err(reason) => return degraded(query, keywords, baseline, limit, reason),
         };
-        let semantic = match validate_output(resource, &request, &output) {
+        let semantic = match validate_embedding_output(resource, &request, &output) {
             Ok(semantic) => semantic,
             Err(reason) => return degraded(query, keywords, baseline, limit, reason),
         };
@@ -215,7 +215,7 @@ fn degraded(
     }
 }
 
-fn validate_output(
+pub(crate) fn validate_embedding_output(
     resource: &VerifiedEmbeddingResource,
     request: &EmbeddingRequest,
     output: &EmbeddingOutput,

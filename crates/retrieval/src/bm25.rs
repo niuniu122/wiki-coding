@@ -8,7 +8,10 @@ use crate::{SearchDocument, tokenize_query};
 
 const K1: f64 = 1.2;
 const B: f64 = 0.75;
-const MINIMUM_USEFUL_SCORE: f64 = 0.35;
+// A one-document typed catalog has an IDF of ln(4 / 3), so a direct
+// meaningful-term match can legitimately score just below 0.35. Keep the
+// floor below that value while still rejecting one-character-only matches.
+const MINIMUM_USEFUL_SCORE: f64 = 0.25;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct Bm25Contribution {

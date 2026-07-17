@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "cases": [
+    {"id": "project-fd-zh", "query": "快速查找文件和目录", "kind": "project", "expectedTop": "project:sharkdp/fd"},
+    {"id": "project-rg-en", "query": "recursive source code text search", "kind": "project", "expectedTop": "project:burntsushi/ripgrep"},
+    {"id": "project-bat-zh", "query": "在终端查看带语法高亮的文件", "kind": "project", "expectedTop": "project:sharkdp/bat"},
+    {"id": "project-uv-en", "query": "manage Python packages and environments", "kind": "project", "expectedTop": "project:astral-sh/uv"},
+    {"id": "project-aider-zh", "query": "终端编程助手帮我修改代码", "kind": "project", "expectedTop": "project:aider-ai/aider"},
+    {"id": "project-codex-en", "query": "local coding agent for software repositories", "kind": "project", "expectedTop": "project:openai/codex"},
+    {"id": "project-exact-alias", "query": "codex", "kind": "project", "expectedTop": "project:openai/codex"},
+    {"id": "skill-docs-zh", "query": "查 OpenAI API 官方文档", "kind": "skill", "expectedTop": "skill:openai/openai-docs"},
+    {"id": "skill-docs-en", "query": "official OpenAI documentation", "kind": "skill", "expectedTop": "skill:openai/openai-docs"},
+    {"id": "skill-exact-alias", "query": "openai docs", "kind": "skill", "expectedTop": "skill:openai/openai-docs"},
+    {"id": "mcp-github-zh", "query": "管理 GitHub 仓库 issue 和 PR", "kind": "mcp", "expectedTop": "mcp:github/github-mcp-server"},
+    {"id": "mcp-github-en", "query": "GitHub issues and pull requests", "kind": "mcp", "expectedTop": "mcp:github/github-mcp-server"},
+    {"id": "mcp-exact-alias", "query": "github mcp", "kind": "mcp", "expectedTop": "mcp:github/github-mcp-server"},
+    {"id": "kind-isolation", "query": "GitHub repositories and issues", "kind": "skill", "expectedTop": null},
+    {"id": "truthful-no-match", "query": "quantum weather gardening", "kind": "mcp", "expectedTop": null}
+  ]
+}

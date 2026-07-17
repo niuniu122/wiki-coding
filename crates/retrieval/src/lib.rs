@@ -4,6 +4,7 @@
 //! Optional embeddings may only rerank that bounded candidate set.
 
 mod bm25;
+mod capability_workspace;
 mod catalog;
 mod discovery;
 mod domain;
@@ -14,6 +15,11 @@ mod rrf;
 mod snapshot;
 
 pub use bm25::{Bm25Contribution, LexicalHit, LexicalIndex};
+pub use capability_workspace::{
+    CapabilityCard, CapabilityCatalog, CapabilityCatalogError, CapabilityInstallKind,
+    CapabilityInventory, CapabilityMaintenance, CapabilityWorkspace, CapabilityWorkspaceCatalog,
+    CapabilityWorkspaceHit, CapabilityWorkspaceResult,
+};
 pub use catalog::{
     CatalogError, MaintenanceSignals, ProjectCatalog, ProjectCatalogEntry, ProjectRelease,
 };
@@ -21,8 +27,8 @@ pub use discovery::{
     EmbeddingSelection, ProjectDiscovery, ProjectDiscoveryHit, ProjectDiscoveryResult,
 };
 pub use domain::{
-    CapabilityDocument, CapabilityMarker, ProjectDocument, ProjectMarker, SearchDocument,
-    WikiDocument, WikiMarker,
+    CapabilityDocument, CapabilityMarker, McpDocument, McpMarker, ProjectDocument, ProjectMarker,
+    SearchDocument, SkillDocument, SkillMarker, WikiDocument, WikiMarker,
 };
 pub use embedding::{
     CandidateVector, EMBEDDING_HELPER_ABI, EmbeddingCandidate, EmbeddingHost, EmbeddingOutput,
@@ -38,6 +44,8 @@ pub use snapshot::{
 
 pub type CapabilityIndex = LexicalIndex<CapabilityDocument>;
 pub type ProjectIndex = LexicalIndex<ProjectDocument>;
+pub type SkillIndex = LexicalIndex<SkillDocument>;
+pub type McpIndex = LexicalIndex<McpDocument>;
 pub type WikiIndex = LexicalIndex<WikiDocument>;
 
 /// Human-readable boundary used by architecture checks and documentation.

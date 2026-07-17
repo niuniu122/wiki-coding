@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "kind": "mcp",
+  "sourceUrl": "https://github.com/github/github-mcp-server",
+  "generatedAt": "2026-07-17T00:00:00Z",
+  "fingerprint": "sha256:27cce973697afbb417ed413336469804549a0e91ef22fb628c658a461c50cb17",
+  "cards": [
+    {
+      "id": "mcp:github/github-mcp-server",
+      "kind": "mcp",
+      "name": "GitHub MCP Server",
+      "aliases": ["github mcp"],
+      "description": "GitHub's official MCP server for repository, issue, pull request, user, and related GitHub workflows.",
+      "intents": ["GitHub repositories", "issues and pull requests", "repository automation", "GitHub 仓库 issue PR"],
+      "platforms": ["windows", "linux", "macos"],
+      "sourceUrl": "https://github.com/github/github-mcp-server",
+      "repositoryUrl": "https://github.com/github/github-mcp-server",
+      "license": "MIT",
+      "installKind": "external",
+      "installGuidance": "Review the official installation guide and requested GitHub access, then confirm setup in a separate workflow.",
+      "authorizations": ["github_personal_access_token"],
+      "permissions": ["github_api_access"]
+    }
+  ]
+}

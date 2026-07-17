@@ -22,6 +22,20 @@ impl DomainMarker for ProjectMarker {
 }
 
 #[derive(Clone, Debug)]
+pub struct SkillMarker;
+
+impl DomainMarker for SkillMarker {
+    const DOMAIN: IndexDomain = IndexDomain::Skill;
+}
+
+#[derive(Clone, Debug)]
+pub struct McpMarker;
+
+impl DomainMarker for McpMarker {
+    const DOMAIN: IndexDomain = IndexDomain::Mcp;
+}
+
+#[derive(Clone, Debug)]
 pub struct WikiMarker;
 
 impl DomainMarker for WikiMarker {
@@ -126,6 +140,56 @@ impl SearchDocument for ProjectDocument {
             .join("\n")
     }
 }
+
+macro_rules! external_capability_document {
+    ($name:ident, $marker:ty) => {
+        #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+        #[serde(rename_all = "camelCase", deny_unknown_fields)]
+        pub struct $name {
+            pub id: String,
+            pub name: String,
+            #[serde(default)]
+            pub aliases: Vec<String>,
+            pub description: String,
+            #[serde(default)]
+            pub intents: Vec<String>,
+            #[serde(default)]
+            pub platforms: Vec<String>,
+        }
+
+        impl SearchDocument for $name {
+            type Marker = $marker;
+
+            fn id(&self) -> &str {
+                &self.id
+            }
+
+            fn title(&self) -> &str {
+                &self.name
+            }
+
+            fn exact_keys(&self) -> Vec<&str> {
+                std::iter::once(self.id.as_str())
+                    .chain(std::iter::once(self.name.as_str()))
+                    .chain(self.aliases.iter().map(String::as_str))
+                    .collect()
+            }
+
+            fn search_text(&self) -> String {
+                std::iter::once(self.name.as_str())
+                    .chain(std::iter::once(self.description.as_str()))
+                    .chain(self.aliases.iter().map(String::as_str))
+                    .chain(self.intents.iter().map(String::as_str))
+                    .chain(self.platforms.iter().map(String::as_str))
+                    .collect::<Vec<_>>()
+                    .join("\n")
+            }
+        }
+    };
+}
+
+external_capability_document!(SkillDocument, SkillMarker);
+external_capability_document!(McpDocument, McpMarker);
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]

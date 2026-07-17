@@ -1,0 +1,88 @@
+{
+  "schemaVersion": 1,
+  "kind": "project",
+  "sourceUrl": "https://github.com/niuniu122/wiki-coding/tree/main/capabilities/catalogs",
+  "generatedAt": "2026-07-17T00:00:00Z",
+  "fingerprint": "sha256:4de26eceedfee832d2bca1ae580b70c4ecc7f6cfc51d04e2f9620546e9b79ce6",
+  "cards": [
+    {
+      "id": "project:openai/codex",
+      "kind": "project",
+      "name": "Codex CLI",
+      "aliases": ["codex"],
+      "description": "A local coding agent and command-line interface for working with software repositories.",
+      "intents": ["coding agent", "software repository", "terminal assistant", "编程 助手 仓库"],
+      "platforms": ["windows", "linux", "macos"],
+      "sourceUrl": "https://github.com/openai/codex",
+      "repositoryUrl": "https://github.com/openai/codex",
+      "license": "Apache-2.0",
+      "installKind": "external",
+      "installGuidance": "Review the repository release and installation documentation, then confirm installation in a separate workflow."
+    },
+    {
+      "id": "project:burntsushi/ripgrep",
+      "kind": "project",
+      "name": "ripgrep",
+      "aliases": ["rg"],
+      "description": "A fast recursive command-line text and source-code search tool.",
+      "intents": ["search text", "search source code", "recursive grep", "文本 代码 搜索"],
+      "platforms": ["windows", "linux", "macos"],
+      "sourceUrl": "https://github.com/BurntSushi/ripgrep",
+      "repositoryUrl": "https://github.com/BurntSushi/ripgrep",
+      "installKind": "external",
+      "installGuidance": "Review the repository installation documentation, then confirm installation in a separate workflow."
+    },
+    {
+      "id": "project:sharkdp/fd",
+      "kind": "project",
+      "name": "fd",
+      "aliases": ["fd-find"],
+      "description": "A simple and fast command-line tool for finding files and directories.",
+      "intents": ["find files", "find directories", "file search", "文件 目录 搜索"],
+      "platforms": ["windows", "linux", "macos"],
+      "sourceUrl": "https://github.com/sharkdp/fd",
+      "repositoryUrl": "https://github.com/sharkdp/fd",
+      "installKind": "external",
+      "installGuidance": "Review the repository installation documentation, then confirm installation in a separate workflow."
+    },
+    {
+      "id": "project:sharkdp/bat",
+      "kind": "project",
+      "name": "bat",
+      "aliases": [],
+      "description": "A command-line file viewer with syntax highlighting and Git integration.",
+      "intents": ["view files", "syntax highlighting", "git diff preview", "查看 文件 高亮"],
+      "platforms": ["windows", "linux", "macos"],
+      "sourceUrl": "https://github.com/sharkdp/bat",
+      "repositoryUrl": "https://github.com/sharkdp/bat",
+      "installKind": "external",
+      "installGuidance": "Review the repository installation documentation, then confirm installation in a separate workflow."
+    },
+    {
+      "id": "project:astral-sh/uv",
+      "kind": "project",
+      "name": "uv",
+      "aliases": [],
+      "description": "A command-line Python project and package management tool.",
+      "intents": ["python packages", "python environment", "project management", "Python 包 环境 管理"],
+      "platforms": ["windows", "linux", "macos"],
+      "sourceUrl": "https://github.com/astral-sh/uv",
+      "repositoryUrl": "https://github.com/astral-sh/uv",
+      "installKind": "external",
+      "installGuidance": "Review the repository installation documentation, then confirm installation in a separate workflow."
+    },
+    {
+      "id": "project:aider-ai/aider",
+      "kind": "project",
+      "name": "aider",
+      "aliases": [],
+      "description": "A terminal coding assistant for editing and understanding software projects.",
+      "intents": ["coding assistant", "edit code", "understand project", "编程 助手 修改 代码"],
+      "platforms": ["windows", "linux", "macos"],
+      "sourceUrl": "https://github.com/Aider-AI/aider",
+      "repositoryUrl": "https://github.com/Aider-AI/aider",
+      "installKind": "external",
+      "installGuidance": "Review the repository installation documentation, then confirm installation in a separate workflow."
+    }
+  ]
+}
