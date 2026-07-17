@@ -163,8 +163,8 @@ fn compatibility_rejects_unknown_differences_live_rows_and_typescript_execution_
     assert!(validate_report(&report, &manifests, &live_row.root).is_err());
 
     for forbidden in [
-        "\nconst _: &str = \"import '../src/cli.tsx'\";\n",
-        "\nconst _: &str = \"npm run build && tsc -p tsconfig.json\";\n",
+        "\nfn legacy_source_read() { let _ = std::fs::read_to_string(\"src/cli.tsx\"); }\n",
+        "\nfn legacy_build() { let _ = std::process::Command::new(\"npm\").args([\"run\", \"build\"]); }\n",
         "\nfn legacy_process() { let _ = std::process::Command::new(\"node\").arg(\"dist/cli.js\"); }\n",
     ] {
         let fixture = HermeticCompatibilityFixture::new(&repository);
@@ -211,6 +211,40 @@ fn compatibility_boundary_typescript_build_probe() {
 }
 "#,
             "process",
+        ),
+        (
+            "crates/compat-harness/src/provider_eval.rs",
+            r#"
+const COMPATIBILITY_BOUNDARY_RUNTIME: &str = concat!("no", "de");
+#[allow(dead_code)]
+fn compatibility_boundary_constant_process_probe() {
+    let _command = std::process::Command::new(COMPATIBILITY_BOUNDARY_RUNTIME)
+        .arg(concat!("dist/", "cli.js"));
+}
+"#,
+            "process",
+        ),
+        (
+            "crates/compat-harness/src/migration_support.rs",
+            r#"
+#[allow(dead_code)]
+fn compatibility_boundary_shell_build_probe() {
+    let _command = std::process::Command::new("sh")
+        .arg("-c")
+        .arg(concat!("n", "px tsc -p tsconfig.json"));
+}
+"#,
+            "process",
+        ),
+        (
+            "crates/compat-harness/src/migration_support.rs",
+            r#"
+#[allow(dead_code)]
+fn compatibility_boundary_include_probe() {
+    let _source = include_str!(concat!("../../../", "src/cli.tsx"));
+}
+"#,
+            "source",
         ),
     ] {
         let fixture = HermeticCompatibilityFixture::new(&repository);
@@ -261,6 +295,66 @@ fn compatibility_boundary_typescript_build_probe() {
         .expect_err("symlinked Rust module must fail closed");
     assert!(
         error.contains("linked_compatibility_boundary_probe.rs"),
+        "{error}"
+    );
+
+    let ambiguous = HermeticCompatibilityFixture::new(&repository);
+    ambiguous.append_compat_source(
+        "crates/compat-harness/src/lib.rs",
+        "\npub mod ambiguous_compatibility_boundary_probe;\n",
+    );
+    ambiguous.write_compat_source(
+        "crates/compat-harness/src/ambiguous_compatibility_boundary_probe.rs",
+        "pub const AMBIGUOUS_COMPATIBILITY_BOUNDARY_PROBE: bool = true;\n",
+    );
+    ambiguous.write_compat_source(
+        "crates/compat-harness/src/ambiguous_compatibility_boundary_probe/mod.rs",
+        "pub const AMBIGUOUS_COMPATIBILITY_BOUNDARY_PROBE: bool = true;\n",
+    );
+    let error = verify_fixture_compatibility(&ambiguous.root, false)
+        .expect_err("ambiguous Rust module must fail closed");
+    assert!(error.contains("ambiguous compatibility module"), "{error}");
+
+    let duplicate = HermeticCompatibilityFixture::new(&repository);
+    duplicate.append_compat_source("crates/compat-harness/src/lib.rs", "\npub mod report;\n");
+    let error = verify_fixture_compatibility(&duplicate.root, false)
+        .expect_err("duplicate module declaration must fail closed");
+    assert!(
+        error.contains("duplicate compatibility module declaration"),
+        "{error}"
+    );
+
+    let unsafe_path = HermeticCompatibilityFixture::new(&repository);
+    unsafe_path.append_compat_source(
+        "crates/compat-harness/src/lib.rs",
+        "\n#[path = \"../outside.rs\"]\npub mod unsafe_compatibility_boundary_probe;\n",
+    );
+    let error = verify_fixture_compatibility(&unsafe_path.root, false)
+        .expect_err("module path attribute must fail closed");
+    assert!(error.contains("path attributes are forbidden"), "{error}");
+
+    let nested = HermeticCompatibilityFixture::new(&repository);
+    nested.append_compat_source(
+        "crates/compat-harness/src/lib.rs",
+        "\npub mod nested_compatibility_boundary_probe;\n",
+    );
+    nested.write_compat_source(
+        "crates/compat-harness/src/nested_compatibility_boundary_probe.rs",
+        "pub mod child;\n",
+    );
+    nested.write_compat_source(
+        "crates/compat-harness/src/nested_compatibility_boundary_probe/child.rs",
+        r#"
+#[allow(dead_code)]
+fn nested_legacy_process_probe() {
+    let _command = std::process::Command::new("tsc").arg("-p");
+}
+"#,
+    );
+    let error = verify_fixture_compatibility(&nested.root, false)
+        .expect_err("nested executable legacy reference must fail closed");
+    assert!(
+        error.contains("nested_compatibility_boundary_probe/child.rs"),
         "{error}"
     );
 }
