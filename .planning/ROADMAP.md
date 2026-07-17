@@ -201,7 +201,7 @@ Plans:
 | 5. Retrieval and Project Discovery | 3/3 | Complete   | 2026-07-16 |
 | 6. Migration, Release, and Cutover | 3/3 | Complete | 2026-07-16 |
 | 7. Close Milestone Integration Gaps | 4/4 | Complete | 2026-07-16 |
-| 8. Codex-style Subprocess Sandbox Hardening | 0/3 | In Progress | - |
+| 8. Codex-style Subprocess Sandbox Hardening | 1/3 | In Progress | - |
 
 ### Phase 7: Close milestone integration gaps
 
@@ -238,10 +238,10 @@ Plans:
   4. Full access bypasses only the subprocess sandbox and user prompt; all fixed-tool and hard preflight gates stay active.
   5. Doctor, permission text, release docs, and CI truthfully report the platform/backend boundary, and unrelated Provider/retrieval/Vault/Wiki regressions stay green.
 
-**Plans:** 0/3 plans complete
+**Plans:** 1/3 plans complete
 
 Plans:
 
-- [ ] 08-01: Introduce the independent sandbox policy and fail-closed launch contract
+- [x] 08-01: Introduce the independent sandbox policy and fail-closed launch contract
 - [ ] 08-02: Implement Linux Bubblewrap enforcement and adversarial canaries
 - [ ] 08-03: Wire truthful diagnostics, documentation, CI, and full regression gates

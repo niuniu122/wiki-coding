@@ -134,11 +134,11 @@
 | TOOL-03 | Phase 3 | Complete |
 | TOOL-04 | Phase 3 | Complete |
 | TOOL-05 | Phase 3 | Complete |
-| SBOX-01 | Phase 8 | Pending |
+| SBOX-01 | Phase 8 | Complete |
 | SBOX-02 | Phase 8 | Pending |
-| SBOX-03 | Phase 8 | Pending |
-| SBOX-04 | Phase 8 | Pending |
-| SBOX-05 | Phase 8 | Pending |
+| SBOX-03 | Phase 8 | Complete |
+| SBOX-04 | Phase 8 | Complete |
+| SBOX-05 | Phase 8 | Complete |
 | SBOX-06 | Phase 8 | Pending |
 | SBOX-07 | Phase 8 | Pending |
 | VAULT-01 | Phase 4 | Complete |

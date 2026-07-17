@@ -36,7 +36,7 @@ Seven requirements are locked: SBOX-01 through SBOX-07. The implementation and v
 ### Linux enforcement
 
 - **D-807:** Linux restricted execution uses Bubblewrap as the v1 platform backend. Production discovery accepts a canonical executable outside the project workspace and reports missing/unusable Bubblewrap before target start.
-- **D-808:** Bubblewrap creates a new user, PID, IPC, UTS, cgroup-when-available, and network namespace; sets `no_new_privs`; exposes a minimal read-only system/runtime view; binds the project at `/workspace` read-write; overlays `.git`, `.wiki-coding`, and runtime metadata read-only when present; and supplies a private temporary home and `/tmp`.
+- **D-808:** The dedicated sandbox module requires new user, PID, IPC, UTS, and network namespaces, disables nested user namespaces, creates a cgroup namespace when available, and relies on Bubblewrap `no_new_privs`. A raw cBPF seccomp layer rejects socket/socketpair, io_uring, x32-ABI bypass, and kernel-keyring syscalls. The minimal system/runtime view is read-only; `/workspace` is writable; `.git`, `.wiki-coding`, `.minimax`, `.obsidian`, and `.minimax-runtime` are overlaid read-only without following symlinks; HOME and `/tmp` are private.
 - **D-809:** Cargo support mounts Rust toolchains and non-credential registry/git caches read-only. It must not expose Cargo credential files. npm/node/rg/git runtimes are mounted only from resolved runtime/system locations outside the project.
 - **D-810:** Sandbox process-tree cancellation reuses the existing bounded child lifecycle. A temporary sandbox-home handle remains alive until the child exits or is terminated.
 
@@ -49,7 +49,7 @@ Seven requirements are locked: SBOX-01 through SBOX-07. The implementation and v
 ### Diagnostics and release proof
 
 - **D-814:** Expose a read-only sandbox capability probe from `minimax-tools` for `doctor` and user-facing permission text. Capability states are `enforced`, `unavailable`, `unsupported`, and `disabled-by-full-access`; none imply safety from approval alone.
-- **D-815:** Add a Linux-only adversarial integration test that creates a dependency-free Cargo fixture with a malicious build script, a host marker, and a host-local listener. The canary must prove host read/socket denial and workspace write allowance under restricted policy, then prove explicit access under disabled policy.
+- **D-815:** Add a Linux-only adversarial integration test that creates a dependency-free Cargo fixture with a malicious build script, a host marker, a host-local TCP listener, and a Unix-domain control socket inside the workspace. The canary must prove host read/socket denial and workspace write allowance under restricted policy, then prove explicit access under disabled policy.
 - **D-816:** Hosted Ubuntu CI installs/verifies Bubblewrap before Rust tests. Windows runs the mapping and fail-closed contract suite. No test needs public network or Provider credentials.
 
 </decisions>
@@ -63,7 +63,8 @@ Seven requirements are locked: SBOX-01 through SBOX-07. The implementation and v
 - `crates/core/src/ports.rs` - adapter-neutral tool execution port.
 - `crates/cli/src/driver.rs` - approval composition and effect execution.
 - `crates/tools/src/adapter.rs` - one composition point for all eight built-in tools.
-- `crates/tools/src/process.rs` - current direct launcher, bounded output/time/cancellation, and fixed diagnostic argv.
+- `crates/tools/src/process.rs` - bounded process lifecycle, output/time/cancellation, and fixed diagnostic argv.
+- `crates/tools/src/sandbox.rs` - platform sandbox construction, Bubblewrap mounts, namespace enforcement, and seccomp filter.
 - `crates/tools/src/error.rs` - stable tool denial codes.
 - `crates/cli/src/doctor.rs` - current diagnostic report shape.
 - `.github/workflows/ci.yml` - Windows/Linux hosted release gate.

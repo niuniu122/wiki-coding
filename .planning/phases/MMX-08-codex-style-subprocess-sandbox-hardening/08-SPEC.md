@@ -23,8 +23,8 @@ The approved contract separates two axes. `confirm` versus `full-access` determi
 
 2. **Enforced confirm-mode boundary (SBOX-02)**: Every confirm-mode process tool enters an operating-system-enforced sandbox before target code starts, with child network denied, only the project workspace writable, and host-private paths absent from the child view.
    - Current: Confirmed process tools are ordinary host processes with a cleared/allowlisted environment but no OS filesystem or network boundary.
-   - Target: On Linux, a Bubblewrap backend constructs a minimal read-only system view, a writable project bind, a private temporary home, and a separate network namespace. Each process has its own sandbox lifecycle and cancellation still terminates its process tree.
-   - Acceptance: Linux adversarial tests run transitive Cargo build code that can write inside the workspace but cannot read a host marker outside it or connect to a host listener; repeated and parallel runs produce the same denial without leaked shared state.
+   - Target: On Linux, a dedicated Bubblewrap-plus-seccomp backend constructs a minimal read-only system view, a writable project bind, a private temporary home, a required user/network namespace boundary, and a syscall filter that blocks new sockets, io_uring, and kernel-keyring access. Each process has its own sandbox lifecycle and cancellation still terminates its process tree.
+   - Acceptance: Linux adversarial tests run transitive Cargo build code that can write inside the workspace but cannot read a host marker outside it or connect to host TCP or Unix-domain listeners; repeated and parallel runs produce the same denial without leaked shared state.
 
 3. **Fail-closed backend handling (SBOX-03)**: A missing, unsupported, or failed sandbox backend rejects the process with a stable actionable denial before the target executable starts.
    - Current: Process spawn errors collapse into the generic `spawn_failed` result and there is no sandbox capability check.
@@ -43,7 +43,7 @@ The approved contract separates two axes. `confirm` versus `full-access` determi
 
 6. **Truthful capability reporting (SBOX-06)**: `doctor`, permission/status text, release documentation, and CI report the actual backend, enforcement state, supported platforms, and remediation without claiming protection that is unavailable.
    - Current: `/permissions` describes prompting only, and diagnostics do not report a subprocess sandbox backend.
-   - Target: Diagnostics identify `bubblewrap` on Linux, `unavailable` on unsupported or misconfigured systems, and `disabled-by-full-access` when applicable; Windows/macOS confirm-mode process execution fails closed until a real native backend exists.
+   - Target: Diagnostics identify `bubblewrap+seccomp` on enforced Linux, `unavailable` on unsupported or misconfigured systems, and `disabled-by-full-access` when applicable; Windows/macOS confirm-mode process execution fails closed until a real native backend exists.
    - Acceptance: Snapshot/CLI tests cover present, missing, empty, unsupported, Unicode-path, confirm, and full-access outputs; release docs state the Linux Bubblewrap prerequisite and the fail-closed Windows/macOS limitation; hosted Linux CI installs and exercises Bubblewrap.
 
 7. **Adversarial release evidence (SBOX-07)**: Security verification executes malicious transitive project code rather than inspecting wrapper arguments alone.
@@ -55,7 +55,7 @@ The approved contract separates two axes. `confirm` versus `full-access` determi
 
 **In scope:**
 - A sandbox policy type in the core/tool port that is independent of approval policy.
-- Linux Bubblewrap process isolation with denied child network and a workspace-scoped writable view.
+- Linux Bubblewrap-plus-seccomp process isolation with denied child network and a workspace-scoped writable view.
 - Stable typed sandbox launch errors and zero-target-start fail-closed behavior.
 - Explicit full-access direct execution with all existing hard gates retained.
 - Sandbox diagnostics, permission messaging, release documentation, and hosted Linux canaries.
@@ -83,7 +83,7 @@ The approved contract separates two axes. `confirm` versus `full-access` determi
 - [ ] **AC-01:** Tests prove `confirm -> restricted`, `full-access -> disabled`, restart -> `confirm`, and repeated selection of either mode is idempotent.
 - [ ] **AC-02:** Each accepted process invocation snapshots its sandbox policy; later permission changes and parallel invocations cannot mutate that snapshot.
 - [ ] **AC-03:** On Linux with Bubblewrap, the sandbox is established before the target executable starts and the target can write only to its project workspace and private temporary home.
-- [ ] **AC-04:** A transitive Cargo build script in confirm mode cannot connect to a host-local TCP listener and records a denied result.
+- [ ] **AC-04:** A transitive Cargo build script in confirm mode cannot connect to host-local TCP or Unix-domain listeners and records denied results.
 - [ ] **AC-05:** The same build script cannot read a host marker outside the workspace but can write its result inside the workspace.
 - [ ] **AC-06:** Repeated and parallel confirm-mode canaries remain isolated and cancellation terminates the complete sandboxed process tree.
 - [ ] **AC-07:** Missing, unsupported, or failing backends return `sandbox_unavailable` or `sandbox_denied`; a target side-effect proves no unsandboxed fallback occurred.
