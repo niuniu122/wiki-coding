@@ -681,7 +681,7 @@
     },
     {
       "sourcePath": "test/ci-contract.test.ts",
-      "sourceSha256": "ce92690b0f835c6f56626ed62b14bee3f9aca532e3b5f44961e7f5b1f2865a03",
+      "sourceSha256": "225078efe21c8880f2a8292bba38d94fe1e40ac312bfcee6544408f40e19c532",
       "responsibilities": [
         {
           "category": "package",
@@ -701,7 +701,7 @@
     },
     {
       "sourcePath": "test/ci-contract.ts",
-      "sourceSha256": "b8888568e2e96a23bc77aab7252129fd20efbef77952ff6f1877b3cf949595e9",
+      "sourceSha256": "459eebd703923c831ad452116ad852e4d7603599f88e3f02a8cf056b14860809",
       "responsibilities": [
         {
           "category": "package",

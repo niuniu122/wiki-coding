@@ -56,10 +56,10 @@ jobs:
       - name: Run hosted evidence candidate Rust tests
         if: github.event_name == 'workflow_dispatch'
         run: npm run test:rust:candidate
-      - name: Run transitional retrieval evaluation
-        run: npm run eval:retrieval
-      - name: Run transitional Provider evaluation
+      - name: Run Rust Provider evaluation
         run: npm run eval:provider
+      - name: Run Rust retrieval evaluation
+        run: npm run eval:retrieval
       - run: npm run build:rust:release
       - run: npm run package:rust
       - run: npm run verify:rust-release
@@ -270,15 +270,25 @@ test("jobs contains only the verification job", () => {
   assertInvalid(workflow, /jobs (?:keys must be exactly|must contain exactly)/i);
 });
 
-test("offline evaluation scripts are exact and never alias the live smoke command", async () => {
+test("Rust evaluation scripts and aggregate release order are exact", async () => {
   const packageJson = JSON.parse(await readFile(resolve("package.json"), "utf8")) as {scripts?: Record<string, string>};
   assert.equal(packageJson.scripts?.["dev"], "cargo run -p minimax-cli --locked --");
   assert.equal(packageJson.scripts?.["start"], "node bin/minimax-codex.cjs");
   assert.equal(packageJson.scripts?.["check"], "tsc -p tsconfig.json --noEmit");
   assert.equal(packageJson.scripts?.["test"], "tsx test/run-tests.ts");
   assert.equal(packageJson.scripts?.["test:launcher"], "tsx --test test/launcher.test.ts");
-  assert.equal(packageJson.scripts?.["eval:retrieval"], "tsx src/eval/capability-retrieval-report.ts");
-  assert.equal(packageJson.scripts?.["eval:provider"], "tsx src/eval/provider-conformance.ts");
+  assert.equal(
+    packageJson.scripts?.["eval:provider"],
+    "cargo run -p minimax-compat-harness --locked -- provider-eval --format json"
+  );
+  assert.equal(
+    packageJson.scripts?.["eval:retrieval"],
+    "cargo run -p minimax-compat-harness --locked -- retrieval-eval --format json"
+  );
+  assert.equal(
+    packageJson.scripts?.["verify:agent"],
+    "npm run verify:rust-contracts && npm run eval:provider && npm run eval:retrieval"
+  );
   assert.equal(packageJson.scripts?.["check:rust"], "cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked -- -D warnings");
   assert.equal(packageJson.scripts?.["test:rust"], "cargo test --workspace --locked");
   assert.equal(
@@ -294,7 +304,32 @@ test("offline evaluation scripts are exact and never alias the live smoke comman
   assert.equal(packageJson.scripts?.["package:rust"], "node scripts/release/package-rust.mjs");
   assert.equal(packageJson.scripts?.["verify:rust-release"], "node scripts/release/verify-rust-release.mjs");
   assert.equal(packageJson.scripts?.["verify:milestone-flow"], "node scripts/release/verify-milestone-flow.mjs");
-  assert.doesNotMatch(`${packageJson.scripts?.["eval:retrieval"]} ${packageJson.scripts?.["eval:provider"]}`, /smoke|download|provider-smoke/i);
+  assert.equal(
+    packageJson.scripts?.["verify:release"],
+    "npm run check && npm test && npm run check:rust && npm run test:rust && npm run verify:agent && npm run build && npm run build:rust:release && npm run package:rust && npm run verify:rust-release && npm run verify:milestone-flow"
+  );
+  assert.doesNotMatch(
+    `${packageJson.scripts?.["eval:provider"]} ${packageJson.scripts?.["eval:retrieval"]}`,
+    /smoke|download|provider-smoke|\b(?:tsx|ts-node)\b|src[\\/]eval/i
+  );
+});
+
+test("Rust evaluations cannot move behind build, package, or hosted evidence", () => {
+  const provider = `      - name: Run Rust Provider evaluation
+        run: npm run eval:provider
+`;
+  const retrieval = `      - name: Run Rust retrieval evaluation
+        run: npm run eval:retrieval
+`;
+  const moved = VALID_WORKFLOW
+    .replace(provider, "")
+    .replace(retrieval, "")
+    .replace(
+      "      - run: npm run verify:rust-release\n",
+      `      - run: npm run verify:rust-release
+${provider}${retrieval}`
+    );
+  assertInvalid(moved, /step order|evaluation|jobs\.verify/i);
 });
 
 function assertInvalid(workflow: string, expected: RegExp): void {

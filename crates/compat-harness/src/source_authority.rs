@@ -15,6 +15,13 @@ pub const LEGACY_FIXTURE_PHASE_14_ZERO_CONTRACT: &str =
 
 const RUST_DEV_SCRIPT: &str = "cargo run -p minimax-cli --locked --";
 const RUST_START_SCRIPT: &str = "node bin/minimax-codex.cjs";
+const RUST_PROVIDER_EVAL_SCRIPT: &str =
+    "cargo run -p minimax-compat-harness --locked -- provider-eval --format json";
+const RUST_RETRIEVAL_EVAL_SCRIPT: &str =
+    "cargo run -p minimax-compat-harness --locked -- retrieval-eval --format json";
+const RUST_EVALUATION_AGGREGATE_SCRIPT: &str =
+    "npm run verify:rust-contracts && npm run eval:provider && npm run eval:retrieval";
+const RUST_RELEASE_VERIFICATION_SCRIPT: &str = "npm run check && npm test && npm run check:rust && npm run test:rust && npm run verify:agent && npm run build && npm run build:rust:release && npm run package:rust && npm run verify:rust-release && npm run verify:milestone-flow";
 
 const FORBIDDEN_JAVASCRIPT_CAPABILITIES: [&str; 9] = [
     "fallback",
@@ -396,6 +403,13 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
         })
         .collect::<Vec<_>>();
     for (_, command) in &run_commands {
+        let normalized_command = command.replace('\\', "/").to_ascii_lowercase();
+        if normalized_command.contains("src/eval/")
+            || ((normalized_command.contains("tsx") || normalized_command.contains("ts-node"))
+                && normalized_command.contains("eval"))
+        {
+            return violation("CI must not execute a transitional TypeScript evaluator");
+        }
         let words = command.split_whitespace().collect::<Vec<_>>();
         let typescript_product_command = words
             .windows(3)
@@ -414,6 +428,9 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
     let required_commands = [
         "npm run verify:rust-contracts",
         "npm run verify:rust-contracts:candidate",
+        "npm run eval:provider",
+        "npm run eval:retrieval",
+        "npm run build:rust:release",
         "npm run package:rust",
         "npm run verify:rust-release",
         "npm run verify:milestone-flow",
@@ -430,13 +447,20 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
         };
         command_lines.push(*line);
     }
-    let last_authority = command_lines[0].max(command_lines[1]);
-    let first_package_or_smoke = *command_lines[2..]
+    let coverage_gate = command_lines[0].max(command_lines[1]);
+    let provider_gate = command_lines[2];
+    let retrieval_gate = command_lines[3];
+    let first_build_package_or_evidence = *command_lines[4..]
         .iter()
         .min()
         .expect("package commands are fixed above");
-    if last_authority >= first_package_or_smoke {
-        return violation("CI Rust contracts must pass before packaging and installed smoke");
+    if !(coverage_gate < provider_gate
+        && provider_gate < retrieval_gate
+        && retrieval_gate < first_build_package_or_evidence)
+    {
+        return violation(
+            "CI coverage, Provider, and retrieval evaluation must pass before build, package, and evidence",
+        );
     }
 
     for branch in [
@@ -527,6 +551,18 @@ pub(crate) fn validate_package_product_scripts(package: &serde_json::Value) -> R
                 .to_owned(),
         );
     }
+    for (name, expected) in [
+        ("eval:provider", RUST_PROVIDER_EVAL_SCRIPT),
+        ("eval:retrieval", RUST_RETRIEVAL_EVAL_SCRIPT),
+        ("verify:agent", RUST_EVALUATION_AGGREGATE_SCRIPT),
+        ("verify:release", RUST_RELEASE_VERIFICATION_SCRIPT),
+    ] {
+        if scripts.get(name).and_then(serde_json::Value::as_str) != Some(expected) {
+            return Err(format!(
+                "package Rust evaluation authority denied: {name} must use the exact fail-closed command"
+            ));
+        }
+    }
 
     for (name, command) in scripts {
         let command = command
@@ -561,10 +597,7 @@ fn is_typescript_or_legacy_product_entry(command: &str) -> bool {
             .trim_matches(|character: char| matches!(character, '\'' | '"' | '(' | ')' | ';' | '&'))
             .trim_start_matches("./");
         let typescript_path = path.ends_with(".ts") || path.ends_with(".tsx");
-        typescript_path
-            && !path.starts_with("test/")
-            && !path.starts_with("src/eval/")
-            && !path.starts_with("src/smoke/")
+        typescript_path && !path.starts_with("test/") && !path.starts_with("src/smoke/")
     })
 }
 

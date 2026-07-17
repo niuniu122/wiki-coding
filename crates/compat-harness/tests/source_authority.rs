@@ -91,8 +91,11 @@ impl SyntheticRepository {
     "check": "tsc -p tsconfig.json --noEmit",
     "test": "tsx test/run-tests.ts",
     "test:launcher": "tsx --test test/launcher.test.ts",
-    "eval:retrieval": "tsx src/eval/capability-retrieval-report.ts",
-    "eval:provider": "tsx src/eval/provider-conformance.ts",
+    "eval:retrieval": "cargo run -p minimax-compat-harness --locked -- retrieval-eval --format json",
+    "eval:provider": "cargo run -p minimax-compat-harness --locked -- provider-eval --format json",
+    "verify:rust-contracts": "cargo run -p minimax-compat-harness --locked -- verify",
+    "verify:agent": "npm run verify:rust-contracts && npm run eval:provider && npm run eval:retrieval",
+    "verify:release": "npm run check && npm test && npm run check:rust && npm run test:rust && npm run verify:agent && npm run build && npm run build:rust:release && npm run package:rust && npm run verify:rust-release && npm run verify:milestone-flow",
     "smoke:provider": "tsx src/smoke/provider-smoke.ts"
   }
 }"#,
@@ -390,12 +393,11 @@ fn rejects_typescript_and_legacy_product_script_routes() {
 }
 
 #[test]
-fn transitional_package_scripts_remain_allowed() {
+fn transitional_tests_static_checks_build_and_smoke_remain_allowed() {
     let repository = SyntheticRepository::new();
     let manifest = repository.load();
-    validate_source_authority(&repository.root, &manifest).expect(
-        "tests, static checks, evaluations, and smoke remain transitional through Phase 11",
-    );
+    validate_source_authority(&repository.root, &manifest)
+        .expect("tests, static checks, build, and smoke remain transitional through Phase 11");
 
     let scripts = package_scripts(&repository.root);
     for (name, expected) in [
@@ -403,14 +405,49 @@ fn transitional_package_scripts_remain_allowed() {
         ("check", "tsc -p tsconfig.json --noEmit"),
         ("test", "tsx test/run-tests.ts"),
         ("test:launcher", "tsx --test test/launcher.test.ts"),
-        (
-            "eval:retrieval",
-            "tsx src/eval/capability-retrieval-report.ts",
-        ),
-        ("eval:provider", "tsx src/eval/provider-conformance.ts"),
         ("smoke:provider", "tsx src/smoke/provider-smoke.ts"),
     ] {
         assert_eq!(scripts.get(name).and_then(Value::as_str), Some(expected));
+    }
+}
+
+#[test]
+fn evaluator_package_scripts_are_rust_only_and_ordered_before_release_builds() {
+    let repository = SyntheticRepository::new();
+    let scripts = package_scripts(&repository.root);
+    assert_eq!(
+        scripts.get("eval:provider").and_then(Value::as_str),
+        Some("cargo run -p minimax-compat-harness --locked -- provider-eval --format json")
+    );
+    assert_eq!(
+        scripts.get("eval:retrieval").and_then(Value::as_str),
+        Some("cargo run -p minimax-compat-harness --locked -- retrieval-eval --format json")
+    );
+    assert_eq!(
+        scripts.get("verify:agent").and_then(Value::as_str),
+        Some("npm run verify:rust-contracts && npm run eval:provider && npm run eval:retrieval")
+    );
+}
+
+#[test]
+fn rejects_transitional_typescript_evaluator_routes() {
+    for (label, script, command) in [
+        (
+            "retrieval evaluator",
+            "eval:retrieval",
+            "tsx src/eval/capability-retrieval-report.ts",
+        ),
+        (
+            "Provider evaluator",
+            "eval:provider",
+            "ts-node src/eval/provider-conformance.ts",
+        ),
+    ] {
+        assert_validation_rejected(
+            label,
+            |repository| repository.set_package_script(script, command),
+            "evaluation authority",
+        );
     }
 }
 
@@ -557,7 +594,23 @@ fn ci_keeps_rust_authority_ahead_of_packaging_and_fails_closed() {
         "      - run: npm ci\n",
         &format!("      - run: npm ci\n{package_line}"),
     );
-    assert_ci_rejected(&reversed, "before packaging and installed smoke");
+    assert_ci_rejected(
+        &reversed,
+        "coverage, Provider, and retrieval evaluation must pass before build, package, and evidence",
+    );
+
+    let provider =
+        "      - name: Run Rust Provider evaluation\n        run: npm run eval:provider\n";
+    let retrieval =
+        "      - name: Run Rust retrieval evaluation\n        run: npm run eval:retrieval\n";
+    let evaluations_after_package = source.replace(provider, "").replace(retrieval, "").replace(
+        "      - run: npm run verify:rust-release\n",
+        &format!("      - run: npm run verify:rust-release\n{provider}{retrieval}"),
+    );
+    assert_ci_rejected(
+        &evaluations_after_package,
+        "coverage, Provider, and retrieval evaluation must pass before build, package, and evidence",
+    );
 
     let typescript_product = source.replace(
         "      - name: Run transitional TypeScript static checks\n",

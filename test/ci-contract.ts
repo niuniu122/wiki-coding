@@ -27,8 +27,8 @@ const REQUIRED_RUN_COMMANDS = [
   "npm run check:rust",
   "npm run test:rust",
   "npm run verify:rust-contracts",
-  "npm run eval:retrieval",
   "npm run eval:provider",
+  "npm run eval:retrieval",
   "npm run build:rust:release",
   "npm run package:rust",
   "npm run verify:rust-release",
@@ -363,14 +363,14 @@ function validateSteps(
   );
   validateNamedRunStep(
     steps[14]!,
-    "Run transitional retrieval evaluation",
+    "Run Rust Provider evaluation",
     REQUIRED_RUN_COMMANDS[7],
     errors,
     15
   );
   validateNamedRunStep(
     steps[15]!,
-    "Run transitional Provider evaluation",
+    "Run Rust retrieval evaluation",
     REQUIRED_RUN_COMMANDS[8],
     errors,
     16
@@ -605,6 +605,9 @@ function validateForbiddenActiveContent(lines: WorkflowLine[], errors: string[])
   const active = lines.map(({text}) => text).join("\n");
   if (/smoke:provider|provider-smoke|(?:^|[\\/])src[\\/]smoke/i.test(active)) {
     errors.push("Workflow active content contains a forbidden live-provider path or command.");
+  }
+  if (/(?:^|[\\/])src[\\/]eval[\\/]|\b(?:tsx|ts-node)\b[^\n]*[\\/]eval[\\/]/i.test(active)) {
+    errors.push("Workflow active content must not execute a transitional TypeScript evaluator.");
   }
   if (/\bsecrets\s*(?:\.|\[)/i.test(active)) {
     errors.push("Workflow active content must not reference GitHub secrets.");
