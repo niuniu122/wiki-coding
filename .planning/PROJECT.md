@@ -20,13 +20,13 @@ A non-programmer can describe a goal and safely use one local, recoverable CLI t
 - Read-only workspace search reports `ready`, `needs_install`, or `needs_authorization` with source facts and a safe next action.
 - Discovery and prompt augmentation cannot download, install, authorize, start, or execute a discovered capability.
 - Phase 10 establishes Rust as the sole executable product and writable runtime authority: npm `dev`, `start`, and the supported bin resolve only to Rust, `.minimax` is the only writable state root, and reviewed JavaScript is limited to distribution orchestration.
+- Phase 11 establishes Rust as the sole executable verification and evaluation authority: all 101 historical responsibilities have semantic contracts, Provider/retrieval reports are Rust-owned, and `npm test` cannot reach the hash-pinned TypeScript evaluators.
 
 ### Active
 
 - [ ] Make Rust the only product/runtime implementation and remove the live TypeScript CLI, tests, evaluations, and build dependencies.
 - [ ] Keep npm as a thin distribution shell that launches the packaged Rust binary and never falls back to TypeScript.
 - [ ] Preserve upgrade safety through the Rust-owned TypeScript-data importer and immutable compatibility fixtures for at least two public releases after cutover.
-- [ ] Replace TypeScript verification authority with deterministic Rust tests/evaluations before deleting any covered source.
 - [ ] Refresh hosted Windows/Linux release evidence for the final Rust-converged product fingerprint before release.
 
 ### Out of Scope
@@ -43,7 +43,7 @@ A non-programmer can describe a goal and safely use one local, recoverable CLI t
 
 ## Context
 
-The v1 Rust rewrite, Phase 8 subprocess hardening, Phase 9 capability workspace, and Phase 10 executable/source authority boundary are implemented. Rust is now the only product entry and writable runtime authority; the repository still retains hash-pinned TypeScript source, tests/evaluations, and build dependencies as transitional verification material. That remaining verification and packaging duplication is the primary reliability risk. v3 removes it only after equivalent Rust verification exists, while retaining a minimal npm launcher/package layer and source-preserving Rust migration support.
+The v1 Rust rewrite, Phase 8 subprocess hardening, Phase 9 capability workspace, Phase 10 executable/source authority boundary, and Phase 11 Rust verification authority are implemented. Rust is now the only product, writable-runtime, and executable-evaluation authority. The repository still retains hash-pinned TypeScript source, static tests, and build dependencies as transitional compatibility material, but test discovery cannot execute the TypeScript evaluators. The remaining convergence work is fixture-backed migration, a no-fallback native npm package, and final TypeScript deletion plus hosted closure.
 
 ## Constraints
 
@@ -83,6 +83,8 @@ The v1 Rust rewrite, Phase 8 subprocess hardening, Phase 9 capability workspace,
 | Current Rust/public contract is the parity baseline | Avoid re-porting dormant or unshipped TypeScript-only behavior | Locked |
 | Rust keeps source-preserving legacy-data import | Remove the old executable while protecting existing users and rollback evidence | Locked |
 | Windows x64 and Linux x64 remain the release matrix | Keep convergence focused; platform expansion is a separate milestone | Locked |
+| Semantic evidence contracts own TypeScript responsibility retirement | Keep every historical public/safety outcome reviewable without filename-parity ports or broad boilerplate retirement | Locked |
+| Discovered TypeScript tests are graph-preflighted before import | Retain transitional static checks while preventing direct or transitive execution of `src/eval/**` | Locked |
 
 ## Current Milestone: v3.0 Rust Convergence
 
@@ -112,4 +114,4 @@ This document evolves at phase transitions and milestone boundaries.
 3. Update context with shipped behavior and evaluation evidence.
 
 ---
-*Last updated: 2026-07-17 after Phase 10 established Rust executable and state authority*
+*Last updated: 2026-07-17 after Phase 11 established Rust verification and evaluation authority*
