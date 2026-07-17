@@ -1,3 +1,5 @@
+#![allow(unreachable_pub)]
+
 #[path = "../src/source_authority.rs"]
 mod source_authority;
 
@@ -93,7 +95,7 @@ fn manifest_schema() {
             .expect("entries should be an array")
             .push(first);
     });
-    assert_rejected(&root, &duplicate, "duplicate authority path");
+    assert_rejected(&root, &duplicate, "duplicate-free");
 
     let unsafe_path = mutated_manifest(&root, |value| {
         value["transitionalTypeScript"]["entries"][0]["path"] =
@@ -102,19 +104,25 @@ fn manifest_schema() {
     assert_rejected(&root, &unsafe_path, "unsafe repository-relative path");
 
     let hash_drift = mutated_manifest(&root, |value| {
-        value["transitionalTypeScript"]["entries"][0]["sha256"] =
-            Value::String("0".repeat(64));
+        value["transitionalTypeScript"]["entries"][0]["sha256"] = Value::String("0".repeat(64));
     });
     assert_rejected(&root, &hash_drift, "hash drift");
 
     let smuggled_fixture = mutated_manifest(&root, |value| {
-        let fixture = value["transitionalLegacyTestFixtures"]["entries"][0].clone();
+        let fixture_path = value["transitionalLegacyTestFixtures"]["entries"][0]["path"].clone();
+        let fixture_hash = value["transitionalLegacyTestFixtures"]["entries"][0]["sha256"].clone();
+        let mut fixture = value["javascriptAllowlist"][0].clone();
+        fixture["path"] = fixture_path;
+        fixture["sha256"] = fixture_hash;
         value["javascriptAllowlist"]
             .as_array_mut()
-            .expect("allowlist should be an array")
-            .push(fixture);
+            .expect("allowlist should be an array")[0] = fixture;
     });
-    assert_rejected(&root, &smuggled_fixture, "duplicate authority path");
+    assert_rejected(
+        &root,
+        &smuggled_fixture,
+        "unknown JavaScript authority path",
+    );
 
     assert!(matches!(
         parse_source_authority(&root, "{}"),
