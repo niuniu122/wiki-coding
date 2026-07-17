@@ -42,37 +42,16 @@ fn compat_report_golden_accepts_windows_checkout_newlines() {
 }
 
 #[test]
-fn compat_report_contains_every_baseline_item_exactly_once() {
+fn compat_report_contains_every_contract_item_exactly_once() {
     let root = repository_root();
     let manifests = load_compat_manifests(&root).expect("strict manifests");
     let report = build_report(&manifests);
-    let mut expected_ids = BTreeSet::from([
-        "rust.permission_modes".to_owned(),
-        "rust.product_entry".to_owned(),
-        "rust.migration".to_owned(),
-        "rust.release_gate".to_owned(),
-        "rust.retrieval".to_owned(),
-        "rust.vault".to_owned(),
-        "rust.requirement.TOOL-01".to_owned(),
-        "rust.requirement.TOOL-02".to_owned(),
-        "rust.requirement.TOOL-03".to_owned(),
-        "rust.requirement.TOOL-04".to_owned(),
-        "rust.requirement.TOOL-05".to_owned(),
-    ]);
-    for implementation in ["rust", "typescript"] {
-        for command in &manifests.commands.commands {
-            expected_ids.insert(format!("{implementation}.command.{}", command.name));
-            for alias in &command.aliases {
-                expected_ids.insert(format!("{implementation}.command.{alias}"));
-            }
-        }
-        for profile in &manifests.providers.profile_classes {
-            expected_ids.insert(format!("{implementation}.provider_profile.{}", profile.id));
-        }
-        for protocol in &manifests.providers.protocols {
-            expected_ids.insert(format!("{implementation}.provider_protocol.{protocol}"));
-        }
-    }
+    let expected_ids = manifests
+        .public_contract
+        .items
+        .iter()
+        .map(|item| item.id.clone())
+        .collect::<BTreeSet<_>>();
     let report_ids = report
         .entries
         .iter()
@@ -81,6 +60,19 @@ fn compat_report_contains_every_baseline_item_exactly_once() {
 
     assert_eq!(report.entries.len(), expected_ids.len());
     assert_eq!(report_ids, expected_ids);
+    assert_eq!(manifests.public_contract.contract_version, "v1");
+    assert!(
+        report
+            .entries
+            .iter()
+            .all(|entry| entry.id.starts_with("contract."))
+    );
+    assert!(
+        report
+            .entries
+            .iter()
+            .all(|entry| !entry.id.starts_with("typescript."))
+    );
     assert_eq!(manifests.commands.commands.len(), 17);
     assert_eq!(manifests.providers.profile_classes.len(), 3);
 }
