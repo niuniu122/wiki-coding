@@ -3,18 +3,18 @@ gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: Rust Convergence
 current_phase: 11
-current_phase_name: Rust Verification and Evaluation Authority
-status: verifying
-stopped_at: Completed 10-04-PLAN.md
-last_updated: "2026-07-17T14:52:40.161Z"
+current_phase_name: rust-verification-and-evaluation-authority
+status: executing
+stopped_at: Completed 11-01-PLAN.md
+last_updated: "2026-07-17T15:25:49.516Z"
 last_activity: 2026-07-17
-last_activity_desc: Phase 10 complete, transitioned to Phase 11
+last_activity_desc: Phase 11 execution started
 progress:
   total_phases: 14
   completed_phases: 10
   total_plans: 44
-  completed_plans: 32
-  percent: 71
+  completed_plans: 33
+  percent: 75
 ---
 
 # Project State
@@ -27,10 +27,10 @@ See: `.planning/PROJECT.md` (updated 2026-07-15)
 
 ## Current Position
 
-Phase: 11 — Rust Verification and Evaluation Authority
-Plan: Not started
-Status: Phase complete — ready for verification
-Last activity: 2026-07-17 — Phase 10 complete, transitioned to Phase 11
+Phase: 11 (rust-verification-and-evaluation-authority) — EXECUTING
+Plan: 2 of 4
+Status: Ready to execute
+Last activity: 2026-07-17 — Phase 11 execution started
 
 ## Previous Phase 7 Hosted Baseline (superseded)
 
@@ -115,6 +115,9 @@ No package publication, tag, PR, merge, live Provider request, credential read, 
 - [Phase 10]: Milestone evidence is selected by the actual rustc host so GNU-LLVM development evidence cannot satisfy a hosted tier.
 - [Phase 10]: npm development uses the exact locked Cargo CLI route; installed startup remains on the fixed native launcher. — This removes direct TypeScript product execution while preserving argv forwarding and the cross-platform npm shim.
 - [Phase 10]: Both offline authority preflights share a structural package-script policy that preserves only transitional test, evaluation, and smoke TypeScript routes. — One fail-closed classifier prevents compatibility and source-authority checks from drifting apart without executing package scripts.
+- [Phase 11]: Freeze every Phase 10 verification source by exact path and SHA-256 while allowing multiple responsibility rows per source. — Preserves reviewable history without collapsing distinct public outcomes or requiring one Rust filename per TypeScript file.
+- [Phase 11]: Rust-cover documented public and safety behavior, and explicitly retire only dormant, internal, or unshipped TypeScript responsibilities. — Avoids porting undocumented internals merely for file-count parity while making every non-port reviewable.
+- [Phase 11]: Treat the responsibility matrix as evidence rather than runtime authority and require every Rust-covered row to name an existing Rust file and exact test function. — Keeps product behavior in Rust while making stale or fabricated coverage bindings fail closed.
 
 ## Performance Metrics
 
@@ -124,9 +127,10 @@ No package publication, tag, PR, merge, live Provider request, credential read, 
 | Phase 10 P02 | 31min | 2 tasks | 9 files |
 | Phase 10 P03 | 31min | 3 tasks | 8 files |
 | Phase 10 P04 | 20min | 2 tasks | 8 files |
+| Phase 11 P01 | 30min | 2 tasks | 9 files |
 
 ## Session
 
-**Last session:** 2026-07-17T14:41:07.403Z
-**Stopped at:** Completed 10-04-PLAN.md
+**Last session:** 2026-07-17T15:25:49.504Z
+**Stopped at:** Completed 11-01-PLAN.md
 **Resume file:** None
