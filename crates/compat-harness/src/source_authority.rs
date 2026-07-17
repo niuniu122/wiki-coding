@@ -13,6 +13,9 @@ pub const LEGACY_FIXTURE_PHASE_11_DISPOSITION: &str =
 pub const LEGACY_FIXTURE_PHASE_14_ZERO_CONTRACT: &str =
     "delete-all-entries-and-set-the-class-count-to-zero";
 
+const RUST_DEV_SCRIPT: &str = "cargo run -p minimax-cli --locked --";
+const RUST_START_SCRIPT: &str = "node bin/minimax-codex.cjs";
+
 const FORBIDDEN_JAVASCRIPT_CAPABILITIES: [&str; 9] = [
     "fallback",
     "migration",
@@ -459,6 +462,7 @@ fn validate_executable_links(
         .map_err(|_| SourceAuthorityError::PathRead("package.json".to_owned()))?;
     let package: serde_json::Value = serde_json::from_str(&package_contents)
         .map_err(|_| SourceAuthorityError::Violation("package.json is invalid JSON".to_owned()))?;
+    validate_package_product_scripts(&package).map_err(SourceAuthorityError::Violation)?;
     for executable in &manifest.executable_entries {
         let javascript = manifest
             .javascript_allowlist
@@ -491,6 +495,77 @@ fn validate_executable_links(
         }
     }
     Ok(())
+}
+
+pub(crate) fn validate_package_product_scripts(package: &serde_json::Value) -> Result<(), String> {
+    let bins = package
+        .get("bin")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| "package bin must contain only the fixed Rust launcher".to_owned())?;
+    if bins.len() != 1
+        || bins
+            .get("minimax-codex")
+            .and_then(serde_json::Value::as_str)
+            != Some("bin/minimax-codex.cjs")
+    {
+        return Err("package bin must contain only the fixed Rust launcher".to_owned());
+    }
+
+    let scripts = package
+        .get("scripts")
+        .and_then(serde_json::Value::as_object)
+        .ok_or_else(|| "package scripts must be an object".to_owned())?;
+    if scripts.get("dev").and_then(serde_json::Value::as_str) != Some(RUST_DEV_SCRIPT) {
+        return Err(
+            "package TypeScript/legacy product entry denied: dev must run the Rust CLI source"
+                .to_owned(),
+        );
+    }
+    if scripts.get("start").and_then(serde_json::Value::as_str) != Some(RUST_START_SCRIPT) {
+        return Err(
+            "package TypeScript/legacy product entry denied: start must use the fixed Rust launcher"
+                .to_owned(),
+        );
+    }
+
+    for (name, command) in scripts {
+        let command = command
+            .as_str()
+            .ok_or_else(|| format!("package script must be a string: {name}"))?;
+        if is_typescript_or_legacy_product_entry(command) {
+            return Err(format!(
+                "package TypeScript/legacy product entry denied: {name}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn is_typescript_or_legacy_product_entry(command: &str) -> bool {
+    let normalized = command.replace('\\', "/").to_ascii_lowercase();
+    if [
+        "dist/cli.js",
+        "minimax-codex-legacy",
+        "src/cli.ts",
+        "src/cli.tsx",
+    ]
+    .iter()
+    .any(|entry| normalized.contains(entry))
+        || (normalized.contains("legacy") && normalized.contains("cli"))
+    {
+        return true;
+    }
+
+    normalized.split_whitespace().any(|token| {
+        let path = token
+            .trim_matches(|character: char| matches!(character, '\'' | '"' | '(' | ')' | ';' | '&'))
+            .trim_start_matches("./");
+        let typescript_path = path.ends_with(".ts") || path.ends_with(".tsx");
+        typescript_path
+            && !path.starts_with("test/")
+            && !path.starts_with("src/eval/")
+            && !path.starts_with("src/smoke/")
+    })
 }
 
 fn collect_present_sources(

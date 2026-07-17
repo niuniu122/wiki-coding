@@ -17,7 +17,7 @@
     "minimax-codex.exe"
   ],
   "scripts": {
-    "dev": "tsx src/cli.tsx",
+    "dev": "cargo run -p minimax-cli --locked --",
     "build": "tsc -p tsconfig.json",
     "start": "node bin/minimax-codex.cjs",
     "check": "tsc -p tsconfig.json --noEmit",

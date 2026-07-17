@@ -9,6 +9,7 @@ use minimax_tui::{CommandAvailability, CommandIntent, ParsedInput, parse_input};
 use serde::Deserialize;
 use sha2::{Digest as _, Sha256};
 
+use crate::source_authority::validate_package_product_scripts;
 use crate::{BaselineStatus, CommandManifest, ParityStatus, ProviderManifest};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -705,23 +706,12 @@ pub fn validate_product_entry(root: &Path) -> Result<(), BaselineError> {
         .get("bin")
         .and_then(serde_json::Value::as_object)
         .ok_or(BaselineError::ProductEntry)?;
-    let scripts = package
-        .get("scripts")
-        .and_then(serde_json::Value::as_object)
-        .ok_or(BaselineError::ProductEntry)?;
+    validate_package_product_scripts(&package).map_err(|_| BaselineError::ProductEntry)?;
     if bins.len() != 1
         || bins
             .get("minimax-codex")
             .and_then(serde_json::Value::as_str)
             != Some("bin/minimax-codex.cjs")
-        || scripts.get("start").and_then(serde_json::Value::as_str)
-            != Some("node bin/minimax-codex.cjs")
-        || scripts.contains_key("start:legacy")
-        || scripts.values().any(|script| {
-            script
-                .as_str()
-                .is_some_and(|script| script.contains("dist/cli.js"))
-        })
     {
         return Err(BaselineError::ProductEntry);
     }
