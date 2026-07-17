@@ -390,3 +390,41 @@ fn rejects_legacy_fixture_smuggling_and_second_writable_root() {
         .expect_err("a second writable state root must fail");
     assert!(error.to_string().contains("exactly one writable root"));
 }
+
+#[test]
+fn rejects_windows_and_posix_absolute_authority_paths() {
+    let root = repository_root();
+    for absolute_path in [r"C:\outside\authority.ts", "/outside/authority.ts"] {
+        let json = mutated_manifest(&root, |manifest| {
+            manifest["transitionalTypeScript"]["entries"][0]["path"] =
+                Value::String(absolute_path.to_owned());
+        });
+        assert_rejected(&root, &json, "unsafe repository-relative path");
+    }
+}
+
+#[test]
+fn source_authority_gate_precedes_compat_loading_for_both_verify_commands() {
+    let main_source =
+        fs::read_to_string(repository_root().join("crates/compat-harness/src/main.rs"))
+            .expect("compat harness main source should be readable");
+    let verify_repository = main_source
+        .split("fn verify_repository")
+        .nth(1)
+        .expect("shared repository verifier should exist");
+    let authority_gate = verify_repository
+        .find("validate_source_authority(root, &source_authority)")
+        .expect("source authority gate should run in the shared verifier");
+    let compat_load = verify_repository
+        .find("load_compat_manifests(root)")
+        .expect("compat manifests should load in the shared verifier");
+
+    assert!(
+        authority_gate < compat_load,
+        "source authority must be validated before compatibility manifests load"
+    );
+    assert!(main_source.contains(r#"command == "verify""#));
+    assert!(main_source.contains("verify_repository(&root, true)"));
+    assert!(main_source.contains(r#"command == "verify-candidate""#));
+    assert!(main_source.contains("verify_repository(&root, false)"));
+}

@@ -244,6 +244,7 @@ pub enum SourceAuthorityError {
     InvalidManifest(String),
     PathRead(String),
     HashDrift(String),
+    Violation(String),
 }
 
 impl fmt::Display for SourceAuthorityError {
@@ -259,6 +260,7 @@ impl fmt::Display for SourceAuthorityError {
             Self::InvalidManifest(message) => formatter.write_str(message),
             Self::PathRead(path) => write!(formatter, "cannot read authority path: {path}"),
             Self::HashDrift(path) => write!(formatter, "source authority hash drift: {path}"),
+            Self::Violation(message) => formatter.write_str(message),
         }
     }
 }
@@ -269,6 +271,265 @@ pub fn load_source_authority(root: &Path) -> Result<SourceAuthorityManifest, Sou
     let contents = fs::read_to_string(root.join(SOURCE_AUTHORITY_MANIFEST))
         .map_err(|_| SourceAuthorityError::ManifestRead)?;
     parse_source_authority(root, &contents)
+}
+
+pub fn validate_source_authority(
+    root: &Path,
+    manifest: &SourceAuthorityManifest,
+) -> Result<(), SourceAuthorityError> {
+    validate_manifest(root, manifest)?;
+    validate_executable_links(root, manifest)?;
+
+    let mut present_typescript = BTreeSet::new();
+    let mut present_javascript = BTreeSet::new();
+    collect_present_sources(root, root, &mut present_typescript, &mut present_javascript)?;
+
+    let expected_typescript = manifest
+        .transitional_type_script
+        .entries
+        .iter()
+        .map(|entry| entry.path.clone())
+        .collect::<BTreeSet<_>>();
+    validate_inventory("TypeScript", &expected_typescript, &present_typescript)?;
+
+    let allowlisted_javascript = manifest
+        .javascript_allowlist
+        .iter()
+        .map(|entry| entry.path.clone())
+        .collect::<BTreeSet<_>>();
+    let legacy_javascript = manifest
+        .transitional_legacy_test_fixtures
+        .entries
+        .iter()
+        .map(|entry| entry.path.clone())
+        .collect::<BTreeSet<_>>();
+    let expected_javascript = allowlisted_javascript
+        .union(&legacy_javascript)
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    validate_inventory("JavaScript", &expected_javascript, &present_javascript)?;
+
+    if allowlisted_javascript
+        .intersection(&legacy_javascript)
+        .next()
+        .is_some()
+    {
+        return violation("legacy JavaScript fixture entered executable JavaScript authority");
+    }
+    for entry in &manifest.javascript_allowlist {
+        let contents = fs::read_to_string(root.join(&entry.path))
+            .map_err(|_| SourceAuthorityError::PathRead(entry.path.clone()))?;
+        validate_javascript_source_text(&entry.path, &contents)?;
+    }
+    Ok(())
+}
+
+fn validate_executable_links(
+    root: &Path,
+    manifest: &SourceAuthorityManifest,
+) -> Result<(), SourceAuthorityError> {
+    let package_contents = fs::read_to_string(root.join("package.json"))
+        .map_err(|_| SourceAuthorityError::PathRead("package.json".to_owned()))?;
+    let package: serde_json::Value = serde_json::from_str(&package_contents)
+        .map_err(|_| SourceAuthorityError::Violation("package.json is invalid JSON".to_owned()))?;
+    for executable in &manifest.executable_entries {
+        let javascript = manifest
+            .javascript_allowlist
+            .iter()
+            .find(|entry| entry.id == executable.javascript_entry_id)
+            .ok_or_else(|| {
+                SourceAuthorityError::Violation(format!(
+                    "unknown executable JavaScript entry: {}",
+                    executable.javascript_entry_id
+                ))
+            })?;
+        let extension = Path::new(&javascript.path)
+            .extension()
+            .and_then(|value| value.to_str());
+        if !matches!(extension, Some("cjs" | "mjs" | "js")) {
+            return violation(format!(
+                "unsupported executable extension: {}",
+                javascript.path
+            ));
+        }
+        let package_entry = package
+            .get("bin")
+            .and_then(|bins| bins.get(&executable.command))
+            .and_then(serde_json::Value::as_str);
+        if package_entry != Some(javascript.path.as_str()) {
+            return violation(format!(
+                "package executable entry does not match source authority: {}",
+                executable.command
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn collect_present_sources(
+    root: &Path,
+    directory: &Path,
+    typescript: &mut BTreeSet<String>,
+    javascript: &mut BTreeSet<String>,
+) -> Result<(), SourceAuthorityError> {
+    let mut entries = fs::read_dir(directory)
+        .map_err(|_| SourceAuthorityError::PathRead(repository_path(root, directory)))?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| SourceAuthorityError::PathRead(repository_path(root, directory)))?;
+    entries.sort_by_key(std::fs::DirEntry::file_name);
+    for entry in entries {
+        let path = entry.path();
+        let relative = repository_path(root, &path);
+        let metadata = fs::symlink_metadata(&path)
+            .map_err(|_| SourceAuthorityError::PathRead(relative.clone()))?;
+        if metadata.is_dir() {
+            if should_skip_directory(&relative) {
+                continue;
+            }
+            if metadata.file_type().is_symlink() {
+                return violation(format!(
+                    "source inventory directory is a symlink: {relative}"
+                ));
+            }
+            collect_present_sources(root, &path, typescript, javascript)?;
+            continue;
+        }
+        let extension = path
+            .extension()
+            .and_then(|value| value.to_str())
+            .map(str::to_ascii_lowercase);
+        if matches!(
+            extension.as_deref(),
+            Some("ts" | "tsx" | "js" | "cjs" | "mjs")
+        ) {
+            if !metadata.is_file() || metadata.file_type().is_symlink() {
+                return violation(format!(
+                    "source inventory path is not a regular file: {relative}"
+                ));
+            }
+            if matches!(extension.as_deref(), Some("ts" | "tsx")) {
+                typescript.insert(relative);
+            } else {
+                javascript.insert(relative);
+            }
+        }
+    }
+    Ok(())
+}
+
+fn should_skip_directory(relative: &str) -> bool {
+    !relative.contains('/')
+        && matches!(
+            relative,
+            ".git" | "dist" | "node_modules" | "target" | "coverage"
+        )
+}
+
+fn repository_path(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn validate_inventory(
+    class: &str,
+    expected: &BTreeSet<String>,
+    present: &BTreeSet<String>,
+) -> Result<(), SourceAuthorityError> {
+    if let Some(path) = present.difference(expected).next() {
+        return violation(format!("unclassified {class} path: {path}"));
+    }
+    if let Some(path) = expected.difference(present).next() {
+        return violation(format!("missing classified {class} path: {path}"));
+    }
+    Ok(())
+}
+
+pub fn validate_javascript_source_text(
+    path: &str,
+    source: &str,
+) -> Result<(), SourceAuthorityError> {
+    let normalized = source.replace('\\', "/");
+    let lowercase = normalized.to_ascii_lowercase();
+
+    for line in lowercase.lines() {
+        let import_like = line.trim_start().starts_with("import ") || line.contains("require(");
+        if import_like
+            && ["../src/", "/src/", "src/", "../crates/", "/crates/"]
+                .iter()
+                .any(|pattern| line.contains(pattern))
+        {
+            return violation(format!("JavaScript product source import denied: {path}"));
+        }
+    }
+
+    if contains_fallback_invocation(&lowercase) {
+        return violation(format!("JavaScript fallback execution denied: {path}"));
+    }
+
+    if [
+        "node:http",
+        "node:https",
+        "fetch(",
+        "http.get(",
+        "https.get(",
+        "downloadruntime",
+        "download_runtime",
+        "runtimeurl",
+        "runtime_url",
+    ]
+    .iter()
+    .any(|pattern| lowercase.contains(pattern))
+    {
+        return violation(format!("JavaScript runtime download denied: {path}"));
+    }
+
+    for domain in [
+        "provider",
+        "retrieval",
+        "session",
+        "vault",
+        "wiki",
+        "tool",
+        "migration",
+    ] {
+        if [
+            format!("function {domain}"),
+            format!("class {domain}"),
+            format!("const {domain} ="),
+            format!("let {domain} ="),
+            format!("var {domain} ="),
+        ]
+        .iter()
+        .any(|pattern| lowercase.contains(pattern))
+        {
+            return violation(format!(
+                "JavaScript product-domain implementation denied: {path}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn contains_fallback_invocation(source: &str) -> bool {
+    const PROCESS_CALLS: [&str; 5] = [
+        "spawnsync(",
+        "spawn(",
+        "execfile(",
+        "execfilesync(",
+        "execsync(",
+    ];
+    const FALLBACKS: [&str; 3] = ["dist/cli.js", "minimax-codex-legacy", "src/cli.tsx"];
+    PROCESS_CALLS.iter().any(|call| {
+        source.match_indices(call).any(|(start, _)| {
+            let tail = &source[start..];
+            let end = tail.find(");").map_or(tail.len(), |index| index + 2);
+            FALLBACKS
+                .iter()
+                .any(|fallback| tail[..end].contains(fallback))
+        })
+    })
 }
 
 pub(crate) fn parse_source_authority(
@@ -600,4 +861,8 @@ fn validate_hash(root: &Path, path: &str, expected: &str) -> Result<(), SourceAu
 
 fn invalid<T>(message: impl Into<String>) -> Result<T, SourceAuthorityError> {
     Err(SourceAuthorityError::InvalidManifest(message.into()))
+}
+
+fn violation<T>(message: impl Into<String>) -> Result<T, SourceAuthorityError> {
+    Err(SourceAuthorityError::Violation(message.into()))
 }

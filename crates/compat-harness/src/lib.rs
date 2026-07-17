@@ -7,6 +7,7 @@ pub mod architecture;
 pub mod baseline;
 pub mod manifest;
 pub mod report;
+pub mod source_authority;
 
 pub use architecture::{
     ArchitectureError, ArchitectureGraph, ArchitecturePackage, load_cargo_architecture,
@@ -26,6 +27,10 @@ pub use manifest::{
     ProviderManifest, StatusItem, load_compat_manifests, repository_root,
 };
 pub use report::{CompatReport, ReportEntry, build_report, report_json, validate_report};
+pub use source_authority::{
+    SourceAuthorityError, SourceAuthorityManifest, load_source_authority,
+    validate_javascript_source_text, validate_source_authority,
+};
 
 /// Human-readable boundary used by architecture checks and documentation.
 pub const CRATE_ROLE: &str = "non-production parity harness across TypeScript and Rust boundaries";
