@@ -1,5 +1,5 @@
 import {createHash} from "node:crypto";
-import {chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync} from "node:fs";
+import {chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync} from "node:fs";
 import {arch, cpus, platform as osPlatform, release as osRelease, totalmem} from "node:os";
 import {dirname, join, relative, resolve, sep} from "node:path";
 import {fileURLToPath} from "node:url";
@@ -126,7 +126,7 @@ function verifyPackage(directory, sourceBinary, limits, expectedPlatform) {
   if (sha256(entries.get(`${rootName}/${manifest.launcher}`).bytes) !== manifest.launcherSha256) {
     fail("launcher inside the release archive does not match the manifest");
   }
-  const npmPackage = verifyNpmPackage(directory, manifest, limits);
+  const npmPackage = verifyNpmPackage(directory, manifest, limits, sourceBinary);
   return {
     archive: archive.replaceAll("\\", "/"),
     archiveSha256: actualHash,
@@ -137,7 +137,7 @@ function verifyPackage(directory, sourceBinary, limits, expectedPlatform) {
   };
 }
 
-function verifyNpmPackage(directory, manifest, limits) {
+function verifyNpmPackage(directory, manifest, limits, sourceBinary) {
   const archives = readdirSync(directory)
     .filter((name) => name.startsWith("minimax-codex-v") && name.endsWith("-npm.tgz"))
     .sort();
@@ -189,34 +189,166 @@ function verifyNpmPackage(directory, manifest, limits) {
     fail("npm package launcher or native binary hash is invalid");
   }
   const smokeRoot = mkdtempSync(join(targetRoot, "release-npm-smoke-"));
-  for (const [name, entry] of entries) {
-    const destination = join(smokeRoot, name);
-    if (entry.type === "5") {
-      mkdirSync(destination, {recursive: true});
-    } else {
-      mkdirSync(dirname(destination), {recursive: true});
-      writeFileSync(destination, entry.bytes);
+  const directRoot = mkdtempSync(join(targetRoot, "release-direct-smoke-"));
+  try {
+    for (const [name, entry] of entries) {
+      const destination = join(smokeRoot, name);
+      if (entry.type === "5") {
+        mkdirSync(destination, {recursive: true});
+      } else {
+        mkdirSync(dirname(destination), {recursive: true});
+        writeFileSync(destination, entry.bytes);
+      }
     }
-  }
-  const native = join(smokeRoot, "package", manifest.binary);
-  if (process.platform !== "win32") chmodSync(native, 0o755);
-  const smoke = spawnSync(
-    process.execPath,
-    [join(smokeRoot, "package/bin/minimax-codex.cjs"), "index", "capabilities", "status"],
-    {cwd: join(smokeRoot, "package"), encoding: "utf8", shell: false, windowsHide: true, timeout: 10_000}
-  );
-  if (smoke.status !== 0 || !smoke.stdout.includes("domain=capability")) {
-    fail(`installed npm Rust launcher smoke test failed: ${(smoke.stderr || smoke.stdout || "no output").trim()}`);
-  }
-  return {
-    archive: archive.replaceAll("\\", "/"),
-    archiveSha256: hash,
-    compressedBytes: bytes.length,
-    installedRustIdentity: {
-      binarySha256: manifest.binarySha256,
-      capabilityStatusSmoke: true
+    const packageRoot = join(smokeRoot, "package");
+    const native = join(packageRoot, manifest.binary);
+    const launcher = join(packageRoot, "bin/minimax-codex.cjs");
+    if (process.platform !== "win32") chmodSync(native, 0o755);
+    const packagedBinarySha256 = sha256(readFileSync(native));
+    if (packagedBinarySha256 !== manifest.binarySha256) {
+      fail("installed npm binary hash does not match the release manifest");
     }
+
+    const directBinary = join(directRoot, manifest.binary);
+    copyFileSync(sourceBinary, directBinary);
+    if (process.platform !== "win32") chmodSync(directBinary, 0o755);
+    const directBinarySha256 = sha256(readFileSync(directBinary));
+    if (directBinarySha256 !== packagedBinarySha256) {
+      fail("direct and installed Rust binaries do not have the same SHA-256");
+    }
+
+    const developmentRuntimeAugmented = installDevelopmentRuntime(manifest, directRoot)
+      | installDevelopmentRuntime(manifest, packageRoot);
+    const sourceVersionOutput = productIdentity(
+      directBinary,
+      [],
+      directRoot,
+      releaseSmokeEnvironment(directRoot),
+      "direct Rust binary"
+    );
+    const installedVersionOutput = productIdentity(
+      process.execPath,
+      [launcher],
+      packageRoot,
+      releaseSmokeEnvironment(packageRoot),
+      "installed npm launcher"
+    );
+    if (installedVersionOutput !== sourceVersionOutput) {
+      fail("installed npm launcher identity differs from the direct Rust binary");
+    }
+    if (sourceVersionOutput !== `minimax-codex-rust ${manifest.version}`) {
+      fail("Rust product identity does not match the package version");
+    }
+
+    const smoke = spawnSync(
+      process.execPath,
+      [launcher, "index", "capabilities", "status"],
+      {
+        cwd: packageRoot,
+        encoding: "utf8",
+        env: releaseSmokeEnvironment(packageRoot),
+        shell: false,
+        windowsHide: true,
+        timeout: 10_000
+      }
+    );
+    if (smoke.status !== 0 || !smoke.stdout.includes("domain=capability")) {
+      fail(`installed npm Rust launcher smoke test failed: ${(smoke.stderr || smoke.stdout || "no output").trim()}`);
+    }
+    const siblingEvidence = verifyRejectedSiblings(entries.get("package/bin/minimax-codex.cjs").bytes, manifest, smokeRoot);
+    return {
+      archive: archive.replaceAll("\\", "/"),
+      archiveSha256: hash,
+      compressedBytes: bytes.length,
+      installedRustIdentity: {
+        sourceVersionOutput,
+        installedVersionOutput,
+        packagedBinarySha256,
+        capabilityStatusSmoke: true,
+        credentialsExcluded: true,
+        pathLookupExcluded: true,
+        developmentRuntimeAugmented: developmentRuntimeAugmented === 1,
+        ...siblingEvidence
+      }
+    };
+  } finally {
+    rmSync(smokeRoot, {recursive: true, force: true});
+    rmSync(directRoot, {recursive: true, force: true});
+  }
+}
+
+function productIdentity(command, prefixArgs, cwd, env, label) {
+  const result = spawnSync(command, [...prefixArgs, "--version"], {
+    cwd,
+    encoding: "utf8",
+    env,
+    shell: false,
+    windowsHide: true,
+    timeout: 10_000
+  });
+  if (result.status !== 0) {
+    fail(`${label} identity failed: ${(result.stderr || result.stdout || "no output").trim()}`);
+  }
+  return result.stdout.trim();
+}
+
+function verifyRejectedSiblings(launcherBytes, manifest, smokeRoot) {
+  const missingRoot = join(smokeRoot, "missing-sibling");
+  const unsafeRoot = join(smokeRoot, "unsafe-sibling");
+  for (const rootPath of [missingRoot, unsafeRoot]) {
+    mkdirSync(join(rootPath, "bin"), {recursive: true});
+    writeFileSync(join(rootPath, "bin/minimax-codex.cjs"), launcherBytes);
+  }
+  mkdirSync(join(unsafeRoot, manifest.binary));
+
+  const missing = spawnSync(process.execPath, [join(missingRoot, "bin/minimax-codex.cjs"), "--version"], {
+    cwd: missingRoot,
+    encoding: "utf8",
+    env: releaseSmokeEnvironment(missingRoot),
+    shell: false,
+    windowsHide: true,
+    timeout: 10_000
+  });
+  const unsafe = spawnSync(process.execPath, [join(unsafeRoot, "bin/minimax-codex.cjs"), "--version"], {
+    cwd: unsafeRoot,
+    encoding: "utf8",
+    env: releaseSmokeEnvironment(unsafeRoot),
+    shell: false,
+    windowsHide: true,
+    timeout: 10_000
+  });
+  if (missing.status === 0 || !missing.stderr.includes("packaged Rust binary is missing")) {
+    fail("installed launcher did not reject a missing sibling binary");
+  }
+  if (unsafe.status === 0 || !unsafe.stderr.includes("not a safe regular file")) {
+    fail("installed launcher did not reject an unsafe sibling binary");
+  }
+  return {missingSiblingRejected: true, unsafeSiblingRejected: true};
+}
+
+function releaseSmokeEnvironment(isolatedRoot) {
+  const environment = {
+    HOME: isolatedRoot,
+    PATH: "",
+    TEMP: isolatedRoot,
+    TMP: isolatedRoot,
+    USERPROFILE: isolatedRoot
   };
+  for (const name of ["ComSpec", "PATHEXT", "SystemRoot", "WINDIR"]) {
+    if (typeof process.env[name] === "string") environment[name] = process.env[name];
+  }
+  return environment;
+}
+
+function installDevelopmentRuntime(manifest, destination) {
+  if (manifest.platform !== "windows-x86_64-gnullvm-dev") return 0;
+  const sysroot = run("rustc", ["--print", "sysroot"]).trim();
+  const runtime = join(sysroot, "lib/rustlib/x86_64-pc-windows-gnullvm/bin/libunwind.dll");
+  if (!existsSync(runtime) || !lstatSync(runtime).isFile() || lstatSync(runtime).isSymbolicLink()) {
+    fail("GNU-LLVM development runtime is missing or unsafe");
+  }
+  copyFileSync(runtime, join(destination, "libunwind.dll"));
+  return 1;
 }
 
 function assertOnlyProductExecutables(entries, expectedExecutablePaths) {

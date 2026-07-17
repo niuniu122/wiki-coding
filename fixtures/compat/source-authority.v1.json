@@ -52,7 +52,7 @@
     {
       "id": "release-verification",
       "path": "scripts/release/verify-rust-release.mjs",
-      "sha256": "a252c1aa47c8daa7da0f05dc314c0c40d68c1c3096985558c4de3688c299ddb9",
+      "sha256": "f2fe5055e4b806fbc3bce87f05409a657f1da60e374cee855bdbf1f43c6b2b66",
       "purpose": "rustReleaseVerification",
       "forbiddenCapabilities": ["fallback", "migration", "provider", "retrieval", "runtimeDownload", "session", "tool", "vault", "wiki"]
     }
