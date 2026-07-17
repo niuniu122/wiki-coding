@@ -60,7 +60,11 @@ pub struct RuntimeStore {
 
 impl RuntimeStore {
     pub fn open(project_root: impl AsRef<Path>) -> Result<Self, RuntimeStoreError> {
-        let runtime_dir = project_root.as_ref().join(RUNTIME_DIRECTORY);
+        let project_root = project_root
+            .as_ref()
+            .canonicalize()
+            .map_err(|_| RuntimeStoreError::Io)?;
+        let runtime_dir = project_root.join(RUNTIME_DIRECTORY);
         std::fs::create_dir_all(&runtime_dir).map_err(|_| RuntimeStoreError::Io)?;
         let lease = WorkspaceLease::acquire(&runtime_dir)?;
         let mut journal = RuntimeJournal::open(&runtime_dir)?;

@@ -13,6 +13,7 @@ use minimax_protocol::{
     StreamEvent,
 };
 use minimax_provider::CredentialError;
+use minimax_vault::RuntimeStore;
 use sha2::{Digest as _, Sha256};
 use tokio_util::sync::CancellationToken;
 
@@ -99,6 +100,32 @@ async fn supported_state_paths_write_only_normalized_minimax_descendants() {
 
     let after = tree_snapshot(project.path());
     assert_authority_delta(project.path(), &empty, &after);
+}
+
+#[test]
+fn runtime_store_normalizes_an_aliased_project_root_before_writing() {
+    let project = tempfile::tempdir().expect("project");
+    let nested = project.path().join("nested");
+    std::fs::create_dir_all(&nested).expect("nested directory");
+    let aliased_project = nested.join("..");
+
+    let store = RuntimeStore::open(&aliased_project).expect("runtime store");
+    let journal = store.journal_path();
+    assert!(journal.is_absolute());
+    assert!(
+        journal.starts_with(
+            project
+                .path()
+                .canonicalize()
+                .expect("project root")
+                .join(".minimax")
+        )
+    );
+    assert!(
+        journal
+            .components()
+            .all(|component| !matches!(component, Component::CurDir | Component::ParentDir))
+    );
 }
 
 #[test]
