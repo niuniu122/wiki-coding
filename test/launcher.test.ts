@@ -47,7 +47,8 @@ test("missing Rust artifact fails clearly and never falls back to TypeScript", a
     });
     assert.equal(result.status, 1);
     assert.match(result.stderr, /packaged Rust binary is missing/i);
-    assert.match(result.stderr, /minimax-codex-legacy/);
+    assert.match(result.stderr, /reinstall minimax-codex for a supported Windows x64 or Linux x64 release/i);
+    assert.doesNotMatch(result.stderr, /minimax-codex-legacy|dist\/cli\.js|src\/cli\.tsx|TypeScript/i);
     assert.equal(result.stdout, "");
   } finally {
     await rm(fixture.root, {recursive: true, force: true});

@@ -39,8 +39,16 @@ jobs:
         if: runner.os == 'Linux'
         run: bash scripts/ci-linux-sandbox-canary.sh
       - run: npm ci
-      - run: npm run check
-      - run: npm test
+      - name: Verify strict Rust source authority and contracts
+        if: github.event_name != 'workflow_dispatch'
+        run: npm run verify:rust-contracts
+      - name: Verify hosted evidence candidate Rust source authority and contracts
+        if: github.event_name == 'workflow_dispatch'
+        run: npm run verify:rust-contracts:candidate
+      - name: Run transitional TypeScript static checks
+        run: npm run check
+      - name: Run transitional TypeScript tests
+        run: npm test
       - run: npm run check:rust
       - name: Run strict Rust tests
         if: github.event_name != 'workflow_dispatch'
@@ -48,15 +56,10 @@ jobs:
       - name: Run hosted evidence candidate Rust tests
         if: github.event_name == 'workflow_dispatch'
         run: npm run test:rust:candidate
-      - name: Verify strict Rust contracts
-        if: github.event_name != 'workflow_dispatch'
-        run: npm run verify:rust-contracts
-      - name: Verify hosted evidence candidate Rust contracts
-        if: github.event_name == 'workflow_dispatch'
-        run: npm run verify:rust-contracts:candidate
-      - run: npm run build
-      - run: npm run eval:retrieval
-      - run: npm run eval:provider
+      - name: Run transitional retrieval evaluation
+        run: npm run eval:retrieval
+      - name: Run transitional Provider evaluation
+        run: npm run eval:provider
       - run: npm run build:rust:release
       - run: npm run package:rust
       - run: npm run verify:rust-release
@@ -79,7 +82,7 @@ test("the committed workflow satisfies the structural offline CI contract", asyn
 test("the validator accepts harmless spacing and comments", () => {
   const workflow = VALID_WORKFLOW
     .replace("permissions:", "permissions: # top-level only")
-    .replace("      - run: npm test", "      # smoke:provider is documentation only\n      -   run:   npm test");
+    .replace("        run: npm test", "      # smoke:provider is documentation only\n        run:   npm test");
 
   assert.deepEqual(validateCiWorkflow(workflow), {valid: true, errors: []});
 });
@@ -155,26 +158,26 @@ test("job-local permissions cannot override the read-only top-level grant", () =
 
 test("required commands cannot be supplied only by comments", () => {
   const workflow = VALID_WORKFLOW.replace(
-    "      - run: npm test",
-    "      # run: npm test"
+    "        run: npm test",
+    "        # run: npm test"
   );
-  assertInvalid(workflow, /steps|run commands/i);
+  assertInvalid(workflow, /step|run commands/i);
 });
 
 test("required commands in another job do not count for jobs.verify", () => {
-  const workflow = VALID_WORKFLOW.replace("      - run: npm test\n", "") + `
+  const workflow = VALID_WORKFLOW.replace("        run: npm test\n", "") + `
   decoy:
     runs-on: ubuntu-latest
     steps:
       - run: npm test
 `;
-  assertInvalid(workflow, /steps|run commands/i);
+  assertInvalid(workflow, /step|run commands/i);
 });
 
 test("direct smoke paths are rejected even without the package script name", () => {
   const workflow = VALID_WORKFLOW.replace(
-    "      - run: npm run build",
-    "      - run: npm run build\n      - run: npx tsx src/smoke/provider-smoke.ts"
+    "      - run: npm run build:rust:release",
+    "      - run: npm run build:rust:release\n      - run: npx tsx src/smoke/provider-smoke.ts"
   );
   assertInvalid(workflow, /live-provider path/i);
 });
@@ -212,27 +215,27 @@ for (const [name, mutate] of [
   [
     "run step continue-on-error cannot hide a failed gate",
     (workflow: string) =>
-      workflow.replace("      - run: npm test", "      - run: npm test\n        continue-on-error: true")
+      workflow.replace("      - run: npm run check:rust", "      - run: npm run check:rust\n        continue-on-error: true")
   ],
   [
     "run step shell cannot reinterpret an exact command",
     (workflow: string) =>
-      workflow.replace("      - run: npm test", "      - run: npm test\n        shell: bash")
+      workflow.replace("      - run: npm run check:rust", "      - run: npm run check:rust\n        shell: bash")
   ],
   [
     "run step working-directory cannot move a gate out of the repository root",
     (workflow: string) =>
       workflow.replace(
-        "      - run: npm test",
-        "      - run: npm test\n        working-directory: fixtures"
+        "      - run: npm run check:rust",
+        "      - run: npm run check:rust\n        working-directory: fixtures"
       )
   ],
   [
     "an extra step cannot extend the offline contract",
     (workflow: string) =>
       workflow.replace(
-        "      - run: npm run build",
-        "      - run: npm run build\n      - uses: actions/cache@v4"
+        "      - run: npm run build:rust:release",
+        "      - run: npm run build:rust:release\n      - uses: actions/cache@v4"
       )
   ]
 ] as const) {
@@ -249,7 +252,10 @@ test("setup-node must remain before every offline run command", () => {
 `;
   const workflow = VALID_WORKFLOW
     .replace(setup, "")
-    .replace("      - run: npm run build\n", `      - run: npm run build\n${setup}`);
+    .replace(
+      "      - run: npm run build:rust:release\n",
+      `      - run: npm run build:rust:release\n${setup}`
+    );
 
   assertInvalid(workflow, /step order|jobs\.verify steps/i);
 });

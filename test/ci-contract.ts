@@ -27,7 +27,6 @@ const REQUIRED_RUN_COMMANDS = [
   "npm run check:rust",
   "npm run test:rust",
   "npm run verify:rust-contracts",
-  "npm run build",
   "npm run eval:retrieval",
   "npm run eval:provider",
   "npm run build:rust:release",
@@ -242,8 +241,8 @@ function validateSteps(
   errors: string[]
 ): void {
   const steps = parseSteps(lines, stepsHeader, errors);
-  if (steps.length !== 22) {
-    errors.push("jobs.verify steps must contain exactly twenty-two allowlisted steps.");
+  if (steps.length !== 21) {
+    errors.push("jobs.verify steps must contain exactly twenty-one allowlisted steps.");
     return;
   }
 
@@ -314,49 +313,69 @@ function validateSteps(
     errors,
     6
   );
-  for (let index = 1; index <= 4; index += 1) {
-    validateStep(
-      steps[index + 5]!,
-      ["run"],
-      "run",
-      REQUIRED_RUN_COMMANDS[index]!,
-      errors,
-      index + 6
-    );
-  }
+  validateStep(steps[6]!, ["run"], "run", REQUIRED_RUN_COMMANDS[1], errors, 7);
   validateEvidenceModeStep(
-    steps[10]!,
-    "Run strict Rust tests",
+    steps[7]!,
+    "Verify strict Rust source authority and contracts",
     STRICT_EVENT_CONDITION,
-    REQUIRED_RUN_COMMANDS[5],
+    REQUIRED_RUN_COMMANDS[6],
+    errors,
+    8
+  );
+  validateEvidenceModeStep(
+    steps[8]!,
+    "Verify hosted evidence candidate Rust source authority and contracts",
+    CANDIDATE_EVENT_CONDITION,
+    "npm run verify:rust-contracts:candidate",
+    errors,
+    9
+  );
+  validateNamedRunStep(
+    steps[9]!,
+    "Run transitional TypeScript static checks",
+    REQUIRED_RUN_COMMANDS[2],
+    errors,
+    10
+  );
+  validateNamedRunStep(
+    steps[10]!,
+    "Run transitional TypeScript tests",
+    REQUIRED_RUN_COMMANDS[3],
     errors,
     11
   );
-  validateEvidenceModeStep(
-    steps[11]!,
-    "Run hosted evidence candidate Rust tests",
-    CANDIDATE_EVENT_CONDITION,
-    "npm run test:rust:candidate",
-    errors,
-    12
-  );
+  validateStep(steps[11]!, ["run"], "run", REQUIRED_RUN_COMMANDS[4], errors, 12);
   validateEvidenceModeStep(
     steps[12]!,
-    "Verify strict Rust contracts",
+    "Run strict Rust tests",
     STRICT_EVENT_CONDITION,
-    REQUIRED_RUN_COMMANDS[6],
+    REQUIRED_RUN_COMMANDS[5],
     errors,
     13
   );
   validateEvidenceModeStep(
     steps[13]!,
-    "Verify hosted evidence candidate Rust contracts",
+    "Run hosted evidence candidate Rust tests",
     CANDIDATE_EVENT_CONDITION,
-    "npm run verify:rust-contracts:candidate",
+    "npm run test:rust:candidate",
     errors,
     14
   );
-  for (let index = 7; index <= 12; index += 1) {
+  validateNamedRunStep(
+    steps[14]!,
+    "Run transitional retrieval evaluation",
+    REQUIRED_RUN_COMMANDS[7],
+    errors,
+    15
+  );
+  validateNamedRunStep(
+    steps[15]!,
+    "Run transitional Provider evaluation",
+    REQUIRED_RUN_COMMANDS[8],
+    errors,
+    16
+  );
+  for (let index = 9; index <= 11; index += 1) {
     validateStep(
       steps[index + 7]!,
       ["run"],
@@ -366,8 +385,21 @@ function validateSteps(
       index + 8
     );
   }
-  validateHostedEvidenceUpload(lines, steps[20]!, errors);
-  validateStep(steps[21]!, ["run"], "run", REQUIRED_RUN_COMMANDS[13], errors, 22);
+  validateHostedEvidenceUpload(lines, steps[19]!, errors);
+  validateStep(steps[20]!, ["run"], "run", REQUIRED_RUN_COMMANDS[12], errors, 21);
+}
+
+function validateNamedRunStep(
+  step: WorkflowStep,
+  expectedName: string,
+  expectedCommand: string,
+  errors: string[],
+  position: number
+): void {
+  validateStep(step, ["name", "run"], "run", expectedCommand, errors, position);
+  if (scalar(step.entries.get("name")?.value ?? "") !== expectedName) {
+    errors.push(`jobs.verify step ${position} must be named ${expectedName}.`);
+  }
 }
 
 function validateEvidenceModeStep(
@@ -398,7 +430,7 @@ function validateHostedEvidenceUpload(
     "uses",
     "actions/upload-artifact@v4",
     errors,
-    21
+    20
   );
   if (
     scalar(step.entries.get("name")?.value ?? "") !== "Upload hosted release evidence candidate" ||
