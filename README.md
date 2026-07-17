@@ -23,6 +23,14 @@ minimax-codex run --prompt "inspect this project"
 minimax-codex chat
 ```
 
+Linux confirm-mode process tools require the small system `bubblewrap` package.
+Install it with your distribution package manager before running `doctor`. If a
+real sandbox is missing or unusable, process tools fail before project code
+starts; they never silently fall back to ordinary host execution. Windows keeps
+the CLI, Provider, file tools, retrieval, Vault, and Wiki features, but
+confirm-mode Cargo/Git/npm diagnostics fail closed until a native Windows
+sandbox backend is shipped.
+
 `minimax-codex` always launches the fixed sibling Rust binary without a shell,
 download, `PATH` search, or silent fallback. `minimax-codex-legacy` is the
 operator-selected TypeScript fallback during the documented support window.
@@ -38,6 +46,16 @@ bounded by default. Writes and commands follow exactly two permission modes:
 
 - `confirm`: ask before an effect that requires approval;
 - `full-access`: allow effects for the current process only.
+
+Approval and isolation are separate. In `confirm`, process tools also require an
+OS-enforced sandbox: Linux uses Bubblewrap with child networking denied and only
+the project workspace writable. In `full-access`, the prompt and subprocess
+sandbox are explicitly disabled for trusted projects, but schema, path, secret,
+destructive-operation, size, timeout, output, and cancellation gates remain.
+Provider HTTPS is host-owned and is not placed inside the child sandbox.
+
+Restart always returns to `confirm`. See the
+[subprocess sandbox and platform boundary](docs/release/subprocess-sandbox.md).
 
 There is no persistent global “always allow” switch. Unknown or interrupted
 side effects are not replayed automatically.

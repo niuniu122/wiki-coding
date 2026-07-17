@@ -236,8 +236,8 @@ function validateSteps(
   errors: string[]
 ): void {
   const steps = parseSteps(lines, stepsHeader, errors);
-  if (steps.length !== 16) {
-    errors.push("jobs.verify steps must contain exactly sixteen allowlisted steps.");
+  if (steps.length !== 19) {
+    errors.push("jobs.verify steps must contain exactly nineteen allowlisted steps.");
     return;
   }
 
@@ -251,21 +251,87 @@ function validateSteps(
   );
   validateStep(
     steps[1]!,
+    ["name", "if", "run"],
+    "run",
+    "sudo apt-get update && sudo apt-get install -y bubblewrap",
+    errors,
+    2
+  );
+  validateLinuxSandboxStep(
+    steps[1]!,
+    "Install Linux subprocess sandbox",
+    errors,
+    2
+  );
+  validateStep(
+    steps[2]!,
+    ["name", "if", "run"],
+    "run",
+    "bwrap --version",
+    errors,
+    3
+  );
+  validateLinuxSandboxStep(
+    steps[2]!,
+    "Verify Linux subprocess sandbox",
+    errors,
+    3
+  );
+  validateStep(
+    steps[3]!,
     ["uses", "with"],
     "uses",
     "actions/setup-node@v4",
     errors,
-    2
+    4
   );
-  validateSetupNode(lines, steps[1]!, errors);
-  for (let index = 0; index < REQUIRED_RUN_COMMANDS.length; index += 1) {
+  validateSetupNode(lines, steps[3]!, errors);
+  validateStep(
+    steps[4]!,
+    ["run"],
+    "run",
+    REQUIRED_RUN_COMMANDS[0],
+    errors,
+    5
+  );
+  validateStep(
+    steps[5]!,
+    ["name", "if", "run"],
+    "run",
+    "cargo test -p minimax-tools --test sandbox_adversarial --locked",
+    errors,
+    6
+  );
+  validateLinuxSandboxStep(
+    steps[5]!,
+    "Run Linux adversarial sandbox canary",
+    errors,
+    6
+  );
+  for (let index = 1; index < REQUIRED_RUN_COMMANDS.length; index += 1) {
     validateStep(
-      steps[index + 2]!,
+      steps[index + 5]!,
       ["run"],
       "run",
       REQUIRED_RUN_COMMANDS[index]!,
       errors,
-      index + 3
+      index + 6
+    );
+  }
+}
+
+function validateLinuxSandboxStep(
+  step: WorkflowStep,
+  expectedName: string,
+  errors: string[],
+  position: number
+): void {
+  if (
+    scalar(step.entries.get("name")?.value ?? "") !== expectedName ||
+    scalar(step.entries.get("if")?.value ?? "") !== "runner.os == 'Linux'"
+  ) {
+    errors.push(
+      `jobs.verify Linux sandbox step ${position} must have its exact name and Linux-only condition.`
     );
   }
 }

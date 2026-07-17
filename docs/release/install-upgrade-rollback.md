@@ -6,12 +6,20 @@ The v1 release matrix is `windows-x86_64-msvc` and `linux-x86_64-gnu`. Each plat
 
 Before installation, compare the chosen artifact SHA-256 with its sidecar and inspect `RELEASE-MANIFEST.json` from the matching base archive. The manifest must name the expected version/platform, match the executable and npm-package hashes, name `dist/cli.js` as the legacy entry, and say `embeddingIncluded: false`.
 
+## Subprocess sandbox prerequisite
+
+On Linux, install Bubblewrap from the operating-system package manager before using confirm-mode Cargo/Git/npm diagnostics. For example, Debian/Ubuntu use `sudo apt-get install bubblewrap`. Run `bwrap --version`, then run `minimax-codex doctor`; the `subprocess_sandbox` check must report an enforced Bubblewrap backend. A missing or namespace-blocked backend causes process tools to fail closed before target code starts.
+
+Windows remains a supported CLI/Provider/file-tool/retrieval/Vault/Wiki platform, but this version does not bundle Codex's large restricted-token/ACL/firewall subsystem. Therefore confirm-mode process diagnostics report `sandbox_unavailable`. `full-access` is the explicit process-scoped escape hatch for a project you already trust; it disables subprocess filesystem/network isolation and must not be used for unknown repositories.
+
+See [the complete sandbox trust boundary](subprocess-sandbox.md) before asking another person or coding agent to test an untrusted project.
+
 ## Fresh install
 
 1. Download the base archive and matching `.sha256` from the same version.
 2. Verify SHA-256 with the operating-system checksum tool.
 3. Extract into a versioned directory such as `minimax-codex/versions/0.1.0`.
-4. Run the native executable's `doctor` command, then confirm `node bin/minimax-codex.cjs doctor` reaches that same executable.
+4. On Linux, install/verify Bubblewrap; then run the native executable's `doctor` command and confirm `node bin/minimax-codex.cjs doctor` reaches that same executable.
 5. Point the stable `minimax-codex` command at that version only after both checks succeed.
 6. Keep the prior versioned directory until the new version has passed normal work.
 
