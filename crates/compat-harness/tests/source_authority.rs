@@ -10,8 +10,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
 use source_authority::{
-    LEGACY_FIXTURE_PHASE_11_DISPOSITION, LEGACY_FIXTURE_PHASE_14_ZERO_CONTRACT,
-    SourceAuthorityError, load_source_authority, parse_source_authority, validate_source_authority,
+    CI_WORKFLOW, LEGACY_FIXTURE_PHASE_11_DISPOSITION, LEGACY_FIXTURE_PHASE_14_ZERO_CONTRACT,
+    SourceAuthorityError, load_source_authority, parse_source_authority, validate_ci_workflow_text,
+    validate_source_authority,
 };
 
 static NEXT_SYNTHETIC_ROOT: AtomicU64 = AtomicU64::new(1);
@@ -427,4 +428,68 @@ fn source_authority_gate_precedes_compat_loading_for_both_verify_commands() {
     assert!(main_source.contains("verify_repository(&root, true)"));
     assert!(main_source.contains(r#"command == "verify-candidate""#));
     assert!(main_source.contains("verify_repository(&root, false)"));
+}
+
+#[test]
+fn ci_keeps_rust_authority_ahead_of_packaging_and_fails_closed() {
+    let source = fs::read_to_string(repository_root().join(CI_WORKFLOW))
+        .expect("CI workflow should be readable");
+    validate_ci_workflow_text(&source).expect("committed CI workflow should preserve authority");
+
+    let skipped_contract = source.replace(
+        "run: npm run verify:rust-contracts\n",
+        "run: npm run check\n",
+    );
+    assert_ci_rejected(&skipped_contract, "verify:rust-contracts exactly once");
+
+    let package_line = "      - run: npm run package:rust\n";
+    let reversed = source.replace(package_line, "").replace(
+        "      - run: npm ci\n",
+        &format!("      - run: npm ci\n{package_line}"),
+    );
+    assert_ci_rejected(&reversed, "before packaging and installed smoke");
+
+    let typescript_product = source.replace(
+        "      - name: Run transitional TypeScript static checks\n",
+        "      - run: npm run build\n      - name: Run transitional TypeScript static checks\n",
+    );
+    assert_ci_rejected(&typescript_product, "transitional TypeScript product");
+
+    let credential = source.replace(
+        "      - run: npm run package:rust\n",
+        "      - run: npm run package:rust\n        env:\n          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}\n",
+    );
+    assert_ci_rejected(&credential, "must not inject credentials");
+
+    let write_permission = source.replace("contents: read", "contents: write");
+    assert_ci_rejected(&write_permission, "exactly contents: read");
+
+    let non_blocking = source.replace(
+        "      - run: npm run package:rust\n",
+        "      - run: npm run package:rust\n        continue-on-error: true\n",
+    );
+    assert_ci_rejected(&non_blocking, "must fail closed");
+
+    let expanded_matrix = source.replace(
+        "os: [ubuntu-latest, windows-latest]",
+        "os: [ubuntu-latest, windows-latest, macos-latest]",
+    );
+    assert_ci_rejected(&expanded_matrix, "matrix must remain Ubuntu and Windows");
+
+    let missing_canary = source.replace(
+        "run: bash scripts/ci-linux-sandbox-canary.sh",
+        "run: echo skipped",
+    );
+    assert_ci_rejected(
+        &missing_canary,
+        "retain the Linux adversarial sandbox canary",
+    );
+}
+
+fn assert_ci_rejected(source: &str, expected: &str) {
+    let error = validate_ci_workflow_text(source).expect_err("CI mutation must fail");
+    assert!(
+        error.to_string().contains(expected),
+        "expected {expected:?} in {error:?}"
+    );
 }

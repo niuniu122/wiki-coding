@@ -33,8 +33,16 @@ jobs:
         if: runner.os == 'Linux'
         run: bash scripts/ci-linux-sandbox-canary.sh
       - run: npm ci
-      - run: npm run check
-      - run: npm test
+      - name: Verify strict Rust source authority and contracts
+        if: github.event_name != 'workflow_dispatch'
+        run: npm run verify:rust-contracts
+      - name: Verify hosted evidence candidate Rust source authority and contracts
+        if: github.event_name == 'workflow_dispatch'
+        run: npm run verify:rust-contracts:candidate
+      - name: Run transitional TypeScript static checks
+        run: npm run check
+      - name: Run transitional TypeScript tests
+        run: npm test
       - run: npm run check:rust
       - name: Run strict Rust tests
         if: github.event_name != 'workflow_dispatch'
@@ -42,15 +50,10 @@ jobs:
       - name: Run hosted evidence candidate Rust tests
         if: github.event_name == 'workflow_dispatch'
         run: npm run test:rust:candidate
-      - name: Verify strict Rust contracts
-        if: github.event_name != 'workflow_dispatch'
-        run: npm run verify:rust-contracts
-      - name: Verify hosted evidence candidate Rust contracts
-        if: github.event_name == 'workflow_dispatch'
-        run: npm run verify:rust-contracts:candidate
-      - run: npm run build
-      - run: npm run eval:retrieval
-      - run: npm run eval:provider
+      - name: Run transitional retrieval evaluation
+        run: npm run eval:retrieval
+      - name: Run transitional Provider evaluation
+        run: npm run eval:provider
       - run: npm run build:rust:release
       - run: npm run package:rust
       - run: npm run verify:rust-release

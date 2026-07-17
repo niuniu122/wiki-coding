@@ -7,6 +7,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 
 pub const SOURCE_AUTHORITY_MANIFEST: &str = "fixtures/compat/source-authority.v1.json";
+pub const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
 pub const LEGACY_FIXTURE_PHASE_11_DISPOSITION: &str =
     "record-each-fixture-responsibility-in-typescript-responsibilities.v1.json";
 pub const LEGACY_FIXTURE_PHASE_14_ZERO_CONTRACT: &str =
@@ -320,6 +321,132 @@ pub fn validate_source_authority(
         let contents = fs::read_to_string(root.join(&entry.path))
             .map_err(|_| SourceAuthorityError::PathRead(entry.path.clone()))?;
         validate_javascript_source_text(&entry.path, &contents)?;
+    }
+    let ci = fs::read_to_string(root.join(CI_WORKFLOW))
+        .map_err(|_| SourceAuthorityError::PathRead(CI_WORKFLOW.to_owned()))?;
+    validate_ci_workflow_text(&ci)?;
+    Ok(())
+}
+
+pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityError> {
+    let normalized = source.replace("\r\n", "\n");
+    let lowercase = normalized.to_ascii_lowercase();
+    let lines = normalized.lines().collect::<Vec<_>>();
+    let permission_blocks = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| line.trim() == "permissions:")
+        .collect::<Vec<_>>();
+    let [(permission_index, permission_header)] = permission_blocks.as_slice() else {
+        return violation("CI must declare exactly one top-level permissions block");
+    };
+    if permission_header.starts_with(char::is_whitespace) {
+        return violation("CI permissions must be declared only at workflow scope");
+    }
+    let permission_entries = lines[permission_index + 1..]
+        .iter()
+        .take_while(|line| line.is_empty() || line.starts_with("  "))
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| line.trim())
+        .collect::<Vec<_>>();
+    if permission_entries != ["contents: read"] {
+        return violation("CI permissions must remain exactly contents: read");
+    }
+
+    if !normalized.contains("os: [ubuntu-latest, windows-latest]") {
+        return violation("CI matrix must remain Ubuntu and Windows x64 hosted jobs");
+    }
+    if !normalized.contains("run: bash scripts/ci-linux-sandbox-canary.sh") {
+        return violation("CI must retain the Linux adversarial sandbox canary");
+    }
+    if normalized.contains("continue-on-error:") {
+        return violation("CI authority and package gates must fail closed");
+    }
+    if [
+        "secrets.",
+        "authorization: bearer",
+        "github_token",
+        "gh_token",
+        "minimax_api_key",
+        "openai_api_key",
+    ]
+    .iter()
+    .any(|token| lowercase.contains(token))
+    {
+        return violation("CI must not inject credentials into authority or package gates");
+    }
+    if ["npm publish", "cargo publish", "git push", "gh pr create"]
+        .iter()
+        .any(|command| lowercase.contains(command))
+    {
+        return violation("CI source-authority jobs must not publish or mutate remotes");
+    }
+
+    let run_commands = lines
+        .iter()
+        .enumerate()
+        .filter_map(|(index, line)| {
+            let line = line.trim();
+            line.strip_prefix("- run: ")
+                .or_else(|| line.strip_prefix("run: "))
+                .map(|run| (index, run))
+        })
+        .collect::<Vec<_>>();
+    for (_, command) in &run_commands {
+        let words = command.split_whitespace().collect::<Vec<_>>();
+        let typescript_product_command = words
+            .windows(3)
+            .any(|window| matches!(window, ["npm", "run", "build" | "dev" | "start"]))
+            || words
+                .windows(2)
+                .any(|window| matches!(window, ["npm", "start"]))
+            || command.contains("node dist/cli.js")
+            || command.contains("minimax-codex-legacy")
+            || command == &"npm run verify:release";
+        if typescript_product_command {
+            return violation("CI must not build or execute the transitional TypeScript product");
+        }
+    }
+
+    let required_commands = [
+        "npm run verify:rust-contracts",
+        "npm run verify:rust-contracts:candidate",
+        "npm run package:rust",
+        "npm run verify:rust-release",
+        "npm run verify:milestone-flow",
+    ];
+    let mut command_lines = Vec::new();
+    for required in required_commands {
+        let matches = run_commands
+            .iter()
+            .filter(|(_, command)| *command == required)
+            .map(|(index, _)| *index)
+            .collect::<Vec<_>>();
+        let [line] = matches.as_slice() else {
+            return violation(format!("CI must run {required} exactly once"));
+        };
+        command_lines.push(*line);
+    }
+    let last_authority = command_lines[0].max(command_lines[1]);
+    let first_package_or_smoke = *command_lines[2..]
+        .iter()
+        .min()
+        .expect("package commands are fixed above");
+    if last_authority >= first_package_or_smoke {
+        return violation("CI Rust contracts must pass before packaging and installed smoke");
+    }
+
+    for branch in [
+        "- name: Verify strict Rust source authority and contracts\n        if: github.event_name != 'workflow_dispatch'\n        run: npm run verify:rust-contracts",
+        "- name: Verify hosted evidence candidate Rust source authority and contracts\n        if: github.event_name == 'workflow_dispatch'\n        run: npm run verify:rust-contracts:candidate",
+        "- name: Run strict Rust tests\n        if: github.event_name != 'workflow_dispatch'\n        run: npm run test:rust",
+        "- name: Run hosted evidence candidate Rust tests\n        if: github.event_name == 'workflow_dispatch'\n        run: npm run test:rust:candidate",
+    ] {
+        if !normalized.contains(branch) {
+            return violation(
+                "CI strict/candidate branching must differ only for hosted evidence freshness",
+            );
+        }
     }
     Ok(())
 }

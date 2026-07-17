@@ -21,8 +21,9 @@ fn direct_binary_reports_the_rust_package_identity() {
 
 #[test]
 fn release_smoke_binds_the_launcher_to_the_exact_packaged_identity() {
-    let source = std::fs::read_to_string(repo_root().join("scripts/release/verify-rust-release.mjs"))
-        .expect("release verifier source");
+    let source =
+        std::fs::read_to_string(repo_root().join("scripts/release/verify-rust-release.mjs"))
+            .expect("release verifier source");
 
     for required_contract in [
         "sourceVersionOutput",
@@ -44,8 +45,9 @@ fn release_smoke_binds_the_launcher_to_the_exact_packaged_identity() {
 
 #[test]
 fn installed_smoke_uses_an_isolated_environment_and_fixed_sibling() {
-    let source = std::fs::read_to_string(repo_root().join("scripts/release/verify-rust-release.mjs"))
-        .expect("release verifier source");
+    let source =
+        std::fs::read_to_string(repo_root().join("scripts/release/verify-rust-release.mjs"))
+            .expect("release verifier source");
     let launcher = std::fs::read_to_string(repo_root().join("bin/minimax-codex.cjs"))
         .expect("launcher source");
 
