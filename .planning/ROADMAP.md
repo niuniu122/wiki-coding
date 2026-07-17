@@ -209,7 +209,7 @@ Plans:
 | 7. Close Milestone Integration Gaps | 4/4 | Complete | 2026-07-16 |
 | 8. Codex-style Subprocess Sandbox Hardening | 3/3 | Complete | 2026-07-17 |
 | 9. Capability Workspace and Non-Programmer Harness | 3/3 | Complete | 2026-07-17 |
-| 10. Rust Authority and Source Boundaries | 4/4 | Complete | 2026-07-17 |
+| 10. Rust Authority and Source Boundaries | 4/4 | Complete    | 2026-07-17 |
 | 11. Rust Verification and Evaluation Authority | 0/3 | Not started | - |
 | 12. Fixture Compatibility and Rust Migration | 0/2 | Not started | - |
 | 13. Thin npm and Native Release | 0/3 | Not started | - |
@@ -314,7 +314,7 @@ Plans:
 
 **Wave 4** *(gap closure; blocked on Wave 3 completion)*
 
-- [ ] 10-04: Replace the live TypeScript dev route with Rust and reject future TS/legacy product scripts
+- [x] 10-04: Replace the live TypeScript dev route with Rust and reject future TS/legacy product scripts
 
 ### Phase 11: Rust Verification and Evaluation Authority
 

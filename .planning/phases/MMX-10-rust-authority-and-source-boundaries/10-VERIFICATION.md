@@ -1,36 +1,18 @@
 ---
 phase: MMX-10-rust-authority-and-source-boundaries
-verified: 2026-07-17T14:02:46Z
-status: gaps_found
-score: 10/12 must-haves verified
+verified: 2026-07-17T14:49:26Z
+status: passed
+score: 12/12 must-haves verified
 behavior_unverified: 0
 overrides_applied: 0
-gaps:
-  - truth: "Every supported and legacy CLI/TUI product path executes Rust, and transitional TypeScript is non-executable."
-    status: failed
-    reason: "package.json still exposes `npm run dev -> tsx src/cli.tsx`; that file is a live Ink TUI entry that calls runCliMain when executed. The Rust authority gates pass with this route present because package-script validation rejects only dist/cli.js."
-    artifacts:
-      - path: "package.json"
-        issue: "The dev script directly executes the transitional TypeScript product entry."
-      - path: "src/cli.tsx"
-        issue: "The file renders App and invokes runCliMain when it is the process entrypoint."
-      - path: "crates/compat-harness/src/baseline.rs"
-        issue: "validate_product_entry checks the sole bin, start:legacy, and dist/cli.js, but does not reject scripts that execute src/cli.tsx."
-      - path: "crates/compat-harness/src/source_authority.rs"
-        issue: "The repository gate inventories and hashes TypeScript but does not prove classified TypeScript is non-executable from package scripts."
-    missing:
-      - "Remove or disable every package script that starts the TypeScript product entry, while retaining only the explicitly transitional test/evaluation commands assigned to later phases."
-      - "Add a Rust-owned negative package/source-authority test that fails for any script executing src/cli.tsx or another TS/TSX product entry."
-  - truth: "No supported or legacy command can create or mutate `.mini-codex` after the authority cutover."
-    status: failed
-    reason: "The escaped TypeScript dev command initializes the legacy ApplicationKernel, whose default state root is join(cwd, `.mini-codex`); current state-authority tests exercise Rust routes and migration but never the remaining legacy command."
-    artifacts:
-      - path: "src/runtime/application-kernel.ts"
-        issue: "The live TypeScript runtime defaults stateRoot to `.mini-codex`."
-      - path: "crates/cli/tests/state_authority.rs"
-        issue: "The tests prove Rust state and migration invariants but do not guard against a package command starting the legacy writer."
-    missing:
-      - "Close the live TypeScript command route and add a regression that the supported package/script surface cannot start a `.mini-codex` writer."
+re_verification:
+  previous_status: gaps_found
+  previous_score: 10/12
+  gaps_closed:
+    - "Every supported and legacy CLI/TUI product path executes Rust, and transitional TypeScript is non-executable."
+    - "No supported or legacy command can create or mutate .mini-codex after the authority cutover."
+  gaps_remaining: []
+  regressions: []
 deferred:
   - truth: "Replace transitional TypeScript behavioral, Provider, and retrieval verification and disposition each legacy diagnostic fixture."
     addressed_in: "Phase 11"
@@ -43,141 +25,142 @@ deferred:
     evidence: "Phase 13 success criteria remove TypeScript compiler/runtime and React/Ink dependencies from the packed package and add offline installed-package corruption checks."
   - truth: "Delete the transitional TypeScript tree and refresh final hosted Windows MSVC/Linux GNU evidence for one final fingerprint."
     addressed_in: "Phase 14"
-    evidence: "Phase 14 success criteria explicitly own TypeScript removal and final hosted target/fingerprint closure; development-only GNU-LLVM evidence cannot satisfy that gate."
+    evidence: "Phase 14 success criteria own TypeScript removal and final hosted target/fingerprint closure; local GNU-LLVM evidence is development-only."
 ---
 
 # Phase 10: Rust Authority and Source Boundaries Verification Report
 
-**Phase Goal:** Users and maintainers have one executable product and writable runtime authority in Rust, while any JavaScript that remains is visibly limited to distribution orchestration.
-**Verified:** 2026-07-17T14:02:46Z
-**Status:** gaps_found
-**Re-verification:** No - initial verification
+**Phase Goal:** Users and maintainers have one executable product and writable runtime authority in Rust, while remaining JavaScript is limited to reviewed distribution orchestration.
+
+**Verified:** 2026-07-17T14:49:26Z
+**Status:** passed
+**Re-verification:** Yes - previous status gaps_found, previous score 10/12
+
+## Re-verification Verdict
+
+Both prior blockers are closed. Plan 10-04 changed the live development command to the Rust CLI, added one shared Rust-owned package-script policy to both authority preflights, and covered the route with adversarial and real-repository tests. No regression was found in the ten truths that passed the initial verification.
+
+### Closed Gaps
+
+| Previous failed truth | Exists | Substantive | Wired and exercised | Verdict |
+|---|---|---|---|---|
+| Every product-facing package route executes Rust; transitional TypeScript cannot be a product entry | package.json now has dev = cargo run -p minimax-cli --locked --; start/bin retain the fixed launcher | source_authority.rs rejects incorrect dev/start/bin plus direct TS/TSX, dist/cli.js, named legacy, and arbitrary equivalent product aliases while preserving classified test/eval/smoke commands | baseline.rs reuses the policy; main.rs runs source authority before both verify modes; 10/10 source-authority tests, exact baseline/headless tests, and live npm dev all pass | CLOSED |
+| No supported or legacy command can reach a writable .mini-codex runtime | the manifest retains .minimax as the sole writable root and .mini-codex only as readOnlyMigrationInput | the escaped TS package route is gone and future package mutations fail closed without executing the legacy writer | state-authority tests pass 3/3, the shared preflight rejects a second writable root and legacy route mutations, and verify-candidate passes | CLOSED |
 
 ## Goal Achievement
 
 ### Observable Truths
 
-| # | Truth | Status | Evidence |
+| # | Truth | Status | Current evidence |
 |---|---|---|---|
-| 1 | Every supported CLI/TUI, Provider, session, tool, Vault/Wiki, retrieval, capability, migration, and compatibility product path executes Rust; current Rust/public behavior is authoritative and transitional TypeScript is not executable. | FAILED | `package.json:20` maps `dev` to `tsx src/cli.tsx`; `src/cli.tsx:33,67` renders the live Ink application and invokes `runCliMain`. The current Rust gates still pass. |
-| 2 | The repository reports the complete JavaScript allowlist and rejects product imports, domain behavior, runtime download, fallback, and unknown JS paths. | VERIFIED | Manifest has exactly five reviewed JS entries plus three separately governed fixtures; 8/8 tracked JS paths and all hashes match. The focused negative/source inventory suite passed 7/7. |
-| 3 | Runtime commands write only Rust-owned `.minimax`; no supported or legacy command can create or mutate `.mini-codex`. | FAILED | Rust paths and migration pass 3/3 state-authority tests, but the remaining TS dev entry reaches `src/runtime/application-kernel.ts:609`, which defaults to writable `.mini-codex`. |
-| 4 | The Rust CLI and current npm-installed command remain usable after the authority boundary. | VERIFIED | Fresh development-only candidate verification ran the extracted launcher and direct binary: both reported `minimax-codex-rust 0.1.0`, the exact binary SHA-256 matched, capability status smoke passed, and missing/unsafe siblings were rejected. |
-| 5 | A checked-in strict manifest classifies Rust roots, executable/package entries, allowed JS, transitional TS, legacy JS fixtures, immutable fixtures, supported targets, and state roots. | VERIFIED | `source-authority.v1.json` parses strictly with 9 Rust roots, 1 executable entry, 5 JS authorities, 191 TS entries, 3 legacy fixtures, 7 immutable roots, 2 hosted targets, and exactly one writable/migration root. |
-| 6 | Transitional TS is an exact hash-pinned shrinking inventory, and new TS/TSX or JS paths fail closed. | VERIFIED | Independent comparison found 191 tracked TS/TSX = 191 manifest entries, no missing/extra paths, and zero hash drift; negative tests reject unclassified TS and JS. Its claimed non-executable status is accounted for separately in failed truth 1. |
-| 7 | The JavaScript allowlist is exact and limited to launcher/release/package/fingerprint orchestration. | VERIFIED | Validator constants and manifest agree on the five exact paths; all five are hash-pinned and the actual sources contain orchestration only. |
-| 8 | The three diagnostic JS fixtures are hash-pinned outside executable/JS authority and carry Phase 11 disposition plus Phase 14 zeroing metadata. | VERIFIED | Exactly `diag-large.js`, `diag-ok.js`, and `diag-slow.js` appear only in `transitionalLegacyTestFixtures`; their hashes match and smuggling tests fail closed. |
-| 9 | A missing, unsafe, non-executable, unsupported, failed, or signaled Rust binary produces actionable non-zero failure with no legacy fallback. | VERIFIED | `bin/minimax-codex.cjs` uses one fixed sibling map, `lstatSync`, shell-free `spawnSync`, and reinstall guidance; Rust and transitional launcher tests pass. |
-| 10 | Native and npm candidates contain one executable Rust product path and no packaged legacy application entry. | VERIFIED | A fresh candidate was assembled and both tar listings contain only the launcher plus `minimax-codex.exe` as product executables; full release verification rejected extra entries and passed. |
-| 11 | Direct Rust and extracted npm launcher smokes report the same identity and execute the exact manifest-bound binary. | VERIFIED | Fresh `verify-rust-release.mjs` output recorded equal direct/installed versions, matching packaged binary SHA-256, isolated environment, no credentials/PATH lookup, and passing capability smoke. |
-| 12 | CI runs Rust source-authority/contracts before transitional Node checks and packaging, keeps Node non-authoritative, and cannot publish or expand permissions/platforms. | VERIFIED | `.github/workflows/ci.yml` is read-only, Windows/Linux only, Rust-contracts-first, and contains no TS product build/publish/credentials; workflow mutation coverage is included in the 7/7 source-authority suite and the synchronized TS suite passed. |
+| 1 | Every supported CLI/TUI, Provider, session, tool, Vault/Wiki, retrieval, capability, migration, and compatibility product route executes Rust; transitional TypeScript is not a product entry. | VERIFIED | dev runs Cargo for minimax-cli, start/bin use only the fixed launcher, and the shared validator rejects TS/TSX or legacy product routes. Live npm dev reports minimax-codex-rust 0.1.0. |
+| 2 | The repository reports the complete JavaScript allowlist and rejects product imports, domain behavior, runtime download, fallback, and unknown JS paths. | VERIFIED | Exact independent inventory found 5 reviewed JS authorities plus 3 diagnostic fixtures, 8 tracked JS paths, zero missing/extra paths, and zero hash drift; negative authority tests pass. |
+| 3 | Runtime commands write only Rust-owned .minimax; no supported or legacy command can create or mutate .mini-codex. | VERIFIED | .mini-codex is classified only as readOnlyMigrationInput, the TS product route is closed, route mutations fail closed, and 3/3 state-authority tests prove Rust writes and source-preserving migration behavior. |
+| 4 | The Rust CLI and npm-installed command remain usable after the authority boundary. | VERIFIED | Live Rust dev identity passes; 3/3 product-identity tests retain exact direct/installed identity and isolated fixed-sibling wiring. Release and launcher sources were untouched by the gap closure. |
+| 5 | A checked-in strict manifest classifies Rust roots, executable/package entries, allowed JS, transitional TS, legacy JS fixtures, immutable fixtures, supported targets, and state roots. | VERIFIED | Independent check found 9 present Rust roots, 1 executable entry, 5 JS authorities, 191 TS entries, 3 legacy fixtures, 7 immutable roots, 2 supported targets, and the exact state-root split. |
+| 6 | Transitional TS is an exact hash-pinned shrinking inventory, and new TS/TSX or JS paths fail closed. | VERIFIED | 191 manifest TS/TSX entries exactly equal 191 tracked paths; all 199 TS/JS hash entries match. Inventory negatives pass. |
+| 7 | The JavaScript allowlist is exact and limited to launcher/release/package/fingerprint orchestration. | VERIFIED | The same five reviewed sources remain exact and hash-pinned; the gap diff did not touch launcher, release scripts, or CI. |
+| 8 | The three diagnostic JS fixtures are hash-pinned outside executable/JS authority and carry later-phase disposition metadata. | VERIFIED | Exactly three tracked fixtures remain in the separate class, their hashes match, and smuggling/second-root negatives pass. |
+| 9 | Missing, unsafe, non-executable, unsupported, failed, or signaled Rust binaries fail non-zero with no legacy fallback. | VERIFIED | The fixed launcher and baseline contract remain present and unchanged; the exact compatibility product-baseline test passes. |
+| 10 | Native and npm candidates contain one executable Rust product path and no packaged legacy application entry. | VERIFIED | Candidate assembly/release sources and the one-bin package mapping are unchanged; source authority and verify-candidate pass on the current tree. |
+| 11 | Direct Rust and installed launcher smokes report the same identity and execute the exact manifest-bound binary. | VERIFIED | 3/3 product-identity tests pass; fixed sibling, isolated environment, and release hash-binding assertions remain intact. |
+| 12 | CI runs Rust source authority/contracts before transitional Node checks and packaging, keeps Node non-authoritative, and cannot publish or expand permissions/platforms. | VERIFIED | The CI file is unchanged by 10-04; the current source-authority CI ordering/fail-closed test passes as part of 10/10. |
 
-**Score:** 10/12 truths verified (0 present-but-behavior-unverified)
+**Score:** 12/12 truths verified (0 present-but-behavior-unverified)
 
 ### Deferred Items
 
-| # | Item | Addressed In | Evidence |
+| Item | Addressed in | Why it is not a Phase 10 gap |
+|---|---|---|
+| Replace/retire transitional TypeScript tests, evaluations, and legacy-fixture diagnostics | Phase 11 | Phase 11 owns deterministic Rust verification replacement and disposition decisions. |
+| Fixture-only compatibility and complete migration support-window evidence | Phase 12 | Phase 12 owns immutable fixture rebasing and migration-window closure. |
+| Thin npm metadata/dependencies and normal npm/npx install closure | Phase 13 | Phase 13 owns TypeScript/React/Ink package dependency removal and installed-package corruption cases. |
+| Delete TypeScript and refresh final hosted Windows MSVC/Linux GNU fingerprints | Phase 14 | Phase 14 owns source deletion and final hosted evidence. Local windows-x86_64-gnullvm-dev evidence cannot satisfy it. |
+
+## Artifact Verification
+
+| Artifact | Status | Re-verification evidence |
+|---|---|---|
+| package.json | VERIFIED | dev is the exact Cargo Rust route; start and the sole bin map to the fixed launcher; transitional test/eval scripts remain. |
+| crates/compat-harness/src/source_authority.rs | VERIFIED | Substantive shared script classifier is called by executable-link validation and rejects TS/legacy product routes. |
+| crates/compat-harness/src/baseline.rs | VERIFIED | Product baseline delegates to the same policy and then verifies launcher safety/fallback absence. |
+| crates/compat-harness/tests/source_authority.rs | VERIFIED | Adversarial dev/start/equivalent-alias matrix, positive transitional scripts, exact inventory, shared preflight, state-root and CI negatives all pass. |
+| crates/compat-harness/tests/compat_report.rs | VERIFIED | Exact real-repository Rust product baseline passes. |
+| crates/cli/tests/headless.rs | VERIFIED | Exact real package dev/start/bin contract passes. |
+| crates/cli/tests/state_authority.rs | VERIFIED | 3/3 filesystem tests prove .minimax-only writes and read-only legacy migration input. |
+| test/ci-contract.test.ts | VERIFIED | Transitional synchronization asserts exact dev/start and retained test/eval routes; its sole refreshed manifest hash matches. |
+| fixtures/compat/source-authority.v1.json | VERIFIED | Exact source/JS inventories and all 199 pinned hashes independently match. |
+| bin and scripts/release | VERIFIED | Unchanged by gap closure; reviewed JS hashes, fixed launcher mapping, and identity contracts remain valid. |
+| .github/workflows/ci.yml | VERIFIED | Unchanged by gap closure; current mutation/order test passes. |
+
+The 10-04 declared artifact query passed 5/5 with no substance issues.
+
+## Key Link Verification
+
+| From | To | Via | Status |
 |---|---|---|---|
-| 1 | Rust-owned replacement of transitional TypeScript tests/evaluations and legacy-fixture disposition | Phase 11 | Roadmap 11 SC 1-4 |
-| 2 | Fixture-only compatibility and complete Rust migration support-window evidence | Phase 12 | Roadmap 12 SC 1-4 |
-| 3 | Thin normal npm/npx metadata, dependency, and corruption closure | Phase 13 | Roadmap 13 SC 1-4 |
-| 4 | TypeScript deletion and final hosted Windows MSVC/Linux GNU fingerprint evidence | Phase 14 | Roadmap 14 SC 1-4 |
+| package.json | crates/cli | dev invokes cargo run -p minimax-cli --locked -- with npm argv forwarding | WIRED AND EXERCISED |
+| package.json | bin/minimax-codex.cjs | start and the sole package bin use the fixed Rust launcher | WIRED |
+| source_authority.rs | package.json | validate_executable_links calls validate_package_product_scripts | WIRED AND EXERCISED |
+| baseline.rs | source_authority.rs | validate_product_entry reuses the shared script policy | WIRED AND EXERCISED |
+| main.rs | source_authority.rs | verify_repository validates source authority before compatibility loading for verify and verify-candidate | WIRED AND EXERCISED |
+| test/ci-contract.test.ts | source-authority.v1.json | exact reviewed SHA-256 entry | WIRED |
+| state-authority manifest | Rust state/migration tests | .minimax read-write and .mini-codex read-only migration input | WIRED AND EXERCISED |
 
-The stale hosted fingerprint is intentionally not a Phase 10 failure. No hosted workflow, network/API call, package publication, push, model download, or hosted-evidence refresh was performed. The local `windows-x86_64-gnullvm-dev` run below is development-only and cannot satisfy Phase 14.
+The 10-04 declared key-link query passed 4/4.
 
-### Required Artifacts
+## Behavioral Spot-Checks
 
-| Artifact | Expected | Status | Details |
-|---|---|---|---|
-| `fixtures/compat/source-authority.v1.json` | Complete, strict ownership/state manifest | VERIFIED | Exact inventories, hashes, targets, and lifecycle metadata independently matched. |
-| `crates/compat-harness/src/source_authority.rs` | Deterministic fail-closed source/CI validator | PARTIAL | Substantive and wired, but package-script execution of classified TS is outside its repository checks. |
-| `crates/compat-harness/tests/source_authority.rs` | Positive inventory and adversarial negatives | PARTIAL | 7/7 pass; no negative covers a package script launching `src/cli.tsx`. |
-| `package.json` | Sole Rust product command | PARTIAL | Sole `bin` is correct, but `dev` remains a direct live TS product route. |
-| `bin/minimax-codex.cjs` | Fixed, no-fallback Rust launcher | VERIFIED | Safe sibling checks, shell-free argv forwarding, child status preservation, stable failures. |
-| `crates/cli/tests/state_authority.rs` | Black-box `.minimax`/migration invariants | PARTIAL | Strong Rust/migration filesystem proof, but it does not cover the escaped legacy command. |
-| `crates/cli/tests/product_identity.rs` | Direct/installed identity contract | VERIFIED | 3/3 pass; release verification supplies the runtime installed smoke. |
-| `scripts/release/package-rust.mjs` | Single-product deterministic candidate assembly | VERIFIED | Fresh native/npm archives contain no `dist` payload or second product entry. |
-| `scripts/release/verify-rust-release.mjs` | Archive/hash/installed identity verification | VERIFIED | Fresh development-only run passed identity, archive, security, license, size, and performance checks. |
-| `.github/workflows/ci.yml` | Rust-first, read-only authority gates | VERIFIED | Mandatory contracts precede TS checks and package/smoke; permissions remain `contents: read`. |
+All Rust commands below used local 1.97.0-x86_64-pc-windows-gnullvm with rust-lld and target/gnullvm-dev. This is development-only evidence.
 
-### Key Link Verification
+| Check | Result |
+|---|---|
+| cargo test -p minimax-compat-harness --test source_authority --locked | 10 passed, including product-script mutation matrix, exact repository inventories, shared preflight, CI ordering, and second-root rejection |
+| exact compat_report Rust product-baseline test | 1 passed |
+| exact headless npm product-entry test | 1 passed |
+| cargo test -p minimax-cli --test state_authority --locked | 3 passed |
+| cargo test -p minimax-cli --test product_identity --locked | 3 passed |
+| npm run dev -- --version | exit 0; executed target/gnullvm-dev/debug/minimax-cli.exe and reported minimax-codex-rust 0.1.0 |
+| cargo run -p minimax-compat-harness --locked -- verify-candidate | exit 0 |
+| independent manifest/source/hash comparison | 191/191 TS, 8/8 JS, 199 hashes checked, zero drift, 9/9 Rust roots present |
+| 10-04 artifact and key-link queries | artifacts 5/5; links 4/4 |
 
-| From | To | Via | Status | Details |
-|---|---|---|---|---|
-| `crates/compat-harness/src/main.rs` | `source_authority.rs` | shared `verify_repository` preflight | WIRED | `load_source_authority` and `validate_source_authority` run before compatibility loading for both modes. |
-| `source_authority.rs` | `source-authority.v1.json` | strict serde, inventory, hash, package, JS, and CI checks | WIRED | 7/7 focused tests and verify-candidate pass. |
-| `source-authority.v1.json` | `typescript-responsibilities.v1.json` | legacy-fixture disposition | DEFERRED | Target file does not yet exist; Phase 11 explicitly owns its creation/disposition. |
-| `package.json` | `bin/minimax-codex.cjs` | sole npm bin | WIRED | Exactly one `minimax-codex` bin points to the fixed launcher. |
-| `state_authority.rs` | `crates/cli/src/migration.rs` | inventory/dry-run/apply/rollback hashes | WIRED | Migration source preservation and receipt-scoped rollback pass. |
-| `verify-rust-release.mjs` | `bin/minimax-codex.cjs` | extracted launcher identity and sibling failures | WIRED | Fresh installed smoke passed with exact version/hash binding. |
-| `.github/workflows/ci.yml` | Rust source authority | `verify:rust-contracts` strict/candidate commands | WIRED | Both matrix branches run contracts before packaging. |
+The verifier did not repeat the full npm suite. Re-verification used the focused behavioral contracts above plus direct current-tree inventory and wiring evidence; no executor summary claim was counted as proof.
 
-### Data-Flow Trace (Level 4)
+No phase probe files exist. No hosted workflow, network/Provider call, package install/publication, push, model download, or hosted fingerprint refresh was performed.
 
-Not applicable: Phase 10 artifacts are manifests, validators, launch/package scripts, filesystem tests, and CI configuration rather than dynamic UI/data-rendering artifacts.
+## Requirements Coverage
 
-### Behavioral Spot-Checks
+| Requirement | Status | Evidence |
+|---|---|---|
+| RUST-01 - Rust is the only executable product implementation | SATISFIED | dev, start, bin, and equivalent package routes are Rust-only and guarded by both authority preflights. |
+| RUST-02 - JavaScript is restricted to reviewed distribution orchestration | SATISFIED | Exact 5-file allowlist, 8 total tracked JS paths, zero drift, and negative authority checks pass. |
+| RUST-03 - .minimax is the only writable runtime authority | SATISFIED | Legacy writer route is closed; .mini-codex is read-only migration input; route/state negatives and 3/3 filesystem tests pass. |
 
-| Behavior | Command | Result | Status |
-|---|---|---|---|
-| Source/CI authority positives and adversarial negatives | `cargo +1.97.0-x86_64-pc-windows-gnullvm test -p minimax-compat-harness --test source_authority --locked` with `rust-lld` | 7 passed | PASS |
-| Rust writable-root and migration invariants | `cargo +1.97.0-x86_64-pc-windows-gnullvm test -p minimax-cli --test state_authority --locked` with `rust-lld` | 3 passed | PASS |
-| Rust product identity contract | `cargo +1.97.0-x86_64-pc-windows-gnullvm test -p minimax-cli --test product_identity --locked` with `rust-lld` | 3 passed | PASS |
-| Candidate preflight | `cargo +1.97.0-x86_64-pc-windows-gnullvm run -p minimax-compat-harness --locked -- verify-candidate` | exit 0 | PASS |
-| Full transitional suite (only full suite run) | `npm test` | 440 passed, 0 failed | PASS |
-| Candidate package and installed identity | `package-rust.mjs` plus `verify-rust-release.mjs` against fresh verifier artifacts | exact single-product archives and installed/direct identity passed; support tier `development_only` | PASS |
-| Escaped TS product entry | Parse package script and live CLI source | `{"dev":"tsx src/cli.tsx","liveEntrypoint":true,"rendersInk":true}` while verify-candidate still exits 0 | FAIL |
+All Phase 10 requirements are covered by plans and current evidence.
 
-The first development release-verifier attempt lacked the GNU-LLVM runtime DLL on its process search path and failed before cold-start measurement. Re-running with the installed toolchain runtime directory prepended succeeded. This is local environment handling, not Windows MSVC/Linux GNU release evidence.
-
-### Probe Execution
-
-No `probe-*.sh` files or phase-declared probes exist. The declared runnable candidate/package checks are recorded under Behavioral Spot-Checks.
-
-### Requirements Coverage
-
-| Requirement | Source Plan | Description | Status | Evidence |
-|---|---|---|---|---|
-| RUST-01 | 10-02, 10-03 | Rust is the only executable product implementation | BLOCKED | Sole bin/candidate are Rust, but `npm run dev` still starts the live TS CLI. |
-| RUST-02 | 10-01, 10-03 | JavaScript is restricted to reviewed distribution orchestration | SATISFIED | Exact 5-file allowlist, 8/8 total JS inventory, zero drift, source/CI negatives pass. |
-| RUST-03 | 10-02, 10-03 | `.minimax` is the only writable runtime authority | BLOCKED | Rust and migration tests pass, but the remaining TS CLI defaults to writable `.mini-codex`. |
-
-No Phase 10 requirement is orphaned: all three IDs appear in PLAN frontmatter and REQUIREMENTS traceability.
-
-### Prohibition Verification
+## Prohibition Verification
 
 | Prohibition | Status | Evidence |
 |---|---|---|
-| Do not delete transitional TS in Phase 10 | VERIFIED | 191 tracked TS/TSX paths remain hash-pinned; Phase 10 diff contains no TS deletion. |
-| Do not allow JS product behavior/fallback/download | VERIFIED | Exact reviewed sources plus negative validator tests. |
-| Do not put diagnostic fixtures in executable/JS authority | VERIFIED | Separate three-entry class and smuggling rejection. |
-| Do not expand platform/provider/tool/installer scope | VERIFIED | Supported targets remain Windows x64 MSVC and Linux x64 GNU; no feature expansion found. |
-| Do not keep a runnable supported legacy CLI/fallback | FAILED | `npm run dev` starts `src/cli.tsx`. |
-| Do not write `.mini-codex` after cutover | FAILED | That live TS runtime defaults its writable state root to `.mini-codex`. |
-| Do not package compiled TS as a release entry | VERIFIED | Fresh native/npm archives contain no `dist` or legacy executable. |
-| Do not call Provider/publish/push/open PR | VERIFIED | Verification stayed offline; CI has read-only permissions and no remote mutation commands. |
+| Do not leave a package script that starts the TypeScript/legacy product or its .mini-codex writer | VERIFIED | Exact Cargo dev route plus adversarial product-script mutations and shared preflight. |
+| Do not broadly ban transitional TypeScript verification before Phase 11 | VERIFIED | Positive source-authority fixture retains build/check/test/eval/smoke classes and current scripts remain present. |
+| Do not delete or port the transitional TypeScript tree in the gap closure | VERIFIED | Gap diff changes one transitional contract test and one exact hash; 191 TS/TSX paths remain. |
+| Do not refresh hosted fingerprints or present GNU-LLVM as hosted release evidence | VERIFIED | Hosted evidence/release/CI files are untouched; this report labels GNU-LLVM development-only. |
+| Do not allow JavaScript product behavior, fallback, or runtime download | VERIFIED | Exact reviewed allowlist and launcher/source negatives remain green. |
+| Do not write .mini-codex after cutover | VERIFIED | No package product route reaches the TS writer; Rust state/migration filesystem evidence passes. |
 
-### Anti-Patterns Found
+## Anti-Patterns and Human Verification
 
-| File | Line | Pattern | Severity | Impact |
-|---|---|---|---|---|
-| `package.json` | 20 | Live TypeScript product entry remains executable | BLOCKER | Breaks sole executable authority. |
-| `src/runtime/application-kernel.ts` | 609 | Escaped legacy entry defaults to `.mini-codex` writer | BLOCKER | Breaks sole writable authority. |
-| `baseline.rs` | 720-723 | Package-script guard recognizes only `dist/cli.js` | WARNING | Lets `tsx src/cli.tsx` pass the Rust-owned product-entry gate. |
+No blocker, warning, stub, placeholder, TODO, FIXME, XXX, or TBD marker was found in the 10-04 production/test surface. src/runtime/application-kernel.ts still contains the historical .mini-codex default as hash-pinned transitional source, but it is no longer reachable from a package product route; deletion remains Phase 14 scope.
 
-No unreferenced `TBD`, `FIXME`, or `XXX` debt markers were found in Phase 10 implementation files. Empty-array matches in `test/ci-contract.ts` are ordinary parser error returns, not stubs.
+No human verification is required. Both repaired truths and all behavior-dependent state/route invariants have current automated evidence.
 
-### Human Verification Required
+## Final Assessment
 
-None. The two failures are directly observable in package/source wiring; remaining behavior-dependent truths have passing automated evidence.
-
-### Gaps Summary
-
-Phase 10 does not yet achieve its stated executable and writable authority cutover. The same escaped route causes both failures: `npm run dev` directly starts the live TypeScript TUI, and that runtime defaults to `.mini-codex`. The sole npm bin, launcher, candidate archives, JavaScript boundary, Rust state tests, direct/installed identity, CI ordering, and synchronized 440-test suite are otherwise verified.
-
-The later phases remain correctly scoped for Rust verification replacement (11), fixture compatibility/migration (12), thin package/dependency closure (13), and source deletion plus hosted fingerprint closure (14). Those deferred tasks do not excuse the Phase 10 requirement that the legacy product be non-executable before deletion.
+Phase 10 now achieves its executable and writable authority cutover. The original TypeScript dev escape is replaced by the Rust CLI and guarded by both Rust-owned verification modes; consequently no supported or legacy package command reaches the transitional .mini-codex writer. The ten previously passing authority, inventory, launcher, package, identity, and CI truths remain regression-free.
 
 ---
 
-_Verified: 2026-07-17T14:02:46Z_
-_Verifier: the agent (gsd-verifier)_
+_Verified: 2026-07-17T14:49:26Z_
+_Verifier: the agent (gsd-verifier, re-verification mode)_
