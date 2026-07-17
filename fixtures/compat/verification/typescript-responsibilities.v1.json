@@ -657,6 +657,21 @@
           ],
           "rationale": "Historical test/chat-input-policy.test.ts public command/rendering responsibility is owned by the locked Rust command parser and safe renderer tests.",
           "id": "ts-test-chat-input-policy-test-ts"
+        },
+        {
+          "category": "cli",
+          "contractRefs": [
+            "fixtures/compat/commands.v1.json#commands"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/tui/tests/command_render.rs",
+              "test": "parser_covers_every_manifest_command_alias_and_argument_shape"
+            }
+          ],
+          "rationale": "Exact retry and continue public command outcomes are owned by the cited deterministic Rust parser test.",
+          "id": "ts-command-retry-continue-outcomes"
         }
       ]
     },
@@ -718,6 +733,21 @@
           ],
           "rationale": "Historical test/cli-lifecycle.test.ts lifecycle responsibility is owned by Rust session finalization, restart, and pinned-Wiki evidence.",
           "id": "ts-test-cli-lifecycle-test-ts"
+        },
+        {
+          "category": "lifecycle",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/cli/tests/lifecycle_wiki.rs",
+              "test": "terminal_runtime_session_reaches_pinned_wiki_and_current_retrieval"
+            }
+          ],
+          "rationale": "Session finalization before restart and single durable Wiki application are owned by the cited deterministic Rust lifecycle test.",
+          "id": "ts-lifecycle-finalize-before-restart"
         }
       ]
     },
@@ -1241,6 +1271,21 @@
           ],
           "rationale": "Historical test/permission-service.test.ts tool/approval responsibility is owned by ordered, durable Rust tool-loop evidence.",
           "id": "ts-test-permission-service-test-ts"
+        },
+        {
+          "category": "tool",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/cli/tests/tool_loop.rs",
+              "test": "full_access_skips_prompt_but_still_preflights_persists_and_executes"
+            }
+          ],
+          "rationale": "Process-scoped full access and its reset to confirm mode after restart are owned by the cited deterministic Rust tool-loop test.",
+          "id": "ts-permission-reset-on-restart"
         }
       ]
     },
@@ -1898,6 +1943,21 @@
           ],
           "rationale": "Historical test/ui-status.test.ts public command/rendering responsibility is owned by the locked Rust command parser and safe renderer tests.",
           "id": "ts-test-ui-status-test-ts"
+        },
+        {
+          "category": "cli",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/cli/tests/headless.rs",
+              "test": "text_and_jsonl_terminal_outcomes_match_public_exit_contract"
+            }
+          ],
+          "rationale": "Historical terminal text, schema-v1 JSONL, and public exit outcomes are owned by the cited deterministic Rust CLI test.",
+          "id": "ts-cli-terminal-output-parity"
         }
       ]
     },
