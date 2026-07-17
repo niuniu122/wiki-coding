@@ -1,5 +1,7 @@
 use std::collections::BTreeSet;
 use std::fs;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Output};
 
 use minimax_compat_harness::{
     ArchitectureError, ArchitectureGraph, ArchitecturePackage, ManifestError, ParityStatus,
@@ -94,6 +96,7 @@ fn rust_command_permission_provider_and_product_baselines_are_executable() {
     validate_rust_provider_profiles(&manifests.providers)
         .expect("executable Rust Provider profile evidence");
     validate_product_entry(&root).expect("Rust npm product entry");
+    assert_launcher_contract(&root);
     validate_cutover_candidate(&root, &manifests.baseline)
         .expect("hosted cutover candidate prerequisites");
 }
@@ -368,3 +371,192 @@ fn synthetic_graph(edges: &[(&str, &[&str])]) -> ArchitectureGraph {
 fn normalize_golden_newlines(value: &str) -> String {
     value.replace("\r\n", "\n")
 }
+
+fn assert_launcher_contract(repository_root: &Path) {
+    let missing = LauncherFixture::new(repository_root);
+    assert_launcher_failure(&missing.run(&["--version"]), "missing");
+
+    let unsafe_entry = LauncherFixture::new(repository_root);
+    fs::create_dir_all(unsafe_entry.binary_path()).expect("unsafe binary directory");
+    assert_launcher_failure(&unsafe_entry.run(&["--version"]), "safe regular file");
+
+    let non_executable = LauncherFixture::new(repository_root);
+    non_executable.write_binary(b"not executable", false);
+    non_executable.rewrite_launcher(|source| {
+        source.replace("if (process.platform !== \"win32\" &&", "if (true &&")
+    });
+    assert_launcher_failure(&non_executable.run(&["--version"]), "not executable");
+
+    let unsupported = LauncherFixture::new(repository_root);
+    unsupported.rewrite_launcher(|source| {
+        source
+            .replace("\"win32:x64\"", "\"fixture-win32:x64\"")
+            .replace("\"linux:x64\"", "\"fixture-linux:x64\"")
+    });
+    assert_launcher_failure(&unsupported.run(&["--version"]), "unsupported platform");
+
+    let cannot_start = LauncherFixture::new(repository_root);
+    cannot_start.write_binary(b"not an executable image", true);
+    assert_launcher_failure(&cannot_start.run(&["--version"]), "could not start");
+
+    let forwarding = LauncherFixture::new(repository_root);
+    forwarding.install_node_binary();
+    let argument_probe = forwarding.write_probe(
+        "argument-probe.cjs",
+        "process.stdout.write(JSON.stringify(process.argv.slice(2)));\n",
+    );
+    let output = forwarding.run(&[
+        argument_probe.to_str().expect("UTF-8 probe path"),
+        "中文 request",
+        "$(not-a-shell)",
+        "--flag=value",
+    ]);
+    assert_eq!(output.status.code(), Some(0), "{}", stderr(&output));
+    let arguments: Vec<String> =
+        serde_json::from_slice(&output.stdout).expect("forwarded argv JSON");
+    assert_eq!(
+        arguments,
+        ["中文 request", "$(not-a-shell)", "--flag=value"]
+    );
+
+    let exit_probe = forwarding.write_probe("exit-probe.cjs", "process.exit(7);\n");
+    let output = forwarding.run(&[exit_probe.to_str().expect("UTF-8 exit probe path")]);
+    assert_eq!(output.status.code(), Some(7), "{}", stderr(&output));
+
+    #[cfg(unix)]
+    {
+        let signal_probe = forwarding.write_probe(
+            "signal-probe.cjs",
+            "process.kill(process.pid, 'SIGTERM');\n",
+        );
+        assert_launcher_failure(
+            &forwarding.run(&[signal_probe.to_str().expect("UTF-8 signal probe path")]),
+            "ended by signal",
+        );
+    }
+}
+
+fn assert_launcher_failure(output: &Output, expected: &str) {
+    assert_eq!(output.status.code(), Some(1), "{}", stderr(output));
+    assert!(output.stdout.is_empty());
+    let stderr = stderr(output).to_ascii_lowercase();
+    assert!(
+        stderr.contains(expected),
+        "unexpected launcher error: {stderr}"
+    );
+    for guidance in ["reinstall", "supported", "windows x64", "linux x64"] {
+        assert!(stderr.contains(guidance), "missing {guidance}: {stderr}");
+    }
+    for fallback in ["minimax-codex-legacy", "dist/cli.js", "src/cli.tsx"] {
+        assert!(
+            !stderr.contains(fallback),
+            "fallback guidance leaked: {stderr}"
+        );
+    }
+}
+
+fn stderr(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stderr).into_owned()
+}
+
+struct LauncherFixture {
+    root: PathBuf,
+    launcher: PathBuf,
+    node: PathBuf,
+}
+
+impl LauncherFixture {
+    fn new(repository_root: &Path) -> Self {
+        let unique = format!(
+            "minimax-launcher-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock after epoch")
+                .as_nanos()
+        );
+        let root = std::env::temp_dir().join(unique);
+        let launcher = root.join("bin/minimax-codex.cjs");
+        fs::create_dir_all(launcher.parent().expect("launcher parent"))
+            .expect("launcher fixture directory");
+        fs::copy(repository_root.join("bin/minimax-codex.cjs"), &launcher)
+            .expect("launcher fixture source");
+        Self {
+            root,
+            launcher,
+            node: node_executable(),
+        }
+    }
+
+    fn binary_path(&self) -> PathBuf {
+        self.root.join(if cfg!(windows) {
+            "minimax-codex.exe"
+        } else {
+            "minimax-codex"
+        })
+    }
+
+    fn install_node_binary(&self) {
+        fs::copy(&self.node, self.binary_path()).expect("fixture executable");
+        set_executable(&self.binary_path(), true);
+    }
+
+    fn write_binary(&self, bytes: &[u8], executable: bool) {
+        fs::write(self.binary_path(), bytes).expect("fixture binary bytes");
+        set_executable(&self.binary_path(), executable);
+    }
+
+    fn write_probe(&self, name: &str, source: &str) -> PathBuf {
+        let path = self.root.join(name);
+        fs::write(&path, source).expect("launcher probe");
+        path
+    }
+
+    fn rewrite_launcher(&self, transform: impl FnOnce(String) -> String) {
+        let source = fs::read_to_string(&self.launcher).expect("launcher fixture");
+        let transformed = transform(source.clone());
+        assert_ne!(
+            transformed, source,
+            "launcher fixture transform matched nothing"
+        );
+        fs::write(&self.launcher, transformed).expect("rewritten launcher fixture");
+    }
+
+    fn run(&self, args: &[&str]) -> Output {
+        Command::new(&self.node)
+            .arg(&self.launcher)
+            .args(args)
+            .output()
+            .expect("run launcher fixture")
+    }
+}
+
+impl Drop for LauncherFixture {
+    fn drop(&mut self) {
+        fs::remove_dir_all(&self.root).expect("remove launcher fixture");
+    }
+}
+
+fn node_executable() -> PathBuf {
+    let output = Command::new("node")
+        .args(["-p", "process.execPath"])
+        .output()
+        .expect("Node is required for npm launcher verification");
+    assert!(output.status.success(), "{}", stderr(&output));
+    PathBuf::from(
+        String::from_utf8(output.stdout)
+            .expect("Node path UTF-8")
+            .trim(),
+    )
+}
+
+#[cfg(unix)]
+fn set_executable(path: &Path, executable: bool) {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let mode = if executable { 0o755 } else { 0o644 };
+    fs::set_permissions(path, fs::Permissions::from_mode(mode)).expect("fixture permissions");
+}
+
+#[cfg(not(unix))]
+fn set_executable(_path: &Path, _executable: bool) {}

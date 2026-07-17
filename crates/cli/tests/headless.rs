@@ -229,7 +229,7 @@ fn permission_status_separates_approval_from_subprocess_isolation() {
 }
 
 #[test]
-fn npm_product_entry_uses_rust_launcher_and_keeps_legacy_typescript() {
+fn npm_product_entry_uses_only_rust_launcher() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
         .nth(2)
@@ -238,8 +238,18 @@ fn npm_product_entry_uses_rust_launcher_and_keeps_legacy_typescript() {
         &std::fs::read_to_string(root.join("package.json")).expect("package.json"),
     )
     .expect("package JSON");
-    assert_eq!(package["bin"]["minimax-codex"], "bin/minimax-codex.cjs");
-    assert_eq!(package["bin"]["minimax-codex-legacy"], "dist/cli.js");
+    let bins = package["bin"].as_object().expect("package bin object");
+    assert_eq!(bins.len(), 1);
+    assert_eq!(bins["minimax-codex"], "bin/minimax-codex.cjs");
+    let scripts = package["scripts"]
+        .as_object()
+        .expect("package scripts object");
+    assert!(!scripts.contains_key("start:legacy"));
+    assert!(scripts.values().all(|script| {
+        script
+            .as_str()
+            .is_none_or(|script| !script.contains("dist/cli.js"))
+    }));
 }
 
 fn binding() -> ModelBinding {
