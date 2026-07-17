@@ -42,6 +42,8 @@ if (result.status === null) {
 process.exitCode = result.status;
 
 function fail(message) {
-  process.stderr.write(`${message} Reinstall a supported release or run minimax-codex-legacy.\n`);
+  process.stderr.write(
+    `${message} Reinstall minimax-codex for a supported Windows x64 or Linux x64 release.\n`
+  );
   process.exit(1);
 }

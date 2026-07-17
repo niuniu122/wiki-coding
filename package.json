@@ -4,8 +4,7 @@
   "description": "A Codex-style interactive CLI shell for MiniMax.",
   "type": "module",
   "bin": {
-    "minimax-codex": "bin/minimax-codex.cjs",
-    "minimax-codex-legacy": "dist/cli.js"
+    "minimax-codex": "bin/minimax-codex.cjs"
   },
   "files": [
     "bin/minimax-codex.cjs",
@@ -21,7 +20,6 @@
     "dev": "tsx src/cli.tsx",
     "build": "tsc -p tsconfig.json",
     "start": "node bin/minimax-codex.cjs",
-    "start:legacy": "node dist/cli.js",
     "check": "tsc -p tsconfig.json --noEmit",
     "check:rust": "cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked -- -D warnings",
     "test": "tsx test/run-tests.ts",

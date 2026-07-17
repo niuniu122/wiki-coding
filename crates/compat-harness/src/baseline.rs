@@ -34,15 +34,17 @@ impl fmt::Display for BaselineError {
             }
             Self::PackageRead => formatter.write_str("cannot read package.json"),
             Self::PackageParse => formatter.write_str("package.json is invalid"),
-            Self::ProductEntry => {
-                formatter.write_str("the npm product entry must be the fixed Rust launcher with an explicit legacy entry")
-            }
+            Self::ProductEntry => formatter.write_str(
+                "the npm product entry must be the sole fixed Rust launcher with no legacy route",
+            ),
             Self::ToolEvidence(requirement) => {
                 write!(formatter, "Rust tool evidence is incomplete: {requirement}")
             }
             Self::VaultEvidence => formatter.write_str("Rust Vault evidence is incomplete"),
             Self::RetrievalEvidence => formatter.write_str("Rust retrieval evidence is incomplete"),
-            Self::ProviderEvidence => formatter.write_str("Rust Provider profile evidence is incomplete"),
+            Self::ProviderEvidence => {
+                formatter.write_str("Rust Provider profile evidence is incomplete")
+            }
             Self::CutoverEvidence => formatter.write_str("Rust cutover evidence is incomplete"),
         }
     }
@@ -699,21 +701,27 @@ pub fn validate_product_entry(root: &Path) -> Result<(), BaselineError> {
         .map_err(|_| BaselineError::PackageRead)?;
     let package: serde_json::Value =
         serde_json::from_str(&raw).map_err(|_| BaselineError::PackageParse)?;
-    if package
+    let bins = package
         .get("bin")
-        .and_then(|bin| bin.get("minimax-codex"))
-        .and_then(serde_json::Value::as_str)
-        != Some("bin/minimax-codex.cjs")
-        || package
-            .get("bin")
-            .and_then(|bin| bin.get("minimax-codex-legacy"))
+        .and_then(serde_json::Value::as_object)
+        .ok_or(BaselineError::ProductEntry)?;
+    let scripts = package
+        .get("scripts")
+        .and_then(serde_json::Value::as_object)
+        .ok_or(BaselineError::ProductEntry)?;
+    if bins.len() != 1
+        || bins
+            .get("minimax-codex")
             .and_then(serde_json::Value::as_str)
-            != Some("dist/cli.js")
-        || package
-            .get("scripts")
-            .and_then(|scripts| scripts.get("start"))
-            .and_then(serde_json::Value::as_str)
+            != Some("bin/minimax-codex.cjs")
+        || scripts.get("start").and_then(serde_json::Value::as_str)
             != Some("node bin/minimax-codex.cjs")
+        || scripts.contains_key("start:legacy")
+        || scripts.values().any(|script| {
+            script
+                .as_str()
+                .is_some_and(|script| script.contains("dist/cli.js"))
+        })
     {
         return Err(BaselineError::ProductEntry);
     }
@@ -726,7 +734,9 @@ pub fn validate_product_entry(root: &Path) -> Result<(), BaselineError> {
         "shell: false",
         "lstatSync",
         "isSymbolicLink",
-        "minimax-codex-legacy",
+        "Reinstall minimax-codex for a supported Windows x64 or Linux x64 release.",
+        "could not start",
+        "ended by signal",
     ] {
         if !launcher.contains(required) {
             return Err(BaselineError::ProductEntry);
@@ -739,6 +749,8 @@ pub fn validate_product_entry(root: &Path) -> Result<(), BaselineError> {
         "execSync(",
         "process.env",
         "dist/cli",
+        "minimax-codex-legacy",
+        "src/cli.tsx",
     ] {
         if launcher.contains(forbidden) {
             return Err(BaselineError::ProductEntry);

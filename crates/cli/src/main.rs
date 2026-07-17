@@ -39,8 +39,13 @@ async fn main() -> ExitCode {
     let exit = match Cli::try_parse() {
         Ok(cli) => execute(cli).await,
         Err(error) => {
+            let exit = if error.exit_code() == 0 {
+                ExitClass::Completed
+            } else {
+                ExitClass::Usage
+            };
             let _ = error.print();
-            ExitClass::Usage
+            exit
         }
     };
     ExitCode::from(u8::try_from(exit.code()).unwrap_or(ExitClass::Workspace.code() as u8))

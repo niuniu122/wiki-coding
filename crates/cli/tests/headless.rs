@@ -252,6 +252,23 @@ fn npm_product_entry_uses_only_rust_launcher() {
     }));
 }
 
+#[test]
+fn version_flag_reports_the_rust_package_identity_and_succeeds() {
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_minimax-cli"))
+        .arg("--version")
+        .output()
+        .expect("Rust CLI version command");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8(output.stdout).expect("version output UTF-8"),
+        format!("minimax-codex-rust {}\n", env!("CARGO_PKG_VERSION"))
+    );
+}
+
 fn binding() -> ModelBinding {
     ModelBinding {
         provider_id: ProviderId::new("fixture").expect("provider id"),

@@ -24,7 +24,7 @@
     {
       "id": "npm-launcher",
       "path": "bin/minimax-codex.cjs",
-      "sha256": "8670e53e09266fdb32495a71769deda543809ac6188c1e61b795cc43b6f4b558",
+      "sha256": "edd61e188eb42d50b0700c64e0ba769fb8945794bdbf2ea2901ff7a1df67e4ca",
       "purpose": "rustBinaryLauncher",
       "forbiddenCapabilities": ["fallback", "migration", "provider", "retrieval", "runtimeDownload", "session", "tool", "vault", "wiki"]
     },
