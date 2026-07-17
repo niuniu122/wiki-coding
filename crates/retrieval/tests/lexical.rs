@@ -243,9 +243,8 @@ fn strict_fixture(raw: &str) -> Result<Fixture, String> {
         "descriptors": value["descriptors"],
         "thresholds": value["thresholds"]
     });
-    let fingerprint = sha256(
-        &serde_json::to_vec(&fingerprint_input).map_err(|error| error.to_string())?,
-    );
+    let fingerprint =
+        sha256(&serde_json::to_vec(&fingerprint_input).map_err(|error| error.to_string())?);
     if fixture.corpus_fingerprint != fingerprint {
         return Err("corpus fingerprint mismatch".into());
     }
@@ -401,9 +400,7 @@ fn existing_typescript_175_case_fixture_meets_capability_gates() {
 
 #[test]
 fn immutable_corpus_rejects_schema_identity_and_case_drift() {
-    let raw = include_str!(
-        "../../../fixtures/compat/retrieval/capability-cases-expanded.v1.json"
-    );
+    let raw = include_str!("../../../fixtures/compat/retrieval/capability-cases-expanded.v1.json");
     let value: Value = serde_json::from_str(raw).expect("fixture JSON");
 
     let mut unknown = value.clone();
