@@ -37,7 +37,7 @@ jobs:
       - run: rustup toolchain install 1.97.0 --profile minimal --component rustfmt --component clippy
       - name: Run Linux adversarial sandbox canary
         if: runner.os == 'Linux'
-        run: cargo test -p minimax-tools --test sandbox_adversarial --locked
+        run: bash scripts/ci-linux-sandbox-canary.sh
       - run: npm ci
       - run: npm run check
       - run: npm test
@@ -98,7 +98,7 @@ test("the Linux sandbox setup is exact and cannot run on Windows", () => {
   );
   assertInvalid(
     VALID_WORKFLOW.replace(
-      "cargo test -p minimax-tools --test sandbox_adversarial --locked",
+      "bash scripts/ci-linux-sandbox-canary.sh",
       "cargo test -p minimax-tools --locked"
     ),
     /linux sandbox|step/i

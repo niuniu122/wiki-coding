@@ -304,7 +304,7 @@ function validateSteps(
     steps[5]!,
     ["name", "if", "run"],
     "run",
-    "cargo test -p minimax-tools --test sandbox_adversarial --locked",
+    "bash scripts/ci-linux-sandbox-canary.sh",
     errors,
     6
   );
