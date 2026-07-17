@@ -7,7 +7,8 @@ use minimax_compat_harness::{
     build_report, load_compat_manifests, load_coverage_matrix, load_source_authority,
     provider_evaluation_authorizes_release, provider_report_json, report_json, repository_root,
     retrieval_report_json, run_provider_evaluation, run_retrieval_evaluation,
-    validate_coverage_matrix, validate_report, validate_source_authority,
+    validate_coverage_matrix, validate_migration_fixture_manifest,
+    validate_migration_support_window, validate_report, validate_source_authority,
     verify_fixture_compatibility,
 };
 use minimax_protocol::{ProtocolErrorCode, ProviderProtocolKind, StreamEvent};
@@ -101,6 +102,8 @@ fn verify_repository(root: &Path, require_hosted_evidence: bool) -> Result<(), S
     let coverage = load_coverage_matrix(root).map_err(|error| error.to_string())?;
     validate_coverage_matrix(root, &coverage, &source_authority)
         .map_err(|error| error.to_string())?;
+    validate_migration_fixture_manifest(root).map_err(|error| error.to_string())?;
+    validate_migration_support_window(root).map_err(|error| error.to_string())?;
     verify_fixture_compatibility(root, require_hosted_evidence)?;
     verify_provider_fixtures(root)?;
     Ok(())

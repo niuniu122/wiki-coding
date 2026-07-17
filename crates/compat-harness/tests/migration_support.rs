@@ -24,8 +24,7 @@ fn fixture_root(root: &Path) -> PathBuf {
 }
 
 fn read_json(path: &Path) -> Value {
-    serde_json::from_slice(&std::fs::read(path).expect("fixture JSON bytes"))
-        .expect("fixture JSON")
+    serde_json::from_slice(&std::fs::read(path).expect("fixture JSON bytes")).expect("fixture JSON")
 }
 
 fn write_json(path: &Path, value: &Value) {
@@ -121,7 +120,10 @@ fn fixture_manifest_covers_every_source_evidence_file_exactly_once() {
     let manifest = read_json(&fixture_root(&root).join(MANIFEST_NAME));
     assert_eq!(manifest["schemaVersion"], 1);
     assert_eq!(manifest["fixtureVersion"], "typescript-v1");
-    assert_eq!(manifest["provenance"]["sourceProduct"], "minimax-codex-typescript-v1");
+    assert_eq!(
+        manifest["provenance"]["sourceProduct"],
+        "minimax-codex-typescript-v1"
+    );
     assert_eq!(manifest["provenance"]["migrationAuthority"], "rust");
     assert_eq!(
         manifest["metadataFilesExcludedFromFingerprint"],
@@ -166,12 +168,10 @@ fn fixture_manifest_rejects_tamper_missing_extra_duplicate_and_metadata_self_ent
                 b"changed evidence",
             )
             .expect("tamper fixture"),
-            "missing" => std::fs::remove_file(
-                fixture
-                    .fixture_root()
-                    .join("indexes/capability.cache"),
-            )
-            .expect("remove fixture"),
+            "missing" => {
+                std::fs::remove_file(fixture.fixture_root().join("indexes/capability.cache"))
+                    .expect("remove fixture")
+            }
             "extra" => std::fs::write(fixture.fixture_root().join("extra.json"), b"{}\n")
                 .expect("add fixture"),
             "duplicate" => {

@@ -1,0 +1,9 @@
+{
+  "schemaVersion": 1,
+  "fixtureVersion": "typescript-v1",
+  "fixtureFingerprint": "a02265896d3c0f856b8a1d5bd089cccc17df5102b212727684475327be885b0d",
+  "cutoverRelease": "3.0.0",
+  "minimumSubsequentPublicReleases": 2,
+  "observedPublicReleases": [],
+  "removalEligible": false
+}

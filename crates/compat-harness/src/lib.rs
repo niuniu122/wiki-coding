@@ -7,6 +7,7 @@ pub mod architecture;
 pub mod baseline;
 pub mod coverage;
 pub mod manifest;
+pub mod migration_support;
 pub mod provider_eval;
 pub mod report;
 pub mod retrieval_eval;
@@ -32,6 +33,10 @@ pub use coverage::{
 pub use manifest::{
     CommandManifest, CompatManifests, ManifestError, ParityStatus, ProviderManifest,
     PublicContractManifest, StatusItem, load_compat_manifests, repository_root,
+};
+pub use migration_support::{
+    MigrationSupportError, MigrationSupportWindowStatus, validate_migration_fixture_manifest,
+    validate_migration_support_window,
 };
 pub use provider_eval::{
     PROVIDER_EVALUATION_GOLDEN, PROVIDER_EVALUATION_MANIFEST, ProviderCheckReport,
