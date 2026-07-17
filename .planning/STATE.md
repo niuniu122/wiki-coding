@@ -2,19 +2,19 @@
 gsd_state_version: 1.0
 milestone: v1.0
 milestone_name: Rust rewrite
-current_phase: 7
-current_phase_name: Close Milestone Integration Gaps
-status: complete
-stopped_at: Milestone audit passed with zero blockers
-last_updated: "2026-07-16T21:20:00+08:00"
-last_activity: 2026-07-16
-last_activity_desc: Phase 7 and v1.0 milestone completed after final hosted and integration gates
+current_phase: 8
+current_phase_name: Codex-style subprocess sandbox hardening
+status: planning
+stopped_at: Phase 8 specification locked; implementation planning in progress
+last_updated: "2026-07-17T09:20:00+08:00"
+last_activity: 2026-07-17
+last_activity_desc: Added Phase 8 and locked the Codex-style subprocess sandbox specification
 progress:
-  total_phases: 7
+  total_phases: 8
   completed_phases: 7
   total_plans: 22
   completed_plans: 22
-  percent: 100
+  percent: 88
 ---
 
 # Project State
@@ -27,9 +27,9 @@ See: `.planning/PROJECT.md` (updated 2026-07-15)
 
 ## Current Position
 
-Phase 7 and milestone v1.0 are complete.
+Phase 7 remains complete. Phase 8 reopens the milestone to replace advisory subprocess safety with a real enforced/fail-closed boundary.
 
-- Requirements: 45/45
+- Requirements: 45/52 complete; 7 Phase 8 requirements pending
 - Cross-phase integrations: 38/38
 - End-to-end flows: 7/7
 - Plans: 22/22
@@ -71,3 +71,11 @@ Phase 7 and milestone v1.0 are complete.
 ## Authorization Boundaries Preserved
 
 No package publication, tag, PR, merge, live Provider request, credential read, embedding model download, SQLite use, source deletion, or real user-data migration was performed.
+
+## Accumulated Context
+
+### Roadmap Evolution
+
+- Phase 8 added: Codex-style subprocess sandbox hardening.
+- Approval and sandboxing are independent axes: confirm maps to restricted execution, while process-scoped full access explicitly disables the subprocess sandbox.
+- Confirm-mode process execution fails closed on platforms or installations without a proven backend; no partial Windows imitation is presented as safe.

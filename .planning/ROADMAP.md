@@ -2,7 +2,7 @@
 
 ## Overview
 
-The milestone proceeds as seven vertical, verifiable boundaries: freeze compatibility and core contracts, deliver a usable Rust conversation shell, add safe tools, add the per-project Vault and main-model Wiki workflow, restore and complete three-domain hybrid retrieval, migrate/package/cut over, then close every cross-phase integration gap found by the milestone audit.
+The milestone proceeds as eight vertical, verifiable boundaries: freeze compatibility and core contracts, deliver a usable Rust conversation shell, add safe tools, add the per-project Vault and main-model Wiki workflow, restore and complete three-domain hybrid retrieval, migrate/package/cut over, close every cross-phase integration gap found by the milestone audit, then replace advisory subprocess safety with a Codex-style enforced/fail-closed boundary.
 
 ## Phases
 
@@ -13,6 +13,7 @@ The milestone proceeds as seven vertical, verifiable boundaries: freeze compatib
 - [x] **Phase 5: Retrieval and Project Discovery** - Serve three isolated indexes and preserve BM25-first project finding with truthful embedding. (completed 2026-07-16)
 - [x] **Phase 6: Migration, Release, and Cutover** - Import safely, meet release gates, and switch the default entry only after parity. (completed 2026-07-16)
 - [x] **Phase 7: Close Milestone Integration Gaps** - Wire the product flows, prove the exact final artifacts, and pass the repeated milestone audit. (completed 2026-07-16)
+- [ ] **Phase 8: Codex-style subprocess sandbox hardening** - Separate approval from isolation and enforce or fail closed for every confirm-mode process tool.
 
 ## Phase Details
 
@@ -200,6 +201,7 @@ Plans:
 | 5. Retrieval and Project Discovery | 3/3 | Complete   | 2026-07-16 |
 | 6. Migration, Release, and Cutover | 3/3 | Complete | 2026-07-16 |
 | 7. Close Milestone Integration Gaps | 4/4 | Complete | 2026-07-16 |
+| 8. Codex-style Subprocess Sandbox Hardening | 0/3 | Planning | - |
 
 ### Phase 7: Close milestone integration gaps
 
@@ -222,3 +224,24 @@ Plans:
 - [x] 07-02: Restore automatic BM25-first project discovery and executable command contracts
 - [x] 07-03: Build one complete Rust-plus-legacy distribution and bind hosted cutover evidence
 - [x] 07-04: Run cross-phase chain tests, hosted native gates, and the final milestone audit
+
+### Phase 8: Codex-style subprocess sandbox hardening
+
+**Goal:** Replace ordinary host child processes with an operating-system-enforced, fail-closed confirm-mode boundary while retaining an explicit full-access bypass and every existing hard gate.
+**Requirements**: SBOX-01, SBOX-02, SBOX-03, SBOX-04, SBOX-05, SBOX-06, SBOX-07
+**Depends on:** Phase 7
+**Success Criteria** (what must be TRUE):
+
+  1. Approval and sandbox policy are separate; confirm snapshots a restricted policy, full access snapshots disabled policy, and restart returns to confirm.
+  2. Linux Bubblewrap canaries prove transitive build code cannot read a host marker or reach a host-local socket while workspace writes still work.
+  3. Missing, unsupported, or failed sandbox backends reject before target start with no unsandboxed fallback.
+  4. Full access bypasses only the subprocess sandbox and user prompt; all fixed-tool and hard preflight gates stay active.
+  5. Doctor, permission text, release docs, and CI truthfully report the platform/backend boundary, and unrelated Provider/retrieval/Vault/Wiki regressions stay green.
+
+**Plans:** 0/3 plans complete
+
+Plans:
+
+- [ ] 08-01: Introduce the independent sandbox policy and fail-closed launch contract
+- [ ] 08-02: Implement Linux Bubblewrap enforcement and adversarial canaries
+- [ ] 08-03: Wire truthful diagnostics, documentation, CI, and full regression gates

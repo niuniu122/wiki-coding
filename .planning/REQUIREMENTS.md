@@ -42,6 +42,16 @@
 - [x] **TOOL-04**: Rust v1 implements read/list, patch/write, bounded shell, Git status/diff, and npm diagnostics.
 - [x] **TOOL-05**: Both modes enforce path, schema, secret, destructive-operation, cancellation, and unknown-side-effect hard gates.
 
+### Subprocess Sandbox
+
+- [ ] **SBOX-01**: Approval policy and subprocess isolation are independent; `confirm` selects a restricted sandbox, `full-access` disables it only for the current process, and restart returns to `confirm`.
+- [ ] **SBOX-02**: Every confirm-mode process tool enters an OS-enforced boundary before target code starts, with child network denied, only the project workspace writable, and host-private paths unavailable.
+- [ ] **SBOX-03**: A missing, unsupported, or failed sandbox backend returns a stable actionable denial before target execution and never falls back to an unsandboxed process.
+- [ ] **SBOX-04**: Full access explicitly bypasses only the subprocess sandbox and approval prompt while the fixed tool registry and all hard preflight, timeout, output, and cancellation gates remain active.
+- [ ] **SBOX-05**: Provider HTTP remains host-owned and separate from subprocess networking; Provider secrets and non-allowlisted host environment never enter child processes.
+- [ ] **SBOX-06**: Doctor, permission/status text, release documentation, and CI truthfully report backend, enforcement, platform support, and remediation.
+- [ ] **SBOX-07**: Release-gated adversarial tests execute transitive project code and prove confirm-mode host-file/socket denial, fail-closed backend handling, workspace writes, and explicit full-access bypass.
+
 ### Vault
 
 - [x] **VAULT-01**: First run lets the user select a per-project Vault, recommends a sibling path outside Git, and binds it with a stable project ID.
@@ -124,6 +134,13 @@
 | TOOL-03 | Phase 3 | Complete |
 | TOOL-04 | Phase 3 | Complete |
 | TOOL-05 | Phase 3 | Complete |
+| SBOX-01 | Phase 8 | Pending |
+| SBOX-02 | Phase 8 | Pending |
+| SBOX-03 | Phase 8 | Pending |
+| SBOX-04 | Phase 8 | Pending |
+| SBOX-05 | Phase 8 | Pending |
+| SBOX-06 | Phase 8 | Pending |
+| SBOX-07 | Phase 8 | Pending |
 | VAULT-01 | Phase 4 | Complete |
 | VAULT-02 | Phase 4 | Complete |
 | VAULT-03 | Phase 4 | Complete |
@@ -150,10 +167,10 @@
 
 **Coverage:**
 
-- v1 requirements: 45 total
-- Mapped to phases: 45
+- v1 requirements: 52 total
+- Mapped to phases: 52
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-07-15*
-*Last updated: 2026-07-16 after Phase 6 migration, release, and cutover completion*
+*Last updated: 2026-07-17 for Phase 8 subprocess sandbox hardening*
