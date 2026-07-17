@@ -1067,7 +1067,6 @@ mod sandbox_tests {
             .collect::<Vec<_>>();
         for namespace_flag in [
             "--unshare-user",
-            "--disable-userns",
             "--unshare-ipc",
             "--unshare-pid",
             "--unshare-net",
@@ -1076,6 +1075,7 @@ mod sandbox_tests {
         ] {
             assert!(rendered.contains(&namespace_flag.into()));
         }
+        assert!(!rendered.contains(&"--disable-userns".into()));
         assert!(!rendered.contains(&"--share-net".into()));
         assert!(
             rendered

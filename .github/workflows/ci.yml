@@ -23,7 +23,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y bubblewrap && sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Verify Linux subprocess sandbox
         if: runner.os == 'Linux'
-        run: bwrap --unshare-user --disable-userns --unshare-ipc --unshare-pid --unshare-net --unshare-uts --unshare-cgroup-try --die-with-parent --new-session --cap-drop ALL --clearenv --ro-bind / / /bin/true
+        run: bwrap --unshare-user --unshare-ipc --unshare-pid --unshare-net --unshare-uts --unshare-cgroup-try --die-with-parent --new-session --cap-drop ALL --clearenv --ro-bind / / /bin/true
       - uses: actions/setup-node@v4
         with:
           node-version: 20

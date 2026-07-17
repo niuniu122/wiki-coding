@@ -13,7 +13,9 @@ Restart always returns to `confirm`. There is no saved “always allow” settin
 
 ## What is inside the sandbox
 
-The four process-backed adapters are Cargo diagnostics, Git status/diff, npm diagnostics, and fixed node/rg checks. On Linux they are started through Bubblewrap before project code can run. The sandbox requires a new user namespace, disables nested user namespaces, creates new PID, IPC, UTS, and network namespaces, creates a cgroup namespace when the kernel permits it, mounts system runtimes read-only, gives the child a private temporary HOME, mounts the project at `/workspace`, and overlays `.git`, `.wiki-coding`, `.minimax`, `.obsidian`, and `.minimax-runtime` read-only. Symlinked metadata entries are never followed into host paths.
+The four process-backed adapters are Cargo diagnostics, Git status/diff, npm diagnostics, and fixed node/rg checks. On Linux they are started through Bubblewrap before project code can run. The sandbox requires new user, PID, IPC, UTS, and network namespaces, creates a cgroup namespace when the kernel permits it, mounts system runtimes read-only, gives the child a private temporary HOME, mounts the project at `/workspace`, and overlays `.git`, `.wiki-coding`, `.minimax`, `.obsidian`, and `.minimax-runtime` read-only. Symlinked metadata entries are never followed into host paths.
+
+The sandbox intentionally does not pass Bubblewrap's `--disable-userns`. Bubblewrap 0.9 implements that option by denying `clone3`, which prevents Cargo from starting `rustc` on current Ubuntu runners. This follows Codex's Bubblewrap behavior: the child is already inside a new user namespace with all capabilities dropped, while the filesystem mounts, network namespace, and inherited seccomp filter remain in force for descendants.
 
 Rust toolchains and non-credential Cargo cache directories may be mounted read-only so offline checks still work. Cargo credential/config files are not mounted. Child environments remain allowlisted and never receive Provider API credentials.
 

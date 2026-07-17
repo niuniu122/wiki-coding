@@ -97,7 +97,6 @@ pub(crate) fn bubblewrap_args(
         &mut args,
         &[
             "--unshare-user",
-            "--disable-userns",
             "--unshare-ipc",
             "--unshare-pid",
             "--unshare-net",

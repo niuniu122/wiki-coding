@@ -37,7 +37,7 @@ const REQUIRED_RUN_COMMANDS = [
 ] as const;
 
 const LINUX_SANDBOX_INSTALL = "sudo apt-get update && sudo apt-get install -y bubblewrap && sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0";
-const LINUX_SANDBOX_PREFLIGHT = "bwrap --unshare-user --disable-userns --unshare-ipc --unshare-pid --unshare-net --unshare-uts --unshare-cgroup-try --die-with-parent --new-session --cap-drop ALL --clearenv --ro-bind / / /bin/true";
+const LINUX_SANDBOX_PREFLIGHT = "bwrap --unshare-user --unshare-ipc --unshare-pid --unshare-net --unshare-uts --unshare-cgroup-try --die-with-parent --new-session --cap-drop ALL --clearenv --ro-bind / / /bin/true";
 const STRICT_EVENT_CONDITION = "github.event_name != 'workflow_dispatch'";
 const CANDIDATE_EVENT_CONDITION = "github.event_name == 'workflow_dispatch'";
 
