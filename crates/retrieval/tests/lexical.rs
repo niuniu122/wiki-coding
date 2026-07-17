@@ -307,7 +307,7 @@ fn strict_fixture(raw: &str) -> Result<Fixture, String> {
 #[test]
 fn existing_typescript_175_case_fixture_meets_capability_gates() {
     let fixture = strict_fixture(include_str!(
-        "../../../test/fixtures/capabilities/retrieval-cases-expanded.json"
+        "../../../fixtures/compat/retrieval/capability-cases-expanded.v1.json"
     ))
     .expect("strict immutable fixture");
     let thresholds = fixture.thresholds.clone();
@@ -401,7 +401,9 @@ fn existing_typescript_175_case_fixture_meets_capability_gates() {
 
 #[test]
 fn immutable_corpus_rejects_schema_identity_and_case_drift() {
-    let raw = include_str!("../../../test/fixtures/capabilities/retrieval-cases-expanded.json");
+    let raw = include_str!(
+        "../../../fixtures/compat/retrieval/capability-cases-expanded.v1.json"
+    );
     let value: Value = serde_json::from_str(raw).expect("fixture JSON");
 
     let mut unknown = value.clone();
