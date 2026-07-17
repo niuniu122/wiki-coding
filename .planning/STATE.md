@@ -4,17 +4,17 @@ milestone: v3.0
 milestone_name: Rust Convergence
 current_phase: 11
 current_phase_name: rust-verification-and-evaluation-authority
-status: executing
-stopped_at: Completed 11-03-PLAN.md
-last_updated: "2026-07-17T16:29:46.252Z"
+status: verifying
+stopped_at: Completed 11-04-PLAN.md
+last_updated: "2026-07-17T17:00:13.782Z"
 last_activity: 2026-07-17
-last_activity_desc: Phase 11 execution started
+last_activity_desc: Plan 11-04 complete; Phase 11 ready for verification
 progress:
   total_phases: 14
-  completed_phases: 10
+  completed_phases: 11
   total_plans: 44
-  completed_plans: 35
-  percent: 80
+  completed_plans: 36
+  percent: 82
 ---
 
 # Project State
@@ -27,10 +27,10 @@ See: `.planning/PROJECT.md` (updated 2026-07-15)
 
 ## Current Position
 
-Phase: 11 (rust-verification-and-evaluation-authority) — EXECUTING
+Phase: 11 (rust-verification-and-evaluation-authority) — VERIFYING
 Plan: 4 of 4
-Status: Ready to execute
-Last activity: 2026-07-17 — Phase 11 execution started
+Status: Phase complete — ready for verification
+Last activity: 2026-07-17 — Plan 11-04 complete; Phase 11 ready for verification
 
 ## Previous Phase 7 Hosted Baseline (superseded)
 
@@ -125,6 +125,9 @@ No package publication, tag, PR, merge, live Provider request, credential read, 
 - [Phase 11]: The immutable 175-case corpus is the sole lexical evaluation input; its stable IDs, fingerprint, count, and thresholds fail closed in Rust.
 - [Phase 11]: BM25 is authoritative candidate recall; deterministic semantic evaluation may rerank only the observed bounded lexical set and outsiders preserve BM25.
 - [Phase 11]: Retrieval degradation is fixture-only and model-free; stable reasons preserve BM25 without network, Provider, credentials, downloads, or model loads.
+- [Phase 11]: Package evaluation aliases are exact Rust compatibility-harness commands, and verify:agent composes coverage, Provider, then retrieval. — One shared aggregate prevents release-order drift and removes TypeScript evaluator authority.
+- [Phase 11]: CI requires coverage, Provider evaluation, and retrieval evaluation before every build, package, or evidence step. — A package smoke success cannot compensate for a failed Rust evaluator report.
+- [Phase 11]: Transitional TypeScript tests, static checks, build, and smoke remain allowed, but TypeScript evaluator commands and src/eval paths are denied. — Phase 11 cuts authority without deleting hash-pinned evidence reserved for Phase 14.
 
 ## Performance Metrics
 
@@ -137,9 +140,10 @@ No package publication, tag, PR, merge, live Provider request, credential read, 
 | Phase 11 P01 | 30min | 2 tasks | 9 files |
 | Phase 11 P02 | 45min | 2 tasks | 9 files |
 | Phase 11 P03 | 17min | 2 tasks | 9 files |
+| Phase 11 P04 | 26min | 1 task | 9 files |
 
 ## Session
 
-**Last session:** 2026-07-17T16:29:11.113Z
-**Stopped at:** Completed 11-03-PLAN.md
+**Last session:** 2026-07-17T17:00:13.765Z
+**Stopped at:** Completed 11-04-PLAN.md
 **Resume file:** None
