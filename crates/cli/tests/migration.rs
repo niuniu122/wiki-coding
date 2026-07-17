@@ -1,6 +1,7 @@
 use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 
+use minimax_cli::migration::MigrationReceiptTarget;
 use minimax_cli::{
     MigrationError, MigrationPlan, MigrationReceipt, apply_migration, build_migration_plan,
     inventory_migration, rollback_migration, verify_migration,
@@ -495,6 +496,85 @@ fn receipt_hash_is_required_and_forgery_is_detected() {
     .expect("write forged receipt");
     assert_eq!(verify_migration(&forged_path), Err(MigrationError::Receipt));
     assert!(receipt.receipt_hash.len() == 64);
+}
+
+#[test]
+fn recomputed_forged_receipt_cannot_claim_an_unowned_project_file() {
+    #[derive(serde::Serialize)]
+    #[serde(rename_all = "camelCase")]
+    struct ReceiptBody {
+        schema_version: u16,
+        migration_id: String,
+        plan_hash: String,
+        source_root: String,
+        target_root: String,
+        source_fingerprint: String,
+        created: Vec<MigrationReceiptTarget>,
+        reused: Vec<MigrationReceiptTarget>,
+    }
+
+    let project = tempfile::tempdir().expect("project");
+    let source = project.path().join(".mini-codex");
+    copy_fixture(&source);
+    let source_before = tree_hash(&source);
+    let plan = build_migration_plan(&source, project.path()).expect("plan");
+    let plan_path = write_plan(project.path(), &plan);
+    let mut receipt = apply_migration(&plan_path, &plan.confirmation()).expect("apply");
+    let receipt_path = project.path().join(format!(
+        ".minimax/migrations/v1/{}/receipt.json",
+        plan.migration_id
+    ));
+
+    let unowned_path = project.path().join("unowned-project-file.txt");
+    let unowned_bytes = b"receipt must not claim this project file";
+    std::fs::write(&unowned_path, unowned_bytes).expect("unowned file");
+    let mut digest = Sha256::new();
+    digest.update(unowned_bytes);
+    let unowned_sha256 = digest
+        .finalize()
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    receipt.created = vec![MigrationReceiptTarget {
+        relative_path: "unowned-project-file.txt".to_owned(),
+        sha256: unowned_sha256,
+        bytes: unowned_bytes.len() as u64,
+    }];
+    receipt.reused.clear();
+    let body = ReceiptBody {
+        schema_version: receipt.schema_version,
+        migration_id: receipt.migration_id.clone(),
+        plan_hash: receipt.plan_hash.clone(),
+        source_root: receipt.source_root.clone(),
+        target_root: receipt.target_root.clone(),
+        source_fingerprint: receipt.source_fingerprint.clone(),
+        created: receipt.created.clone(),
+        reused: receipt.reused.clone(),
+    };
+    receipt.receipt_hash = {
+        let mut digest = Sha256::new();
+        digest.update(serde_json::to_vec(&body).expect("receipt body"));
+        digest
+            .finalize()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect()
+    };
+    std::fs::write(
+        &receipt_path,
+        serde_json::to_vec_pretty(&receipt).expect("forged receipt"),
+    )
+    .expect("write forged receipt");
+
+    assert_eq!(
+        rollback_migration(&receipt_path, &receipt.confirmation()),
+        Err(MigrationError::Receipt)
+    );
+    assert_eq!(
+        std::fs::read(&unowned_path).expect("unowned file survives"),
+        unowned_bytes
+    );
+    assert_eq!(source_before, tree_hash(&source));
 }
 
 #[test]
