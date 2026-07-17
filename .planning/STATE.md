@@ -2,17 +2,19 @@
 gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: Rust Convergence
-current_phase_name: defining requirements
+current_phase: 10
+current_phase_name: rust-authority-and-source-boundaries
 status: executing
-last_updated: "2026-07-17T11:23:36.978Z"
+stopped_at: Completed 10-01-PLAN.md
+last_updated: "2026-07-17T12:03:37.942Z"
 last_activity: 2026-07-17
-last_activity_desc: Milestone v3.0 started
+last_activity_desc: Phase 10 execution started
 progress:
-  total_phases: 0
-  completed_phases: 0
-  total_plans: 0
-  completed_plans: 0
-  percent: 0
+  total_phases: 14
+  completed_phases: 9
+  total_plans: 43
+  completed_plans: 29
+  percent: 64
 ---
 
 # Project State
@@ -25,10 +27,10 @@ See: `.planning/PROJECT.md` (updated 2026-07-15)
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
+Phase: 10 (rust-authority-and-source-boundaries) — EXECUTING
+Plan: 2 of 3
 Status: Ready to execute
-Last activity: 2026-07-17 — Milestone v3.0 started
+Last activity: 2026-07-17 — Phase 10 execution started
 
 ## Previous Phase 7 Hosted Baseline (superseded)
 
@@ -102,3 +104,18 @@ No package publication, tag, PR, merge, live Provider request, credential read, 
 - [Phase 9]: External project, Skill, and MCP metadata lives under capabilities/; crates/tools remains the fixed internal adapter set. — Separates discovery metadata from executable authority.
 - [Phase 9]: BM25 is authoritative recall; verified embedding may rerank only the bounded lexical candidate union. — Preserves offline usefulness and prevents semantic expansion.
 - [Phase 9]: Discovery exposes ready, needs_install, or needs_authorization but never performs the next action. — Makes prerequisites understandable without granting install or execution authority.
+- [Phase 10]: Hash-pin every tracked TS/TSX path as inert transitional evidence until Phase 11 retirement. — Any addition or content edit must become an explicit source-authority review.
+- [Phase 10]: Keep the three diagnostic JavaScript fixtures in a separate lifecycle class outside executable authority. — Phase 11 must disposition them and Phase 14 must delete them and zero the class.
+- [Phase 10]: Exclude generated dist contents from source authority while validating committed sources and package executable links. — The offline gate must be independent of generated build outputs.
+
+## Performance Metrics
+
+| Phase | Plan | Duration | Notes |
+|-------|------|----------|-------|
+| Phase 10 P01 | 29min | 2 tasks | 5 files |
+
+## Session
+
+**Last session:** 2026-07-17T12:02:59.403Z
+**Stopped at:** Completed 10-01-PLAN.md
+**Resume file:** None

@@ -108,7 +108,7 @@
 ### Rust Authority
 
 - [ ] **RUST-01**: Rust is the only executable product implementation for CLI/TUI, Provider, sessions, tools, Vault/Wiki, retrieval, capability discovery, migration, and compatibility behavior.
-- [ ] **RUST-02**: JavaScript is confined to an explicit npm launcher/release allowlist and cannot import product-domain source, implement business behavior, download an unverified runtime, or fall back to TypeScript.
+- [x] **RUST-02**: JavaScript is confined to an explicit npm launcher/release allowlist and cannot import product-domain source, implement business behavior, download an unverified runtime, or fall back to TypeScript.
 - [ ] **RUST-03**: `.minimax` and Rust schemas are the only writable runtime authority; no legacy process can write `.mini-codex` state after cutover.
 
 ### Rust Verification Authority
@@ -218,7 +218,7 @@
 | CAPW-07 | Phase 9 | Complete |
 | CAPW-08 | Phase 9 | Complete |
 | RUST-01 | Phase 10 | Pending |
-| RUST-02 | Phase 10 | Pending |
+| RUST-02 | Phase 10 | Complete |
 | RUST-03 | Phase 10 | Pending |
 | RVE-01 | Phase 11 | Pending |
 | RVE-02 | Phase 11 | Pending |
