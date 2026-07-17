@@ -5,6 +5,7 @@
 
 pub mod architecture;
 pub mod baseline;
+pub mod coverage;
 pub mod manifest;
 pub mod report;
 pub mod source_authority;
@@ -21,6 +22,10 @@ pub use baseline::{
     BaselineError, validate_cutover_candidate, validate_cutover_evidence, validate_product_entry,
     validate_rust_command_surface, validate_rust_provider_profiles,
     validate_rust_retrieval_evidence, validate_rust_tool_evidence, validate_rust_vault_evidence,
+};
+pub use coverage::{
+    CoverageCategory, CoverageDisposition, CoverageError, CoverageEvidence, CoverageMatrix,
+    CoverageResponsibility, CoverageSource, load_coverage_matrix, validate_coverage_matrix,
 };
 pub use manifest::{
     BaselineStatus, CommandManifest, CompatManifests, ManifestError, ParityStatus,
