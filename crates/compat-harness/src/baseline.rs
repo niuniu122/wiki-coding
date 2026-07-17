@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::Path;
 use std::process::Command;
@@ -393,6 +393,7 @@ struct CommandDifferenceFixture {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct CommandDifference {
+    id: String,
     command: String,
     locked_outcome: String,
     rust_behavior: String,
@@ -412,7 +413,7 @@ pub fn validate_cutover_candidate(
     root: &Path,
     public_contract: &PublicContractManifest,
 ) -> Result<(), BaselineError> {
-    validate_command_behavior_evidence(root)?;
+    validate_command_behavior_evidence(root, public_contract)?;
     if public_contract
         .items
         .iter()
@@ -443,22 +444,45 @@ pub fn validate_cutover_candidate(
     Ok(())
 }
 
-fn validate_command_behavior_evidence(root: &Path) -> Result<(), BaselineError> {
+fn validate_command_behavior_evidence(
+    root: &Path,
+    public_contract: &PublicContractManifest,
+) -> Result<(), BaselineError> {
     let raw = std::fs::read_to_string(root.join("fixtures/compat/command-differences.v1.json"))
         .map_err(|_| BaselineError::CutoverEvidence)?;
     let fixture: CommandDifferenceFixture =
         serde_json::from_str(&raw).map_err(|_| BaselineError::CutoverEvidence)?;
     let expected = ["/api", "/interrupt", "/models", "/provider", "/retry"];
+    let expected_ids = BTreeSet::from([
+        "difference.command.api",
+        "difference.command.interrupt",
+        "difference.command.models",
+        "difference.command.provider",
+        "difference.command.retry",
+    ]);
     let mut actual = fixture
         .differences
         .iter()
         .map(|difference| difference.command.as_str())
         .collect::<Vec<_>>();
     actual.sort_unstable();
+    let actual_ids = fixture
+        .differences
+        .iter()
+        .map(|difference| difference.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let contract_links = public_contract
+        .items
+        .iter()
+        .filter_map(|item| item.approved_difference.as_deref())
+        .collect::<BTreeSet<_>>();
     if fixture.schema_version != 1
         || actual != expected
+        || actual_ids != expected_ids
+        || contract_links != expected_ids
         || fixture.differences.iter().any(|difference| {
-            difference.locked_outcome.trim().is_empty()
+            difference.id.trim().is_empty()
+                || difference.locked_outcome.trim().is_empty()
                 || difference.rust_behavior.len() < 24
                 || difference.reason.len() < 24
                 || difference.safety.len() < 24

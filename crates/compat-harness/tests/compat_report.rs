@@ -232,10 +232,10 @@ fn compat_report_rejects_matched_item_without_evidence() {
     let matched = report
         .entries
         .iter_mut()
-        .find(|item| item.status == ParityStatus::Matched)
+        .find(|item| item.rust_status == ParityStatus::Matched)
         .expect("matched item");
     let id = matched.id.clone();
-    matched.evidence.clear();
+    matched.rust_evidence.clear();
 
     assert_eq!(
         validate_report(&report, &manifests, &root),

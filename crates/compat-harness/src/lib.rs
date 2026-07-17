@@ -39,7 +39,10 @@ pub use provider_eval::{
     ProviderProtocolReport, provider_evaluation_authorizes_release, provider_report_json,
     run_provider_evaluation, verify_provider_evaluation,
 };
-pub use report::{CompatReport, ReportEntry, build_report, report_json, validate_report};
+pub use report::{
+    ApprovedDifference, CompatReport, ReportEntry, build_report, report_json,
+    validate_compatibility_source_boundary, validate_report, verify_fixture_compatibility,
+};
 pub use retrieval_eval::{
     CandidateBoundaryReport, CorpusReport, DegradationReport, DisabledPathReport, ProjectReport,
     RETRIEVAL_EVALUATION_GOLDEN, RETRIEVAL_EVALUATION_MANIFEST, RetrievalEvaluationError,

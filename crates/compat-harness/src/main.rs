@@ -4,16 +4,11 @@ use std::path::Path;
 use std::process::ExitCode;
 
 use minimax_compat_harness::{
-    build_report, load_cargo_architecture, load_compat_manifests, load_coverage_matrix,
-    load_source_authority, provider_evaluation_authorizes_release, provider_report_json,
-    report_json, repository_root, retrieval_report_json, run_provider_evaluation,
-    run_retrieval_evaluation, validate_architecture, validate_cli_tui_markdown_boundary,
-    validate_core_source_boundary, validate_coverage_matrix, validate_cutover_candidate,
-    validate_cutover_evidence, validate_migration_source_boundary, validate_product_entry,
-    validate_report, validate_rust_command_surface, validate_rust_provider_profiles,
-    validate_rust_retrieval_evidence, validate_rust_tool_evidence, validate_rust_vault_evidence,
-    validate_source_authority, validate_vault_source_boundary, verify_provider_evaluation,
-    verify_retrieval_evaluation,
+    build_report, load_compat_manifests, load_coverage_matrix, load_source_authority,
+    provider_evaluation_authorizes_release, provider_report_json, report_json, repository_root,
+    retrieval_report_json, run_provider_evaluation, run_retrieval_evaluation,
+    validate_coverage_matrix, validate_report, validate_source_authority,
+    verify_fixture_compatibility,
 };
 use minimax_protocol::{ProtocolErrorCode, ProviderProtocolKind, StreamEvent};
 use minimax_provider::{CompatibilityEvent, replay_fixture};
@@ -67,8 +62,8 @@ fn run(arguments: Vec<String>) -> Result<CommandResult, String> {
             if command == "report" && format_flag == "--format" && format == "json" =>
         {
             let manifests = load_compat_manifests(&root).map_err(|error| error.to_string())?;
-            let report = build_report(&manifests);
-            validate_report(&report, &root).map_err(|error| error.to_string())?;
+            let report = build_report(&manifests, &root).map_err(|error| error.to_string())?;
+            validate_report(&report, &manifests, &root).map_err(|error| error.to_string())?;
             report_json(&report)
                 .map(|output| CommandResult::passed(Some(output)))
                 .map_err(|error| error.to_string())
@@ -106,42 +101,8 @@ fn verify_repository(root: &Path, require_hosted_evidence: bool) -> Result<(), S
     let coverage = load_coverage_matrix(root).map_err(|error| error.to_string())?;
     validate_coverage_matrix(root, &coverage, &source_authority)
         .map_err(|error| error.to_string())?;
-    verify_provider_evaluation(root).map_err(|error| error.to_string())?;
-    verify_retrieval_evaluation(root).map_err(|error| error.to_string())?;
-    let first_manifests = load_compat_manifests(root).map_err(|error| error.to_string())?;
-    validate_rust_command_surface(&first_manifests.commands).map_err(|error| error.to_string())?;
-    validate_rust_tool_evidence(root, &first_manifests.public_contract)
-        .map_err(|error| error.to_string())?;
-    validate_rust_vault_evidence(root).map_err(|error| error.to_string())?;
-    validate_rust_retrieval_evidence(root).map_err(|error| error.to_string())?;
-    validate_rust_provider_profiles(&first_manifests.providers)
-        .map_err(|error| error.to_string())?;
-    validate_product_entry(root).map_err(|error| error.to_string())?;
-    if require_hosted_evidence {
-        validate_cutover_evidence(root, &first_manifests.public_contract)
-            .map_err(|error| error.to_string())?;
-    } else {
-        validate_cutover_candidate(root, &first_manifests.public_contract)
-            .map_err(|error| error.to_string())?;
-    }
+    verify_fixture_compatibility(root, require_hosted_evidence)?;
     verify_provider_fixtures(root)?;
-    let architecture = load_cargo_architecture(root).map_err(|error| error.to_string())?;
-    validate_architecture(&architecture).map_err(|error| error.to_string())?;
-    validate_core_source_boundary(root).map_err(|error| error.to_string())?;
-    validate_vault_source_boundary(root).map_err(|error| error.to_string())?;
-    validate_cli_tui_markdown_boundary(root).map_err(|error| error.to_string())?;
-    validate_migration_source_boundary(root).map_err(|error| error.to_string())?;
-
-    let first_report = build_report(&first_manifests);
-    validate_report(&first_report, root).map_err(|error| error.to_string())?;
-    let first_json = report_json(&first_report).map_err(|error| error.to_string())?;
-    let second_manifests = load_compat_manifests(root).map_err(|error| error.to_string())?;
-    let second_report = build_report(&second_manifests);
-    validate_report(&second_report, root).map_err(|error| error.to_string())?;
-    let second_json = report_json(&second_report).map_err(|error| error.to_string())?;
-    if first_json != second_json {
-        return Err("compatibility report is not deterministic".to_owned());
-    }
     Ok(())
 }
 
