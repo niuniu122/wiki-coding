@@ -5,15 +5,15 @@ milestone_name: Rust Convergence
 current_phase: 12
 current_phase_name: fixture-compatibility-and-rust-migration
 status: executing
-stopped_at: Completed 12-02-PLAN.md
-last_updated: "2026-07-17T21:50:36.895Z"
+stopped_at: Completed 12-03-PLAN.md
+last_updated: "2026-07-17T22:11:59.376Z"
 last_activity: 2026-07-17
 last_activity_desc: Phase 12 execution started
 progress:
   total_phases: 14
   completed_phases: 11
   total_plans: 48
-  completed_plans: 40
+  completed_plans: 41
   percent: 79
 ---
 
@@ -28,8 +28,8 @@ See: `.planning/PROJECT.md` (updated 2026-07-15)
 ## Current Position
 
 Phase: 12 (fixture-compatibility-and-rust-migration) — EXECUTING
-Plan: 1 of 4
-Status: Executing Phase 12
+Plan: 2 of 4
+Status: Ready to execute
 Last activity: 2026-07-17 — Phase 12 execution started
 
 ## Previous Phase 7 Hosted Baseline (superseded)
@@ -139,6 +139,7 @@ No package publication, tag, PR, merge, live Provider request, credential read, 
 - [Phase 12]: Exclude migration metadata from its own recursive fingerprint while binding every evidence row. — Prevents self-referential hashes and makes source or policy drift review-visible.
 - [Phase 12]: Compute fixture removal eligibility from two distinct ordered public releases after 3.0.0. — Prevents elapsed-time guesses duplicate evidence and premature fixture deletion.
 - [Phase 12]: Bind recovery and rollback ownership to exact Rust migration targets. — Forged operation manifests or recomputed receipts must not claim arbitrary project files.
+- [Phase 12]: Derive compatibility authority from lib.rs/main.rs and exact recursive source-inventory equality; classify legacy references only when they flow through executable read, include, process, or shell contexts. — This prevents omitted or orphaned Rust modules from escaping the gate without turning inert historical fixture and authority literals into false positives.
 
 ## Performance Metrics
 
@@ -156,9 +157,10 @@ No package publication, tag, PR, merge, live Provider request, credential read, 
 | Phase 11 P06 | 42min | 2 tasks | 10 files |
 | Phase 12 P01 | 22min | 2 tasks | 14 files |
 | Phase 12 P02 | 23min | 2 tasks | 8 files |
+| Phase 12 P03 | 29min | 2 tasks | 2 files |
 
 ## Session
 
-**Last session:** 2026-07-17T21:11:16.932Z
-**Stopped at:** Completed 12-02-PLAN.md
+**Last session:** 2026-07-17T22:11:27.203Z
+**Stopped at:** Completed 12-03-PLAN.md
 **Resume file:** None
