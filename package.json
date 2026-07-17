@@ -27,7 +27,7 @@
     "test:rust": "cargo test --workspace --locked",
     "test:rust:candidate": "cargo test --workspace --locked -- --skip hosted_cutover_evidence_matches_current_product",
     "eval:retrieval": "tsx src/eval/capability-retrieval-report.ts",
-    "eval:provider": "tsx src/eval/provider-conformance.ts",
+    "eval:provider": "cargo run -p minimax-compat-harness --locked -- provider-eval --format json",
     "verify:agent": "npm run eval:retrieval && npm run eval:provider",
     "verify:rust-contracts": "cargo run -p minimax-compat-harness --locked -- verify",
     "verify:rust-contracts:candidate": "cargo run -p minimax-compat-harness --locked -- verify-candidate",

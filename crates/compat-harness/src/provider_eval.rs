@@ -274,6 +274,21 @@ pub fn verify_provider_evaluation(
     Ok(report)
 }
 
+#[must_use]
+pub fn provider_evaluation_authorizes_release(
+    report: &ProviderEvaluationReport,
+    package_smoke_succeeded: bool,
+) -> bool {
+    report.passed
+        && package_smoke_succeeded
+        && report.totals.failed == 0
+        && report.totals.passed == report.totals.checks
+        && report
+            .protocols
+            .iter()
+            .all(|protocol| protocol.passed && protocol.checks.iter().all(|check| check.passed))
+}
+
 fn load_manifest(root: &Path) -> Result<ProviderEvaluationManifest, ProviderEvaluationError> {
     let raw = fs::read_to_string(root.join(PROVIDER_EVALUATION_MANIFEST))
         .map_err(|_| ProviderEvaluationError::ManifestRead)?;

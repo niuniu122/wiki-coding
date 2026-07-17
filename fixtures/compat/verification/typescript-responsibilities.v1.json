@@ -16,9 +16,13 @@
             {
               "path": "crates/retrieval/tests/lexical.rs",
               "test": "existing_typescript_175_case_fixture_meets_capability_gates"
+            },
+            {
+              "path": "crates/compat-harness/tests/provider_eval.rs",
+              "test": "immutable_retrieval_corpus_preserves_transitional_175_case_contract"
             }
           ],
-          "rationale": "Historical src/eval/capability-retrieval-report.ts retrieval responsibility is owned by deterministic Rust exact/BM25/candidate-isolation evidence.",
+          "rationale": "Historical src/eval/capability-retrieval-report.ts retrieval responsibility is transferred to fixtures/compat/retrieval/capability-cases-expanded.v1.json with deterministic Rust equivalence and exact/BM25 evidence.",
           "id": "ts-src-eval-capability-retrieval-report-ts"
         }
       ]
@@ -35,11 +39,11 @@
           "disposition": "rust_covered",
           "evidence": [
             {
-              "path": "crates/provider/tests/provider_fixtures.rs",
-              "test": "both_provider_protocols_match_every_valid_compatibility_fixture"
+              "path": "crates/compat-harness/tests/provider_eval.rs",
+              "test": "provider_evaluation_matches_committed_golden_and_is_repeatable"
             }
           ],
-          "rationale": "Historical src/eval/provider-conformance.ts Provider responsibility is owned by offline Rust protocol fixtures and safe stream normalization tests.",
+          "rationale": "Historical src/eval/provider-conformance.ts Provider evaluation authority is replaced by the strict offline Rust evaluator, fingerprinted fixtures, and committed golden report.",
           "id": "ts-src-eval-provider-conformance-ts"
         }
       ]
@@ -1364,11 +1368,11 @@
           "disposition": "rust_covered",
           "evidence": [
             {
-              "path": "crates/provider/tests/provider_fixtures.rs",
-              "test": "both_provider_protocols_match_every_valid_compatibility_fixture"
+              "path": "crates/compat-harness/tests/provider_eval.rs",
+              "test": "provider_evaluation_matches_committed_golden_and_is_repeatable"
             }
           ],
-          "rationale": "Historical test/provider-conformance.test.ts Provider responsibility is owned by offline Rust protocol fixtures and safe stream normalization tests.",
+          "rationale": "Historical test/provider-conformance.test.ts Provider evaluation responsibility is replaced by the strict offline Rust evaluator and byte-stable golden report.",
           "id": "ts-test-provider-conformance-test-ts"
         }
       ]
@@ -1716,11 +1720,11 @@
           "disposition": "rust_covered",
           "evidence": [
             {
-              "path": "crates/provider/tests/provider_fixtures.rs",
-              "test": "both_provider_protocols_match_every_valid_compatibility_fixture"
+              "path": "crates/compat-harness/tests/provider_eval.rs",
+              "test": "provider_evaluation_matches_committed_golden_and_is_repeatable"
             }
           ],
-          "rationale": "Historical test/support/provider-conformance-suite.ts Provider responsibility is owned by offline Rust protocol fixtures and safe stream normalization tests.",
+          "rationale": "Historical test/support/provider-conformance-suite.ts Provider conformance authority is replaced by the strict offline Rust evaluator, production replay, and byte-stable golden report.",
           "id": "ts-test-support-provider-conformance-suite-ts"
         }
       ]

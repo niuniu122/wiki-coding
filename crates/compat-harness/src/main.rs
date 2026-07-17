@@ -5,12 +5,14 @@ use std::process::ExitCode;
 
 use minimax_compat_harness::{
     build_report, load_cargo_architecture, load_compat_manifests, load_coverage_matrix,
-    load_source_authority, report_json, repository_root, validate_architecture,
+    load_source_authority, provider_evaluation_authorizes_release, provider_report_json,
+    report_json, repository_root, run_provider_evaluation, validate_architecture,
     validate_cli_tui_markdown_boundary, validate_core_source_boundary, validate_coverage_matrix,
     validate_cutover_candidate, validate_cutover_evidence, validate_migration_source_boundary,
     validate_product_entry, validate_report, validate_rust_command_surface,
     validate_rust_provider_profiles, validate_rust_retrieval_evidence, validate_rust_tool_evidence,
     validate_rust_vault_evidence, validate_source_authority, validate_vault_source_boundary,
+    verify_provider_evaluation,
 };
 use minimax_protocol::{ProtocolErrorCode, ProviderProtocolKind, StreamEvent};
 use minimax_provider::{CompatibilityEvent, replay_fixture};
@@ -18,11 +20,16 @@ use serde::Deserialize;
 
 fn main() -> ExitCode {
     match run(env::args().skip(1).collect()) {
-        Ok(Some(output)) => {
-            print!("{output}");
-            ExitCode::SUCCESS
+        Ok(result) => {
+            if let Some(output) = result.output {
+                print!("{output}");
+            }
+            if result.passed {
+                ExitCode::SUCCESS
+            } else {
+                ExitCode::FAILURE
+            }
         }
-        Ok(None) => ExitCode::SUCCESS,
         Err(error) => {
             eprintln!("compat verification failed: {error}");
             ExitCode::FAILURE
@@ -30,16 +37,30 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(arguments: Vec<String>) -> Result<Option<String>, String> {
+struct CommandResult {
+    output: Option<String>,
+    passed: bool,
+}
+
+impl CommandResult {
+    const fn passed(output: Option<String>) -> Self {
+        Self {
+            output,
+            passed: true,
+        }
+    }
+}
+
+fn run(arguments: Vec<String>) -> Result<CommandResult, String> {
     let root = repository_root();
     match arguments.as_slice() {
         [command] if command == "verify" => {
             verify_repository(&root, true)?;
-            Ok(None)
+            Ok(CommandResult::passed(None))
         }
         [command] if command == "verify-candidate" => {
             verify_repository(&root, false)?;
-            Ok(None)
+            Ok(CommandResult::passed(None))
         }
         [command, format_flag, format]
             if command == "report" && format_flag == "--format" && format == "json" =>
@@ -48,12 +69,22 @@ fn run(arguments: Vec<String>) -> Result<Option<String>, String> {
             let report = build_report(&manifests);
             validate_report(&report, &root).map_err(|error| error.to_string())?;
             report_json(&report)
-                .map(Some)
+                .map(|output| CommandResult::passed(Some(output)))
                 .map_err(|error| error.to_string())
         }
+        [command, format_flag, format]
+            if command == "provider-eval" && format_flag == "--format" && format == "json" =>
+        {
+            let report = run_provider_evaluation(&root).map_err(|error| error.to_string())?;
+            let output = provider_report_json(&report).map_err(|error| error.to_string())?;
+            let passed = provider_evaluation_authorizes_release(&report, true);
+            Ok(CommandResult {
+                output: Some(output),
+                passed,
+            })
+        }
         _ => Err(
-            "usage: minimax-compat-harness <verify|verify-candidate|report --format json>"
-                .to_owned(),
+            "usage: minimax-compat-harness <verify|verify-candidate|report --format json|provider-eval --format json>".to_owned(),
         ),
     }
 }
@@ -64,6 +95,7 @@ fn verify_repository(root: &Path, require_hosted_evidence: bool) -> Result<(), S
     let coverage = load_coverage_matrix(root).map_err(|error| error.to_string())?;
     validate_coverage_matrix(root, &coverage, &source_authority)
         .map_err(|error| error.to_string())?;
+    verify_provider_evaluation(root).map_err(|error| error.to_string())?;
     let first_manifests = load_compat_manifests(root).map_err(|error| error.to_string())?;
     validate_rust_command_surface(&first_manifests.commands).map_err(|error| error.to_string())?;
     validate_rust_tool_evidence(root, &first_manifests.baseline)

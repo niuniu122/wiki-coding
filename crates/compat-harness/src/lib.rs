@@ -35,8 +35,8 @@ pub use manifest::{
 pub use provider_eval::{
     PROVIDER_EVALUATION_GOLDEN, PROVIDER_EVALUATION_MANIFEST, ProviderCheckReport,
     ProviderEvaluationError, ProviderEvaluationReport, ProviderEvaluationTotals,
-    ProviderProtocolReport, provider_report_json, run_provider_evaluation,
-    verify_provider_evaluation,
+    ProviderProtocolReport, provider_evaluation_authorizes_release, provider_report_json,
+    run_provider_evaluation, verify_provider_evaluation,
 };
 pub use report::{CompatReport, ReportEntry, build_report, report_json, validate_report};
 pub use source_authority::{

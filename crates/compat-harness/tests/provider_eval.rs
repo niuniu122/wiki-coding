@@ -252,7 +252,7 @@ fn immutable_retrieval_corpus_preserves_transitional_175_case_contract() {
             "top1": 0.85,
             "mrr": 0.9,
             "noMatchPrecision": 0.95,
-            "idValidity": 1.0
+            "idValidity": 1
         })
     );
 
