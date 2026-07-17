@@ -45,7 +45,7 @@
     {
       "id": "milestone-verification",
       "path": "scripts/release/verify-milestone-flow.mjs",
-      "sha256": "a8930c1d2e44497b46d79b821de6c7c705d54b465148f41d140f7f0334a332b2",
+      "sha256": "265cc1026d94484b369ce153c70d30225a5d2cdb13609a401f63a252b3695e99",
       "purpose": "milestoneVerification",
       "forbiddenCapabilities": ["fallback", "migration", "provider", "retrieval", "runtimeDownload", "session", "tool", "vault", "wiki"]
     },
