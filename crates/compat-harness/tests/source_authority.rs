@@ -193,6 +193,10 @@ impl SyntheticRepository {
     }
 
     fn replace_typescript_sources(&self, sources: &[(&str, &str)]) {
+        let legacy = self.root.join("src/legacy.ts");
+        if legacy.exists() {
+            fs::remove_file(&legacy).expect("synthetic legacy source should be replaced");
+        }
         for (path, contents) in sources {
             write_file(&self.root, path, contents);
         }
@@ -231,6 +235,16 @@ fn write_file(root: &Path, path: &str, contents: &str) {
         fs::create_dir_all(parent).expect("synthetic file parent should be created");
     }
     fs::write(absolute, contents).expect("synthetic file should be written");
+}
+
+#[cfg(windows)]
+fn create_directory_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
+    std::os::windows::fs::symlink_dir(target, link)
+}
+
+#[cfg(unix)]
+fn create_directory_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
+    std::os::unix::fs::symlink(target, link)
 }
 
 fn write_manifest(root: &Path, manifest: &Value) {
@@ -458,22 +472,29 @@ fn evaluator_package_scripts_are_rust_only_and_ordered_before_release_builds() {
 #[test]
 fn discovered_test_graph_rejects_transitive_typescript_evaluators() {
     let root = repository_root();
-    let current_test_hash = sha256_file(&root.join("test/test-discovery.test.ts"));
+    let edited_paths = [
+        "test/run-tests.ts",
+        "test/test-discovery.ts",
+        "test/test-discovery.test.ts",
+        "test/provider-conformance.test.ts",
+        "test/capability-retrieval-report.test.ts",
+    ];
     let current_manifest = mutated_manifest(&root, |manifest| {
-        let entry = manifest["transitionalTypeScript"]["entries"]
+        let entries = manifest["transitionalTypeScript"]["entries"]
             .as_array_mut()
-            .expect("TypeScript authority entries should be an array")
-            .iter_mut()
-            .find(|entry| entry["path"] == "test/test-discovery.test.ts")
-            .expect("test discovery regression source should be classified");
-        entry["sha256"] = Value::String(current_test_hash);
+            .expect("TypeScript authority entries should be an array");
+        for path in edited_paths {
+            let entry = entries
+                .iter_mut()
+                .find(|entry| entry["path"] == path)
+                .expect("every edited TypeScript test source should be classified");
+            entry["sha256"] = Value::String(sha256_file(&root.join(path)));
+        }
     });
     let manifest = parse_source_authority(&root, &current_manifest)
-        .expect("the RED test hash adjustment should preserve source authority shape");
-    validate_source_authority(&root, &manifest).expect_err(
-        "discovered test/provider-conformance.test.ts and \
-         test/capability-retrieval-report.test.ts reach forbidden src/eval TypeScript evaluators",
-    );
+        .expect("the in-flight hash adjustment should preserve source authority shape");
+    validate_source_authority(&root, &manifest)
+        .expect("the committed discovered-test graph must not reach a TypeScript evaluator");
 
     let cases: &[(&str, &[(&str, &str)])] = &[
         (
@@ -482,6 +503,19 @@ fn discovered_test_graph_rejects_transitive_typescript_evaluators() {
                 (
                     "test/direct.test.ts",
                     "import '../src/eval/provider-conformance.js';\n",
+                ),
+                (
+                    "src/eval/provider-conformance.ts",
+                    "export const evaluator = true;\n",
+                ),
+            ],
+        ),
+        (
+            "TypeScript import-equals require",
+            &[
+                (
+                    "test/import-equals.test.ts",
+                    "import provider = require('../src/eval/provider-conformance.js');\n",
                 ),
                 (
                     "src/eval/provider-conformance.ts",
@@ -556,6 +590,72 @@ fn discovered_test_graph_rejects_transitive_typescript_evaluators() {
             "{label}: expected evaluator reachability rejection, got {error:?}"
         );
     }
+
+    let safe_cycle = SyntheticRepository::new();
+    safe_cycle.replace_typescript_sources(&[
+        (
+            "test/cycle.test.ts",
+            "import './cycle-a.js';\nimport './regex-fixture.js';\n",
+        ),
+        ("test/cycle-a.ts", "export * from './cycle-b.js';\n"),
+        ("test/cycle-b.ts", "import './cycle-a.js';\n"),
+        (
+            "test/regex-fixture.ts",
+            r#"const importLike = /import\s+['\"]\.\.\/src\/eval/g;
+export {importLike};
+"#,
+        ),
+    ]);
+    let safe_cycle_manifest = safe_cycle.load();
+    validate_source_authority(&safe_cycle.root, &safe_cycle_manifest)
+        .expect("a cycle without evaluator reachability should terminate and pass");
+
+    for (label, sources, expected) in [
+        (
+            "unresolved",
+            &[("test/unresolved.test.ts", "import './missing.js';\n")][..],
+            "unresolved local TypeScript dependency",
+        ),
+        (
+            "ambiguous",
+            &[
+                ("test/ambiguous.test.ts", "import './helper.js';\n"),
+                ("test/helper.ts", "export {};\n"),
+                ("test/helper.tsx", "export {};\n"),
+            ][..],
+            "ambiguous local TypeScript dependency",
+        ),
+        (
+            "unsafe",
+            &[("test/unsafe.test.ts", "import '../../outside.js';\n")][..],
+            "unsafe local TypeScript dependency escapes repository",
+        ),
+    ] {
+        let repository = SyntheticRepository::new();
+        repository.replace_typescript_sources(sources);
+        let manifest = repository.load();
+        let error = validate_source_authority(&repository.root, &manifest)
+            .expect_err("unsafe dependency graph variants must fail closed");
+        assert!(
+            error.to_string().contains(expected),
+            "{label}: expected {expected:?}, got {error:?}"
+        );
+    }
+
+    let symlinked = SyntheticRepository::new();
+    symlinked
+        .replace_typescript_sources(&[("test/symlink.test.ts", "import './linked/helper.js';\n")]);
+    let external = symlinked.root.with_extension("external");
+    fs::create_dir_all(&external).expect("external symlink target should be created");
+    fs::write(external.join("helper.ts"), "export {};\n")
+        .expect("external symlink target source should be written");
+    create_directory_symlink(&external, &symlinked.root.join("test/linked"))
+        .expect("test dependency directory symlink should be created");
+    let manifest = symlinked.load();
+    let error = validate_source_authority(&symlinked.root, &manifest)
+        .expect_err("a symlinked TypeScript test dependency must fail closed");
+    assert!(error.to_string().contains("dependency path is symlinked"));
+    fs::remove_dir_all(external).expect("external symlink target should be removed");
 }
 
 #[test]

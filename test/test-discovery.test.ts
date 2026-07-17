@@ -1,69 +1,17 @@
 import assert from "node:assert/strict";
 import {spawn} from "node:child_process";
 import {once} from "node:events";
-import {access, mkdtemp, mkdir, readFile, rm, symlink, writeFile} from "node:fs/promises";
+import {mkdtemp, mkdir, readFile, rm, symlink, writeFile} from "node:fs/promises";
 import {tmpdir} from "node:os";
-import {dirname, extname, join, relative, resolve} from "node:path";
+import {dirname, join, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
 import test from "node:test";
 import {
   discoverTestFiles,
   importTestFiles,
-  testModuleUrl
+  testModuleUrl,
+  validateDiscoveredTestGraph
 } from "./test-discovery.js";
-
-const LOCAL_DEPENDENCY_PATTERN = /(?:\b(?:import|export)\s+(?:[^"'`]*?\s+from\s+)?|\bimport\s*\(\s*)["']([^"']+)["']/g;
-
-async function auditEvaluatorReachability(
-  repositoryRoot: string,
-  testFiles: readonly string[]
-): Promise<string[]> {
-  const root = resolve(repositoryRoot);
-  const evaluatorRoot = resolve(root, "src/eval");
-  const queue = testFiles.map((path) => ({path: resolve(path), trace: [resolve(path)]}));
-  const visited = new Set<string>();
-  const violations = new Set<string>();
-
-  while (queue.length > 0) {
-    const current = queue.shift();
-    if (!current || visited.has(current.path)) continue;
-    visited.add(current.path);
-    const source = await readFile(current.path, "utf8");
-    for (const match of source.matchAll(LOCAL_DEPENDENCY_PATTERN)) {
-      const specifier = match[1];
-      if (!specifier?.startsWith(".")) continue;
-      const dependency = await resolveTestDependency(current.path, specifier);
-      if (!dependency) continue;
-      const trace = [...current.trace, dependency];
-      if (dependency === evaluatorRoot || dependency.startsWith(`${evaluatorRoot}\\`) || dependency.startsWith(`${evaluatorRoot}/`)) {
-        violations.add(trace.map((path) => relative(root, path).replaceAll("\\", "/")).join(" -> "));
-      } else {
-        queue.push({path: dependency, trace});
-      }
-    }
-  }
-  return [...violations].sort();
-}
-
-async function resolveTestDependency(importer: string, specifier: string): Promise<string | undefined> {
-  const normalized = specifier.replaceAll("\\", "/");
-  const raw = resolve(dirname(importer), normalized);
-  const extension = extname(raw);
-  const candidates = extension === ".js" || extension === ".jsx"
-    ? [raw.slice(0, -extension.length) + ".ts", raw.slice(0, -extension.length) + ".tsx"]
-    : extension
-      ? [raw]
-      : [raw + ".ts", raw + ".tsx", join(raw, "index.ts"), join(raw, "index.tsx")];
-  for (const candidate of candidates) {
-    try {
-      await access(candidate);
-      return resolve(candidate);
-    } catch {
-      // Continue through the deterministic candidate list.
-    }
-  }
-  return undefined;
-}
 
 test("discovery recursively returns only test modules in stable absolute-path order", async () => {
   const root = await mkdtemp(join(tmpdir(), "minimax-test-discovery-"));
@@ -194,55 +142,116 @@ test("the project runner delegates to discovery instead of maintaining a test re
   const runner = await readFile(runnerPath, "utf8");
 
   assert.match(runner, /discoverTestFiles/);
+  assert.match(runner, /validateDiscoveredTestGraph/);
   assert.match(runner, /importTestFiles/);
   assert.doesNotMatch(runner, /\.test\.(?:js|jsx|ts|tsx)/);
+  assert.ok(
+    runner.indexOf("await validateDiscoveredTestGraph") < runner.indexOf("await importTestFiles"),
+    "the graph must be validated before the first discovered module import"
+  );
 });
 
 test("discovered tests cannot reach TypeScript evaluators directly or transitively", async () => {
   const testRoot = dirname(fileURLToPath(import.meta.url));
   const repositoryRoot = resolve(testRoot, "..");
-  const evaluatorTests = (await discoverTestFiles(testRoot)).filter((path) =>
-    path.endsWith("provider-conformance.test.ts") ||
-    path.endsWith("capability-retrieval-report.test.ts")
-  );
-  const violations = await auditEvaluatorReachability(repositoryRoot, evaluatorTests);
-
-  assert.deepEqual(
-    violations,
-    [],
-    `discovered TypeScript evaluator reachability must be empty:\n${violations.join("\n")}`
-  );
+  await validateDiscoveredTestGraph(repositoryRoot, await discoverTestFiles(testRoot));
 });
 
 test("dependency audit normalizes indirect re-export dynamic and platform paths", async () => {
-  const root = await mkdtemp(join(tmpdir(), "minimax-test-dependency-red-"));
-  try {
-    const files = new Map<string, string>([
+  const variants: readonly (readonly [string, ReadonlyMap<string, string>])[] = [
+    ["direct", new Map([
       ["test/direct.test.ts", "import '../src/eval/provider-conformance.js';\n"],
+      ["src/eval/provider-conformance.ts", "export const providerReport = true;\n"]
+    ])],
+    ["indirect normalized path", new Map([
       ["test/indirect.test.ts", "import './support/./bridge.js';\n"],
       ["test/support/bridge.ts", "import '../../src/other/../eval/capability-retrieval-report.js';\n"],
+      ["src/eval/capability-retrieval-report.ts", "export const retrievalReport = true;\n"]
+    ])],
+    ["re-export", new Map([
       ["test/reexport.test.ts", "export {providerReport} from '../src/eval/provider-conformance.js';\n"],
+      ["src/eval/provider-conformance.ts", "export const providerReport = true;\n"]
+    ])],
+    ["literal dynamic import through cycle", new Map([
       ["test/dynamic.test.ts", "await import('./cycle-a.js');\n"],
       ["test/cycle-a.ts", "export * from './cycle-b.js';\n"],
       ["test/cycle-b.ts", "import './cycle-a.js';\nawait import('../src/eval/provider-conformance.js');\n"],
-      ["test/windows.test.ts", String.raw`import '..\src\eval\provider-conformance.js';` + "\n"],
-      ["src/eval/provider-conformance.ts", "export const providerReport = true;\n"],
-      ["src/eval/capability-retrieval-report.ts", "export const retrievalReport = true;\n"]
-    ]);
-    await Promise.all([...files].map(async ([path, source]) => {
-      const absolute = join(root, path);
-      await mkdir(dirname(absolute), {recursive: true});
-      await writeFile(absolute, source, "utf8");
-    }));
+      ["src/eval/provider-conformance.ts", "export const providerReport = true;\n"]
+    ])],
+    ["Windows separator and JS-to-TSX mapping", new Map([
+      ["test/windows.test.ts", "import '..\\\\src\\\\eval\\\\provider-conformance.js';\n"],
+      ["src/eval/provider-conformance.tsx", "export const providerReport = true;\n"]
+    ])]
+  ];
+  for (const [label, files] of variants) {
+    await withSyntheticGraph(files, async (root, discovered) => {
+      await assert.rejects(
+        () => validateDiscoveredTestGraph(root, discovered),
+        new RegExp(`TypeScript evaluator.*${label === "indirect normalized path" ? "indirect" : ""}`, "is")
+      );
+    });
+  }
+});
 
-    const discovered = await discoverTestFiles(join(root, "test"));
-    const violations = await auditEvaluatorReachability(root, discovered);
-    assert.deepEqual(
-      violations,
-      [],
-      `normalized direct and transitive evaluator paths must fail closed:\n${violations.join("\n")}`
+test("dependency audit handles cycles and fails closed on unsafe ambiguous unresolved and symlinked paths", async () => {
+  await withSyntheticGraph(new Map([
+    ["test/cycle.test.ts", "import './cycle-a.js';\nimport './regex-fixture.js';\n"],
+    ["test/cycle-a.ts", "export * from './cycle-b.js';\n"],
+    ["test/cycle-b.ts", "import './cycle-a.js';\n"],
+    ["test/regex-fixture.ts", String.raw`const importLike = /import\s+['"]\.\.\/src\/eval/g;` + "\nexport {importLike};\n"]
+  ]), async (root, discovered) => validateDiscoveredTestGraph(root, discovered));
+
+  for (const [label, files, expected] of [
+    ["unresolved", new Map([["test/unresolved.test.ts", "import './missing.js';\n"]]), /Unresolved local TypeScript dependency/],
+    ["ambiguous", new Map([
+      ["test/ambiguous.test.ts", "import './helper.js';\n"],
+      ["test/helper.ts", "export {};\n"],
+      ["test/helper.tsx", "export {};\n"]
+    ]), /Ambiguous local TypeScript dependency/],
+    ["unsafe", new Map([["test/unsafe.test.ts", "import '../../outside.js';\n"]]), /Unsafe local dependency.*escapes repository/]
+  ] as const) {
+    await withSyntheticGraph(files, async (root, discovered) => {
+      await assert.rejects(() => validateDiscoveredTestGraph(root, discovered), expected, label);
+    });
+  }
+
+  const root = await mkdtemp(join(tmpdir(), "minimax-test-dependency-symlink-"));
+  const external = await mkdtemp(join(tmpdir(), "minimax-test-dependency-external-"));
+  try {
+    await writeSyntheticGraph(root, new Map([
+      ["test/symlink.test.ts", "import './linked/helper.js';\n"]
+    ]));
+    await writeSyntheticGraph(external, new Map([
+      ["helper.ts", "export {};\n"]
+    ]));
+    await symlink(external, join(root, "test/linked"), process.platform === "win32" ? "junction" : "dir");
+    await assert.rejects(
+      () => validateDiscoveredTestGraph(root, [join(root, "test/symlink.test.ts")]),
+      /dependency path is symlinked/
     );
   } finally {
     await rm(root, {recursive: true, force: true});
+    await rm(external, {recursive: true, force: true});
   }
 });
+
+async function withSyntheticGraph(
+  files: ReadonlyMap<string, string>,
+  operation: (root: string, discovered: string[]) => Promise<unknown>
+): Promise<void> {
+  const root = await mkdtemp(join(tmpdir(), "minimax-test-dependency-"));
+  try {
+    await writeSyntheticGraph(root, files);
+    await operation(root, await discoverTestFiles(join(root, "test")));
+  } finally {
+    await rm(root, {recursive: true, force: true});
+  }
+}
+
+async function writeSyntheticGraph(root: string, files: ReadonlyMap<string, string>): Promise<void> {
+  await Promise.all([...files].map(async ([path, source]) => {
+    const absolute = join(root, path);
+    await mkdir(dirname(absolute), {recursive: true});
+    await writeFile(absolute, source, "utf8");
+  }));
+}

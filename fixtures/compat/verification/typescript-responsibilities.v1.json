@@ -510,7 +510,7 @@
       "id": "typescript-test-harness-retirement",
       "evidenceClass": "reviewed_retirement",
       "category": "test_harness",
-      "claim": "TypeScript test discovery and kernel helper plumbing are transitional harness mechanics rather than shipped public or safety outcomes.",
+      "claim": "The TypeScript kernel fixture-construction helper is transitional harness plumbing rather than a shipped public or safety outcome.",
       "evidence": [
         {
           "path": "crates/compat-harness/tests/source_authority.rs",
@@ -518,22 +518,33 @@
         }
       ],
       "responsibilityIds": [
-        "ts-test-kernel-test-utils-ts",
-        "ts-test-run-tests-ts",
-        "ts-test-test-discovery-test-ts",
-        "ts-test-test-discovery-ts"
+        "ts-test-kernel-test-utils-ts"
       ],
       "retirementReview": {
         "sources": [
-          "test/kernel-test-utils.ts",
-          "test/run-tests.ts",
-          "test/test-discovery.test.ts",
-          "test/test-discovery.ts"
+          "test/kernel-test-utils.ts"
         ],
         "status": "internal",
-        "outcome": "TypeScript-only test loading, discovery, and fixture-construction mechanics have no installed command or product-state outcome.",
-        "reason": "Rust tests and evaluators own verification; these files remain transitional source evidence until their Phase 14 removal."
+        "outcome": "The TypeScript-only kernel fixture-construction helper has no installed command or product-state outcome.",
+        "reason": "Rust tests own kernel verification; this helper remains transitional source evidence until its Phase 14 removal."
       }
+    },
+    {
+      "id": "typescript-test-graph-authority",
+      "evidenceClass": "fixture_contract",
+      "category": "test_harness",
+      "claim": "The discovered TypeScript test dependency graph is validated before imports and an independent Rust gate fails closed on evaluator reachability or unsafe local resolution.",
+      "evidence": [
+        {
+          "path": "crates/compat-harness/tests/source_authority.rs",
+          "test": "discovered_test_graph_rejects_transitive_typescript_evaluators"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-run-tests-ts",
+        "ts-test-test-discovery-test-ts",
+        "ts-test-test-discovery-ts"
+      ]
     },
     {
       "id": "native-launcher-package-smoke",
@@ -1402,7 +1413,7 @@
     },
     {
       "sourcePath": "test/capability-retrieval-report.test.ts",
-      "sourceSha256": "6febb8548f5870aae647af8e844a49511f9f292ea900910d5f92f6af56c55d23",
+      "sourceSha256": "a6199cc46832d3f566150b61af6a31646ea4d049fbb4abf6ccfe116aa955d793",
       "responsibilities": [
         {
           "category": "retrieval",
@@ -1416,7 +1427,7 @@
               "test": "retrieval_evaluation_matches_committed_golden_and_is_repeatable"
             }
           ],
-          "rationale": "The Rust retrieval evaluation proves report generation is deterministic and matches the committed golden metrics.",
+          "rationale": "This TypeScript test is static, hash-pinned evidence only; the Rust retrieval evaluator and committed golden report own executable retrieval evaluation.",
           "id": "ts-test-capability-retrieval-report-test-ts"
         }
       ]
@@ -2239,7 +2250,7 @@
     },
     {
       "sourcePath": "test/provider-conformance.test.ts",
-      "sourceSha256": "6c0b1aa042150e453f9f0e5e7af390df03421985bb8219c3ee8387e3f4d13737",
+      "sourceSha256": "8253d31468ae6a89c05d4614030cd89cb14b42dbfed7b8774725fe3ed83b737a",
       "responsibilities": [
         {
           "category": "provider",
@@ -2253,7 +2264,7 @@
               "test": "provider_evaluation_matches_committed_golden_and_is_repeatable"
             }
           ],
-          "rationale": "Historical test/provider-conformance.test.ts responsibility is replaced by `provider-eval --format json`, the exact Rust evaluator test, and fixtures/compat/evaluations/provider-report.expected.json.",
+          "rationale": "This TypeScript test is static, hash-pinned evidence only; `provider-eval --format json`, the exact Rust evaluator test, and the committed golden report own executable Provider evaluation.",
           "id": "ts-test-provider-conformance-test-ts"
         }
       ]
@@ -2364,19 +2375,21 @@
     },
     {
       "sourcePath": "test/run-tests.ts",
-      "sourceSha256": "a03076f05963a3342b8556b3eeb7ec7ee6f93117681596215f3cf6595da17131",
+      "sourceSha256": "2c1eecd526d79fc08c48c8e01b6f4d30ca7b556a0d5ec50bfb6ce8ab04e5eaed",
       "responsibilities": [
         {
           "category": "test_harness",
-          "contractRefs": [],
-          "disposition": "retired",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
           "evidence": [
             {
               "path": "crates/compat-harness/tests/source_authority.rs",
-              "test": "repository_source_inventory"
+              "test": "discovered_test_graph_rejects_transitive_typescript_evaluators"
             }
           ],
-          "rationale": "Dormant TypeScript-only internal responsibility test/run-tests.ts has no shipped Rust/public outcome; the historical source remains hash-pinned until Phase 14.",
+          "rationale": "The transitional runner validates the complete discovered dependency graph before import, while the independent Rust authority test fails closed on evaluator reachability and unsafe local resolution.",
           "id": "ts-test-run-tests-ts"
         }
       ]
@@ -2614,38 +2627,42 @@
     },
     {
       "sourcePath": "test/test-discovery.test.ts",
-      "sourceSha256": "60d520e563c3593b044c772c1a5b3bff59a52033b9d80601d8e79471d3276f4c",
+      "sourceSha256": "3c4f62c6742895ac00e404760443c99c8e8f345109124d0146aa8e5a65ab3d64",
       "responsibilities": [
         {
           "category": "test_harness",
-          "contractRefs": [],
-          "disposition": "retired",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
           "evidence": [
             {
               "path": "crates/compat-harness/tests/source_authority.rs",
-              "test": "repository_source_inventory"
+              "test": "discovered_test_graph_rejects_transitive_typescript_evaluators"
             }
           ],
-          "rationale": "Dormant TypeScript-only internal responsibility test/test-discovery.test.ts has no shipped Rust/public outcome; the historical source remains hash-pinned until Phase 14.",
+          "rationale": "Static TypeScript fixtures exercise direct, transitive, re-export, dynamic, normalized, cyclic, regex-literal, and fail-closed graph cases; the independent Rust authority test owns the committed gate.",
           "id": "ts-test-test-discovery-test-ts"
         }
       ]
     },
     {
       "sourcePath": "test/test-discovery.ts",
-      "sourceSha256": "48e12dc6bd7f2b4d3b86b8b3a5ff8a17284689828798440dda7614bca6b6729a",
+      "sourceSha256": "e9569eedbe549e337ba11607183d14cb57c8249dab1620646e945358362979b4",
       "responsibilities": [
         {
           "category": "test_harness",
-          "contractRefs": [],
-          "disposition": "retired",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
           "evidence": [
             {
               "path": "crates/compat-harness/tests/source_authority.rs",
-              "test": "repository_source_inventory"
+              "test": "discovered_test_graph_rejects_transitive_typescript_evaluators"
             }
           ],
-          "rationale": "Dormant TypeScript-only internal responsibility test/test-discovery.ts has no shipped Rust/public outcome; the historical source remains hash-pinned until Phase 14.",
+          "rationale": "The transitional TypeScript graph validator resolves every discovered test dependency before import, while the independent Rust authority test enforces the same fail-closed boundary.",
           "id": "ts-test-test-discovery-ts"
         }
       ]
