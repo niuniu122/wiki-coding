@@ -19,6 +19,7 @@ A non-programmer can describe a goal and safely use one local, recoverable CLI t
 - Three typed exact/BM25 indexes preserve kind isolation; optional verified embedding can rerank only their bounded lexical candidate union.
 - Read-only workspace search reports `ready`, `needs_install`, or `needs_authorization` with source facts and a safe next action.
 - Discovery and prompt augmentation cannot download, install, authorize, start, or execute a discovered capability.
+- Phase 10 establishes Rust as the sole executable product and writable runtime authority: npm `dev`, `start`, and the supported bin resolve only to Rust, `.minimax` is the only writable state root, and reviewed JavaScript is limited to distribution orchestration.
 
 ### Active
 
@@ -42,7 +43,7 @@ A non-programmer can describe a goal and safely use one local, recoverable CLI t
 
 ## Context
 
-The v1 Rust rewrite, Phase 8 subprocess hardening, and Phase 9 capability workspace are implemented. Rust is already the default product entry, but the repository still contains a live TypeScript implementation, TypeScript tests/evaluations, a legacy CLI entry, and release/compatibility gates that require `dist/cli.js`. That duplicate authority is now the primary reliability risk. v3 removes the live TypeScript product after equivalent Rust verification exists, while retaining a minimal npm launcher/package layer and source-preserving Rust migration support.
+The v1 Rust rewrite, Phase 8 subprocess hardening, Phase 9 capability workspace, and Phase 10 executable/source authority boundary are implemented. Rust is now the only product entry and writable runtime authority; the repository still retains hash-pinned TypeScript source, tests/evaluations, and build dependencies as transitional verification material. That remaining verification and packaging duplication is the primary reliability risk. v3 removes it only after equivalent Rust verification exists, while retaining a minimal npm launcher/package layer and source-preserving Rust migration support.
 
 ## Constraints
 
@@ -111,4 +112,4 @@ This document evolves at phase transitions and milestone boundaries.
 3. Update context with shipped behavior and evaluation evidence.
 
 ---
-*Last updated: 2026-07-17 when starting the v3.0 Rust Convergence milestone*
+*Last updated: 2026-07-17 after Phase 10 established Rust executable and state authority*
