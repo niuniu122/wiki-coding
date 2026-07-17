@@ -4,17 +4,17 @@ milestone: v3.0
 milestone_name: Rust Convergence
 current_phase: 12
 current_phase_name: fixture-compatibility-and-rust-migration
-status: executing
-stopped_at: Completed 12-01-PLAN.md
-last_updated: "2026-07-17T20:35:13.947Z"
+status: verifying
+stopped_at: Completed 12-02-PLAN.md
+last_updated: "2026-07-17T21:11:16.944Z"
 last_activity: 2026-07-17
 last_activity_desc: Phase 12 execution started
 progress:
   total_phases: 14
-  completed_phases: 11
+  completed_phases: 12
   total_plans: 46
-  completed_plans: 39
-  percent: 79
+  completed_plans: 40
+  percent: 86
 ---
 
 # Project State
@@ -29,7 +29,7 @@ See: `.planning/PROJECT.md` (updated 2026-07-15)
 
 Phase: 12 (fixture-compatibility-and-rust-migration) — EXECUTING
 Plan: 2 of 2
-Status: Ready to execute
+Status: Phase complete — ready for verification
 Last activity: 2026-07-17 — Phase 12 execution started
 
 ## Previous Phase 7 Hosted Baseline (superseded)
@@ -136,6 +136,9 @@ No package publication, tag, PR, merge, live Provider request, credential read, 
 - [Phase 12]: Use immutable contract.* IDs as the fixture-owned public compatibility surface — Separates public product contracts from legacy TypeScript or Rust implementation identities.
 - [Phase 12]: Require approved command differences to match explicit fixture IDs, commands, and outcomes — Prevents unknown or loosely matched migration differences from passing verification.
 - [Phase 12]: Run candidate compatibility verification through Rust-only fixture consumers — Allows hermetic verification without top-level TypeScript source, tests, dist artifacts, or Node execution.
+- [Phase 12]: Exclude migration metadata from its own recursive fingerprint while binding every evidence row. — Prevents self-referential hashes and makes source or policy drift review-visible.
+- [Phase 12]: Compute fixture removal eligibility from two distinct ordered public releases after 3.0.0. — Prevents elapsed-time guesses duplicate evidence and premature fixture deletion.
+- [Phase 12]: Bind recovery and rollback ownership to exact Rust migration targets. — Forged operation manifests or recomputed receipts must not claim arbitrary project files.
 
 ## Performance Metrics
 
@@ -152,9 +155,10 @@ No package publication, tag, PR, merge, live Provider request, credential read, 
 | Phase 11 P05 | 65min | 2 tasks | 7 files |
 | Phase 11 P06 | 42min | 2 tasks | 10 files |
 | Phase 12 P01 | 22min | 2 tasks | 14 files |
+| Phase 12 P02 | 23min | 2 tasks | 8 files |
 
 ## Session
 
-**Last session:** 2026-07-17T20:35:13.937Z
-**Stopped at:** Completed 12-01-PLAN.md
+**Last session:** 2026-07-17T21:11:16.932Z
+**Stopped at:** Completed 12-02-PLAN.md
 **Resume file:** None

@@ -120,7 +120,7 @@
 ### Compatibility and Migration
 
 - [x] **RCMP-01**: The compatibility harness evaluates the current Rust product against immutable public-contract fixtures and explicit differences without building or executing a TypeScript runtime.
-- [ ] **RCMP-02**: TypeScript-era migration inventory, dry-run, apply, verify, idempotency, collision, interruption recovery, and narrow rollback remain source-preserving and release-gated for at least two public releases after v3.0.
+- [x] **RCMP-02**: TypeScript-era migration inventory, dry-run, apply, verify, idempotency, collision, interruption recovery, and narrow rollback remain source-preserving and release-gated for at least two public releases after v3.0.
 
 ### npm and Native Release
 
@@ -224,7 +224,7 @@
 | RVE-02 | Phase 11 | Complete |
 | RVE-03 | Phase 11 | Complete |
 | RCMP-01 | Phase 12 | Complete |
-| RCMP-02 | Phase 12 | Pending |
+| RCMP-02 | Phase 12 | Complete |
 | RNPM-01 | Phase 13 | Pending |
 | RNPM-02 | Phase 13 | Pending |
 | RNPM-03 | Phase 13 | Pending |
