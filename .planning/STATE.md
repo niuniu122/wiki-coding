@@ -4,17 +4,17 @@ milestone: v1.0
 milestone_name: Rust rewrite
 current_phase: 8
 current_phase_name: Codex-style subprocess sandbox hardening
-status: in_progress
-stopped_at: Local implementation and audits committed; hosted Ubuntu canary and native matrix require fresh push authorization
-last_updated: "2026-07-17T10:43:53+08:00"
+status: complete
+stopped_at: Phase 8 and the v1.0 Rust rewrite milestone completed with fresh candidate and strict hosted evidence
+last_updated: "2026-07-17T12:10:00+08:00"
 last_activity: 2026-07-17
-last_activity_desc: Completed local sandbox implementation, audit, and release checks; waiting for hosted Linux/native evidence
+last_activity_desc: Completed Phase 8 after candidate and strict Windows/Linux sandbox, release, and milestone gates passed
 progress:
   total_phases: 8
-  completed_phases: 7
+  completed_phases: 8
   total_plans: 25
-  completed_plans: 23
-  percent: 92
+  completed_plans: 25
+  percent: 100
 ---
 
 # Project State
@@ -27,16 +27,16 @@ See: `.planning/PROJECT.md` (updated 2026-07-15)
 
 ## Current Position
 
-Phase 7 remains complete. Phase 8 reopens the milestone to replace advisory subprocess safety with a real enforced/fail-closed boundary.
+The v1.0 milestone is complete. Phase 8 replaced advisory subprocess safety with an enforced/fail-closed Linux boundary and truthful unsupported-platform behavior.
 
-- Requirements: 49/52 complete; SBOX-02, SBOX-06, and SBOX-07 await hosted proof
+- Requirements: 52/52 complete
 - Cross-phase integrations: 38/38
 - End-to-end flows: 7/7
-- Plans: 23/25
-- Phase 8 plans: 1/3
+- Plans: 25/25
+- Phase 8 plans: 3/3
 - Final audit blockers: 0
 
-## Previous Phase 7 Hosted Baseline (invalidated by Phase 8 product changes)
+## Previous Phase 7 Hosted Baseline (superseded)
 
 - Local TypeScript suite: 438 passed.
 - Rust workspace tests and doc tests: passed.
@@ -46,14 +46,13 @@ Phase 7 remains complete. Phase 8 reopens the milestone to replace advisory subp
 - Hosted tree: `54b780d09d1a461495120b9987869a073eec5ecb`.
 - Product fingerprint: `ff805ee8d73168b968e0b5834b2e7582bf9cc598b4cb3f35835c004aec577172` across 402 product files.
 
-## Current Phase 8 Local Evidence
+## Final Phase 8 Evidence
 
-- Rust format and all-target workspace Clippy with warnings denied: passed.
-- Core/tools/CLI tests and doc tests: passed.
-- TypeScript: 439/439 passed; retrieval and Provider evaluations passed offline.
-- Linux x86_64 sandbox/adversarial targets compile cleanly with Clippy warnings denied.
-- Development release verification: 3,217,017-byte base archive, 19.289 ms cold-start p95, 4,796,416-byte maximum idle RSS, no Provider calls/credential reads/model downloads.
-- Full workspace and milestone-flow gates correctly reject the now-stale Phase 7 hosted fingerprint. A new Ubuntu Bubblewrap/seccomp canary plus Windows MSVC/Linux GNU matrix is required before Phase 8 closes.
+- Local Rust formatting, TypeScript checks, 440 tests, build, and fingerprint comparison passed.
+- Hosted candidate run `29553147648` passed on Windows job `87799771241` and Ubuntu job `87799771311` and produced fingerprint `12e41e7384a4474e8e1ed53ccb8942fd7992a6b7b0585a1ab537406b9c74cce4` across 406 product files.
+- Hosted strict push run `29553650069` passed on Windows job `87801243529` and Ubuntu job `87801243532` without candidate mode.
+- Ubuntu executed the real Bubblewrap namespace preflight and malicious transitive Cargo canary; strict Rust, release, retrieval, Provider, package, and milestone-flow gates passed.
+- Windows and Linux archives, binaries, environment facts, and performance measurements are bound to the refreshed machine-readable evidence.
 
 ## Locked Decisions
 
@@ -89,4 +88,4 @@ No package publication, tag, PR, merge, live Provider request, credential read, 
 - Phase 8 added: Codex-style subprocess sandbox hardening.
 - Approval and sandboxing are independent axes: confirm maps to restricted execution, while process-scoped full access explicitly disables the subprocess sandbox.
 - Confirm-mode process execution fails closed on platforms or installations without a proven backend; no partial Windows imitation is presented as safe.
-- Local Phase 8 code, docs, CI contracts, regressions, and development packaging pass. The exact Linux Bubblewrap/seccomp canary and refreshed Windows/Linux product-fingerprint evidence remain mandatory hosted gates.
+- Phase 8 code, docs, CI contracts, adversarial canaries, native release artifacts, and refreshed product-fingerprint evidence all pass. The milestone has no remaining mandatory gate.

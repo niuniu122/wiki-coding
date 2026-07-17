@@ -1,7 +1,7 @@
 ---
 phase: MMX-08-codex-style-subprocess-sandbox-hardening
 reviewed: 2026-07-17
-status: pending_hosted_linux_canary
+status: passed
 severity_gate: high
 ---
 
@@ -9,14 +9,14 @@ severity_gate: high
 
 ## Result
 
-The implementation is locally complete and has no unresolved high/critical finding in static review or Windows/cross-target tests. Final security acceptance is intentionally withheld until the exact committed tree executes the malicious build-script canary on hosted Ubuntu with Bubblewrap and seccomp active.
+The implementation has no unresolved high/critical finding. Static review, Windows/native regressions, the exact hosted Ubuntu Bubblewrap/seccomp malicious build-script canary, and the subsequent ordinary strict push matrix all passed.
 
 ## Threat Model
 
 | Attacker action | Asset at risk | Enforced control | Evidence |
 |---|---|---|---|
 | Transitive Cargo/npm code reads host files | user files and credentials | empty mount namespace, minimal read-only runtime view, private HOME/tmp | host-marker canary plus mount-plan tests |
-| Child opens TCP/IPv6/Unix sockets | local services, internet, control sockets | required network namespace plus seccomp socket/socketpair denial | TCP and workspace Unix-socket canaries |
+| Child opens TCP/IPv6/Unix network sockets | local services, internet, control sockets | required network namespace plus seccomp network-socket denial; local socketpair remains available for safe child launch bookkeeping | TCP and workspace Unix-socket canaries |
 | Child uses io_uring or x32 ABI to bypass syscall comparison | network boundary | io_uring_setup denial and blanket x32 syscall denial | cBPF instruction test |
 | Child reads Linux kernel keyrings | host secrets | add_key/request_key/keyctl denial | cBPF instruction test |
 | Project replaces sandbox executable | all host assets | canonical `/usr/bin/bwrap` or `/bin/bwrap`; project-local backend rejected | discovery contract |
@@ -40,14 +40,15 @@ The implementation is locally complete and has no unresolved high/critical findi
 3. Linux enforcement depends on kernel user namespaces, seccomp, and Bubblewrap. Unsupported or blocked environments reject process execution instead of weakening policy.
 4. Native Windows and macOS sandboxes remain deferred; confirm-mode process tools are unavailable there.
 
-## Release Blocker
+## Hosted Acceptance
 
-Run the exact committed tree on hosted Ubuntu and require the malicious canary to prove:
+Candidate run `29553147648` and strict push run `29553650069` executed the exact Linux boundary on hosted Ubuntu and proved:
 
 - host marker unreadable;
 - host TCP listener unreachable;
 - workspace Unix-domain listener unreachable;
 - workspace result writable;
-- the same fixture reaches all three host targets only under explicit full access.
+- the same fixture reaches all three host targets only under explicit full access;
+- strict Rust, release, and milestone-flow checks accept the refreshed product fingerprint.
 
-Until that run passes and hosted cutover evidence is refreshed, SBOX-02, SBOX-06, and SBOX-07 remain unclosed and Phase 8 must stay in progress.
+SBOX-02, SBOX-06, and SBOX-07 are closed. The remaining risks are explicit design boundaries rather than release blockers.
