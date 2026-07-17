@@ -1175,7 +1175,7 @@ mod sandbox_tests {
     #[test]
     fn network_seccomp_filter_denies_sockets_keyrings_and_io_uring_on_x86_64() {
         let bytes = network_seccomp_program();
-        assert_eq!(bytes.len(), 19 * 8);
+        assert_eq!(bytes.len(), 17 * 8);
         let instructions = bytes
             .chunks_exact(8)
             .map(|instruction| {
@@ -1196,10 +1196,10 @@ mod sandbox_tests {
             .iter()
             .skip(6)
             .step_by(2)
-            .take(6)
+            .take(5)
             .map(|instruction| instruction.3)
             .collect::<Vec<_>>();
-        assert_eq!(denied, [41, 53, 248, 249, 250, 425]);
+        assert_eq!(denied, [41, 248, 249, 250, 425]);
         assert_eq!(instructions[4].3, 0x4000_0000, "x32 ABI must be denied");
         assert_eq!(
             instructions.last().map(|instruction| instruction.3),

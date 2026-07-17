@@ -19,7 +19,7 @@ The sandbox intentionally does not pass Bubblewrap's `--disable-userns`. Bubblew
 
 Rust toolchains and non-credential Cargo cache directories may be mounted read-only so offline checks still work. Cargo credential/config files are not mounted. Child environments remain allowlisted and never receive Provider API credentials.
 
-The runtime executes the complete Bubblewrap-plus-seccomp probe first. The syscall filter denies new sockets (including Unix-domain sockets), socket pairs, io_uring setup, and kernel keyring access; the separate network namespace remains a second layer. Missing Bubblewrap returns `sandbox_unavailable`; a backend that cannot create the namespaces or install the filter returns `sandbox_denied`. Neither error retries the target without a sandbox.
+The runtime executes the complete Bubblewrap-plus-seccomp probe first. The syscall filter denies new sockets (including Unix-domain sockets), io_uring setup, and kernel keyring access; the separate network namespace remains a second layer. Local `socketpair` remains available because Rust's standard process launcher uses it to report child `exec` failures, and a newly created pair cannot connect to a host endpoint. Missing Bubblewrap returns `sandbox_unavailable`; a backend that cannot create the namespaces or install the filter returns `sandbox_denied`. Neither error retries the target without a sandbox.
 
 ### Ubuntu 24.04 and AppArmor
 

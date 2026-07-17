@@ -447,7 +447,9 @@ pub(crate) fn network_seccomp_program() -> Vec<u8> {
     const SECCOMP_RETURN_ALLOW: u32 = 0x7fff_0000;
     const ERRNO_OPERATION_NOT_PERMITTED: u32 = 1;
     const X32_SYSCALL_BIT: u32 = 0x4000_0000;
-    const DENIED_X86_64_SYSCALLS: [u32; 6] = [41, 53, 248, 249, 250, 425];
+    // Keep socketpair available: Rust uses it as the child-exec error channel, and a fresh
+    // local pair cannot connect to a host endpoint. The socket syscall remains denied.
+    const DENIED_X86_64_SYSCALLS: [u32; 5] = [41, 248, 249, 250, 425];
 
     let mut instructions = vec![
         ClassicBpfInstruction::statement(BPF_LOAD_WORD_ABSOLUTE, SECCOMP_DATA_ARCH_OFFSET),
