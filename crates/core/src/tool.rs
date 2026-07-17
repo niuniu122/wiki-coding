@@ -12,6 +12,22 @@ pub enum PermissionMode {
     FullAccess,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ToolSandboxPolicy {
+    Restricted,
+    Disabled,
+}
+
+impl PermissionMode {
+    #[must_use]
+    pub const fn sandbox_policy(self) -> ToolSandboxPolicy {
+        match self {
+            Self::Confirm => ToolSandboxPolicy::Restricted,
+            Self::FullAccess => ToolSandboxPolicy::Disabled,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DecisionSnapshot {
     pub decision: ToolDecision,
@@ -56,7 +72,10 @@ pub enum InvocationEffect {
     RequestApproval(ToolInvocation),
     PersistDecision(ToolDecision),
     PersistStarted(ToolCallId),
-    Execute(ToolInvocation),
+    Execute {
+        invocation: ToolInvocation,
+        sandbox_policy: ToolSandboxPolicy,
+    },
     PersistTerminal(ToolResult),
     PublishTerminal(ToolResult),
 }
@@ -138,10 +157,14 @@ impl InvocationMachine {
             ) => self.record_decision(decision, permission_mode),
             (InvocationState::Approved { snapshot }, InvocationInput::Start) => {
                 let snapshot = snapshot.clone();
+                let sandbox_policy = snapshot.permission_mode.sandbox_policy();
                 self.state = InvocationState::Started { snapshot };
                 Ok(vec![
                     InvocationEffect::PersistStarted(self.invocation.call.call_id.clone()),
-                    InvocationEffect::Execute(self.invocation.clone()),
+                    InvocationEffect::Execute {
+                        invocation: self.invocation.clone(),
+                        sandbox_policy,
+                    },
                 ])
             }
             (InvocationState::Started { .. }, InvocationInput::Complete { result }) => {

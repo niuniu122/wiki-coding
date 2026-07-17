@@ -11,6 +11,7 @@ mod path;
 mod policy;
 mod process;
 mod read;
+mod sandbox;
 mod write;
 
 pub use error::{ToolDenial, ToolDenialCode};
@@ -21,7 +22,8 @@ pub use path::{ResolvedToolPath, WorkspaceRoot};
 pub use policy::{NeverCancelled, Preflight, ToolRegistry, ToolSpec};
 pub use process::{
     BoundedProcess, ChildEvent, ChildEventFuture, ChildStopFuture, DirectChild, ProcessCompletion,
-    ProcessLauncher, ProcessLimits, ProcessRequest, RunDiagnosticTool, TokioProcessLauncher,
+    ProcessLaunchError, ProcessLauncher, ProcessLimits, ProcessRequest, RunDiagnosticTool,
+    SandboxCapability, SandboxCapabilityState, SandboxLaunchReceipt, TokioProcessLauncher,
 };
 pub use read::{ListDirectoryTool, ReadFileTool};
 pub use write::{ApplyPatchTool, WriteFileTool};

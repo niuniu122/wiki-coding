@@ -301,6 +301,7 @@ impl ToolPort for ToolUnavailable {
     fn execute<'a>(
         &'a self,
         invocation: &'a ToolInvocation,
+        _sandbox_policy: minimax_core::ToolSandboxPolicy,
         _cancellation: &'a dyn CancellationPort,
     ) -> minimax_core::ToolFuture<'a> {
         Box::pin(async move {
@@ -1000,7 +1001,10 @@ impl<P: ProviderPort> RuntimeDriver<P> {
                             now_unix_ms: self.ids.now_unix_ms(),
                         })?;
                 }
-                InvocationEffect::Execute(invocation) => {
+                InvocationEffect::Execute {
+                    invocation,
+                    sandbox_policy,
+                } => {
                     if cancellation.is_cancelled() {
                         pending.extend(
                             machine
@@ -1010,7 +1014,10 @@ impl<P: ProviderPort> RuntimeDriver<P> {
                         continue;
                     }
                     let cancellation = DriverCancellation(cancellation);
-                    let result = self.tools.execute(&invocation, &cancellation).await;
+                    let result = self
+                        .tools
+                        .execute(&invocation, sandbox_policy, &cancellation)
+                        .await;
                     let result = normalize_execution_result(&invocation, result);
                     let result_bytes = serde_json::to_vec(&result)
                         .map_err(|_| DriverError::Runtime(RuntimeErrorCode::Recovery))?

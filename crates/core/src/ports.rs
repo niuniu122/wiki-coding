@@ -3,6 +3,7 @@ use std::pin::Pin;
 
 use minimax_protocol::{KnowledgePatch, ToolDecision, ToolInvocation, ToolResult, TransactionId};
 
+use crate::ToolSandboxPolicy;
 use crate::knowledge::{WikiGenerationError, WikiGenerationOutput, WikiGenerationRequest};
 
 pub type ApprovalFuture<'a> = Pin<Box<dyn Future<Output = ToolDecision> + Send + 'a>>;
@@ -33,6 +34,7 @@ pub trait ToolPort: Send + Sync {
     fn execute<'a>(
         &'a self,
         invocation: &'a ToolInvocation,
+        sandbox_policy: ToolSandboxPolicy,
         cancellation: &'a dyn CancellationPort,
     ) -> ToolFuture<'a>;
 }

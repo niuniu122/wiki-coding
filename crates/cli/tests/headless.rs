@@ -6,13 +6,15 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use clap::Parser as _;
 use minimax_cli::{
     Cli, CliCommand, DriverError, DriverIds, ExitClass, JsonlWriter, MigrateAction, PermissionArg,
-    ProviderPort, RuntimeDriver, exit_for_error, exit_for_report, inspect,
+    ProviderPort, RuntimeDriver, exit_for_error, exit_for_report, inspect, permission_status,
 };
+use minimax_core::PermissionMode;
 use minimax_protocol::{
     ModelBinding, ModelId, ProviderId, ProviderProtocolKind, RuntimeErrorCode, RuntimeFailure,
     StreamEvent, TerminalOutcome, Usage, parse_runtime_event_v1,
 };
 use minimax_provider::{ConfigLayer, CredentialError, CredentialSource, resolve_config};
+use minimax_tools::SandboxCapability;
 use minimax_tui::{EventRenderer, TerminalHooks};
 use minimax_vault::RuntimeStoreError;
 use tokio_util::sync::CancellationToken;
@@ -193,6 +195,8 @@ fn doctor_is_actionable_and_never_serializes_secret_material() {
     assert!(report.healthy);
     assert!(json.contains("runtime_journal"));
     assert!(json.contains("runtime_index"));
+    assert!(json.contains("subprocess_sandbox"));
+    assert!(json.contains("confirm-mode process"));
     assert!(json.contains("credentialSource\":\"environment"));
     assert!(!json.contains("DO_NOT_PERSIST_SECRET"));
     assert!(!json.contains("api.minimax.io"));
@@ -204,6 +208,24 @@ fn doctor_is_actionable_and_never_serializes_secret_material() {
         true,
     );
     assert!(!missing.healthy);
+}
+
+#[test]
+fn permission_status_separates_approval_from_subprocess_isolation() {
+    let project = tempfile::tempdir().expect("temporary project");
+    let capability = SandboxCapability::detect(project.path());
+    let confirm = permission_status(PermissionMode::Confirm, capability);
+    assert!(confirm.contains("approval: required"));
+    assert!(confirm.contains(&format!(
+        "subprocess sandbox: {}",
+        capability.state().as_str()
+    )));
+    assert!(confirm.contains(capability.backend()));
+
+    let full_access = permission_status(PermissionMode::FullAccess, capability);
+    assert!(full_access.contains("approval: skipped"));
+    assert!(full_access.contains("subprocess sandbox: disabled-by-full-access"));
+    assert!(full_access.contains("trusted projects only"));
 }
 
 #[test]

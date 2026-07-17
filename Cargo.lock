@@ -977,6 +977,7 @@ version = "0.1.0"
 dependencies = [
  "minimax-core",
  "minimax-protocol",
+ "rustix",
  "serde",
  "serde_json",
  "sha2",

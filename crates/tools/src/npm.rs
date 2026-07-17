@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 use std::fs::File;
 use std::io::Read as _;
 
-use minimax_core::CancellationPort;
+use minimax_core::{CancellationPort, ToolSandboxPolicy};
 use minimax_protocol::{ToolInvocation, ToolResult};
 use serde::Deserialize;
 use serde_json::Value;
@@ -37,12 +37,28 @@ impl NpmDiagnosticTool {
         invocation: &ToolInvocation,
         cancellation: &dyn CancellationPort,
     ) -> ToolResult {
+        self.execute_with_policy(
+            workspace,
+            invocation,
+            ToolSandboxPolicy::Restricted,
+            cancellation,
+        )
+        .await
+    }
+
+    pub async fn execute_with_policy(
+        &self,
+        workspace: &WorkspaceRoot,
+        invocation: &ToolInvocation,
+        sandbox_policy: ToolSandboxPolicy,
+        cancellation: &dyn CancellationPort,
+    ) -> ToolResult {
         let request = match prepare_npm(workspace, invocation, cancellation) {
             Ok(request) => request,
             Err(error) => return error.into_result(invocation),
         };
         self.process
-            .run(&request, cancellation)
+            .run_with_policy(&request, sandbox_policy, cancellation)
             .await
             .into_tool_result(invocation)
     }

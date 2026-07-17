@@ -1,7 +1,9 @@
 use std::path::Path;
 
+use minimax_core::PermissionMode;
 use minimax_protocol::RuntimeErrorCode;
 use minimax_provider::{ConfigSource, CredentialError, CredentialSource, ResolvedConfig};
+use minimax_tools::{SandboxCapability, SandboxCapabilityState};
 use minimax_vault::{RuntimeStore, RuntimeStoreError};
 use serde::Serialize;
 
@@ -31,6 +33,22 @@ pub struct DoctorReport {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub credential_source: Option<CredentialSource>,
     pub checks: Vec<DoctorCheck>,
+}
+
+#[must_use]
+pub fn permission_status(mode: PermissionMode, capability: SandboxCapability) -> String {
+    match mode {
+        PermissionMode::Confirm => format!(
+            "permission mode: confirm | approval: required | subprocess sandbox: {} ({}) | {}",
+            capability.state().as_str(),
+            capability.backend(),
+            capability.detail()
+        ),
+        PermissionMode::FullAccess => format!(
+            "permission mode: full-access | approval: skipped | subprocess sandbox: {} | trusted projects only; workspace, secret, command, size, timeout, and cancellation gates remain enforced",
+            SandboxCapabilityState::DisabledByFullAccess.as_str()
+        ),
+    }
 }
 
 #[must_use]
@@ -113,6 +131,18 @@ pub fn inspect(
             "the project root does not exist or is not a directory",
         ));
     }
+
+    let sandbox = SandboxCapability::detect(project_root);
+    checks.push(match sandbox.state() {
+        SandboxCapabilityState::Enforced => pass("subprocess_sandbox", sandbox.detail()),
+        SandboxCapabilityState::Unavailable | SandboxCapabilityState::Unsupported => {
+            warn("subprocess_sandbox", sandbox.detail())
+        }
+        SandboxCapabilityState::DisabledByFullAccess => warn(
+            "subprocess_sandbox",
+            "full-access disables subprocess isolation for this process",
+        ),
+    });
 
     checks.push(if terminal_capable {
         pass(

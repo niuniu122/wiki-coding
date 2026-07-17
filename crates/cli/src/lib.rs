@@ -10,7 +10,7 @@ pub mod migration;
 pub mod wiki;
 
 pub use binding::{ResolvedProjectVault, resolve_project_vault};
-pub use doctor::{CheckStatus, DoctorCheck, DoctorReport, inspect};
+pub use doctor::{CheckStatus, DoctorCheck, DoctorReport, inspect, permission_status};
 pub use driver::{
     DriverError, DriverIds, HeadlessApprovalPort, HttpProviderPort, InteractiveApprovalPort,
     ProviderPort, RunReport, RuntimeDriver,

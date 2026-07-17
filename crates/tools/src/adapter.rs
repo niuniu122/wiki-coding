@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use minimax_core::{CancellationPort, ToolFuture, ToolPort};
+use minimax_core::{CancellationPort, ToolFuture, ToolPort, ToolSandboxPolicy};
 use minimax_protocol::{ToolDefinition, ToolInvocation, ToolResult, ToolValidationError};
 
 use crate::{
@@ -38,6 +38,7 @@ impl BuiltinToolPort {
     async fn dispatch(
         &self,
         invocation: &ToolInvocation,
+        sandbox_policy: ToolSandboxPolicy,
         cancellation: &dyn CancellationPort,
     ) -> ToolResult {
         match invocation.call.name.as_str() {
@@ -49,22 +50,22 @@ impl BuiltinToolPort {
             "write_file" => WriteFileTool::execute(&self.workspace, invocation, cancellation),
             "run_diagnostic" => {
                 RunDiagnosticTool::new(self.process.clone())
-                    .execute(&self.workspace, invocation, cancellation)
+                    .execute_with_policy(&self.workspace, invocation, sandbox_policy, cancellation)
                     .await
             }
             "git_status" => {
                 GitStatusTool::new(self.process.clone())
-                    .execute(&self.workspace, invocation, cancellation)
+                    .execute_with_policy(&self.workspace, invocation, sandbox_policy, cancellation)
                     .await
             }
             "git_diff" => {
                 GitDiffTool::new(self.process.clone())
-                    .execute(&self.workspace, invocation, cancellation)
+                    .execute_with_policy(&self.workspace, invocation, sandbox_policy, cancellation)
                     .await
             }
             "npm_diagnostic" => {
                 NpmDiagnosticTool::new(self.process.clone())
-                    .execute(&self.workspace, invocation, cancellation)
+                    .execute_with_policy(&self.workspace, invocation, sandbox_policy, cancellation)
                     .await
             }
             _ => unreachable!("common preflight rejects tools outside the V1 registry"),
@@ -86,8 +87,9 @@ impl ToolPort for BuiltinToolPort {
     fn execute<'a>(
         &'a self,
         invocation: &'a ToolInvocation,
+        sandbox_policy: ToolSandboxPolicy,
         cancellation: &'a dyn CancellationPort,
     ) -> ToolFuture<'a> {
-        Box::pin(self.dispatch(invocation, cancellation))
+        Box::pin(self.dispatch(invocation, sandbox_policy, cancellation))
     }
 }

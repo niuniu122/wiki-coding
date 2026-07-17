@@ -1,4 +1,4 @@
-use minimax_core::CancellationPort;
+use minimax_core::{CancellationPort, ToolSandboxPolicy};
 use minimax_protocol::{ToolInvocation, ToolResult};
 use serde::Deserialize;
 
@@ -29,12 +29,28 @@ impl GitStatusTool {
         invocation: &ToolInvocation,
         cancellation: &dyn CancellationPort,
     ) -> ToolResult {
+        self.execute_with_policy(
+            workspace,
+            invocation,
+            ToolSandboxPolicy::Restricted,
+            cancellation,
+        )
+        .await
+    }
+
+    pub async fn execute_with_policy(
+        &self,
+        workspace: &WorkspaceRoot,
+        invocation: &ToolInvocation,
+        sandbox_policy: ToolSandboxPolicy,
+        cancellation: &dyn CancellationPort,
+    ) -> ToolResult {
         let request = match prepare_status(workspace, invocation, cancellation) {
             Ok(request) => request,
             Err(error) => return error.into_result(invocation),
         };
         self.process
-            .run(&request, cancellation)
+            .run_with_policy(&request, sandbox_policy, cancellation)
             .await
             .into_tool_result(invocation)
     }
@@ -62,12 +78,28 @@ impl GitDiffTool {
         invocation: &ToolInvocation,
         cancellation: &dyn CancellationPort,
     ) -> ToolResult {
+        self.execute_with_policy(
+            workspace,
+            invocation,
+            ToolSandboxPolicy::Restricted,
+            cancellation,
+        )
+        .await
+    }
+
+    pub async fn execute_with_policy(
+        &self,
+        workspace: &WorkspaceRoot,
+        invocation: &ToolInvocation,
+        sandbox_policy: ToolSandboxPolicy,
+        cancellation: &dyn CancellationPort,
+    ) -> ToolResult {
         let request = match prepare_diff(workspace, invocation, cancellation) {
             Ok(request) => request,
             Err(error) => return error.into_result(invocation),
         };
         self.process
-            .run(&request, cancellation)
+            .run_with_policy(&request, sandbox_policy, cancellation)
             .await
             .into_tool_result(invocation)
     }

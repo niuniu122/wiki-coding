@@ -12,8 +12,8 @@ use minimax_cli::{
     WikiIndexAction, WikiRunReport, apply_migration, augment_agent_prompt, build_migration_plan,
     capability_search, capability_status, exit_for_error, exit_for_report,
     finalize_active_session_wiki, inspect, inventory_migration, is_project_discovery_intent,
-    project_search, project_status, resolve_project_vault, rollback_migration, verify_migration,
-    wiki_search, wiki_status,
+    permission_status, project_search, project_status, resolve_project_vault, rollback_migration,
+    verify_migration, wiki_search, wiki_status,
 };
 use minimax_core::{CompactionBudget, PermissionMode, WikiGenerationPort};
 use minimax_protocol::{
@@ -22,6 +22,7 @@ use minimax_protocol::{
 use minimax_provider::{
     CredentialMode, CredentialResolver, HttpProviderClient, OsKeyringBackend, ResolvedConfig,
 };
+use minimax_tools::SandboxCapability;
 use minimax_tui::{
     CommandAvailability, CommandIntent, CrosstermTerminalHooks, EventRenderer, InteractiveShell,
     ParsedInput, StdioApprovalInput, parse_input,
@@ -826,8 +827,11 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
                         }
                     }
                     CommandIntent::Permissions(None) => println!(
-                        "permission mode: {}",
-                        permission_name(driver.permission_mode())
+                        "{}",
+                        permission_status(
+                            driver.permission_mode(),
+                            SandboxCapability::detect(&args.common.project),
+                        )
                     ),
                     CommandIntent::Permissions(Some(mode)) => {
                         let mode = match mode {
@@ -836,8 +840,11 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
                         };
                         driver.set_permission_mode(mode);
                         println!(
-                            "permission mode: {} | applies only to this process; workspace, secret, command, size, timeout, and cancellation gates remain enforced",
-                            permission_name(mode)
+                            "{}",
+                            permission_status(
+                                mode,
+                                SandboxCapability::detect(&args.common.project),
+                            )
                         );
                     }
                     CommandIntent::NewSession => {
@@ -1017,13 +1024,6 @@ async fn render_agent_turn<P: minimax_cli::ProviderPort>(
 fn render_tool_results(report: &minimax_cli::RunReport) {
     for result in &report.tool_results {
         println!("{}", EventRenderer::tool_result(result));
-    }
-}
-
-const fn permission_name(mode: PermissionMode) -> &'static str {
-    match mode {
-        PermissionMode::Confirm => "confirm",
-        PermissionMode::FullAccess => "full-access",
     }
 }
 

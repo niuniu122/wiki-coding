@@ -1,6 +1,6 @@
 use minimax_core::{
     AgentBudget, BudgetKind, InvocationEffect, InvocationError, InvocationInput, InvocationMachine,
-    InvocationRegistry, InvocationState, PermissionMode,
+    InvocationRegistry, InvocationState, PermissionMode, ToolSandboxPolicy,
 };
 use minimax_protocol::{
     AgentLimits, SchemaVersion, ToolCall, ToolCallId, ToolDecision, ToolDecisionKind, ToolEffect,
@@ -55,6 +55,45 @@ fn permission_mode_has_only_confirm_and_full_access_and_defaults_to_confirm() {
 }
 
 #[test]
+fn execution_effect_carries_the_permission_snapshot_as_an_independent_sandbox_policy() {
+    for (mode, expected_policy) in [
+        (PermissionMode::Confirm, ToolSandboxPolicy::Restricted),
+        (PermissionMode::FullAccess, ToolSandboxPolicy::Disabled),
+    ] {
+        let (mut machine, _) = InvocationMachine::request(invocation("call-policy"));
+        let decision_effects = machine
+            .apply(InvocationInput::PreflightAllowed {
+                permission_mode: mode,
+            })
+            .expect("preflight");
+        if mode == PermissionMode::Confirm {
+            assert!(matches!(
+                decision_effects.as_slice(),
+                [InvocationEffect::RequestApproval(_)]
+            ));
+            machine
+                .apply(InvocationInput::Decision {
+                    decision: decision("call-policy", ToolDecisionKind::Approved, "approved"),
+                    permission_mode: mode,
+                })
+                .expect("confirm decision");
+        }
+
+        let effects = machine.apply(InvocationInput::Start).expect("start");
+        assert!(matches!(
+            effects.as_slice(),
+            [
+                InvocationEffect::PersistStarted(_),
+                InvocationEffect::Execute {
+                    sandbox_policy,
+                    ..
+                }
+            ] if *sandbox_policy == expected_policy
+        ));
+    }
+}
+
+#[test]
 fn confirm_requires_one_durable_matching_decision_before_execute() {
     let invocation = invocation("call-1");
     let (mut machine, requested) = InvocationMachine::request(invocation.clone());
@@ -98,7 +137,7 @@ fn confirm_requires_one_durable_matching_decision_before_execute() {
         started.as_slice(),
         [
             InvocationEffect::PersistStarted(_),
-            InvocationEffect::Execute(_)
+            InvocationEffect::Execute { .. }
         ]
     ));
     let succeeded = result("call-1", ToolTerminalStatus::Succeeded, "ok");
@@ -145,7 +184,7 @@ fn rejection_conflict_and_pre_start_cancellation_never_execute() {
         assert!(
             effects
                 .iter()
-                .all(|effect| !matches!(effect, InvocationEffect::Execute(_)))
+                .all(|effect| !matches!(effect, InvocationEffect::Execute { .. }))
         );
         assert!(effects.iter().any(
             |effect| matches!(effect, InvocationEffect::PersistTerminal(result) if result.status == expected_status)
@@ -188,7 +227,7 @@ fn full_access_skips_only_prompt_and_both_modes_share_preflight_denial() {
             effects.iter().all(|effect| {
                 !matches!(
                     effect,
-                    InvocationEffect::RequestApproval(_) | InvocationEffect::Execute(_)
+                    InvocationEffect::RequestApproval(_) | InvocationEffect::Execute { .. }
                 )
             }),
             "{mode:?}"
@@ -238,7 +277,7 @@ fn post_start_cancel_or_recovery_is_indeterminate_and_never_reexecutes() {
         assert_eq!(
             started
                 .iter()
-                .filter(|effect| matches!(effect, InvocationEffect::Execute(_)))
+                .filter(|effect| matches!(effect, InvocationEffect::Execute { .. }))
                 .count(),
             1
         );
@@ -250,7 +289,7 @@ fn post_start_cancel_or_recovery_is_indeterminate_and_never_reexecutes() {
         assert!(
             recovered
                 .iter()
-                .all(|effect| !matches!(effect, InvocationEffect::Execute(_)))
+                .all(|effect| !matches!(effect, InvocationEffect::Execute { .. }))
         );
         assert!(
             machine
@@ -328,6 +367,6 @@ fn a_pre_start_budget_failure_is_terminal_without_started_or_execute_effects() {
     );
     assert!(effects.iter().all(|effect| !matches!(
         effect,
-        InvocationEffect::PersistStarted(_) | InvocationEffect::Execute(_)
+        InvocationEffect::PersistStarted(_) | InvocationEffect::Execute { .. }
     )));
 }

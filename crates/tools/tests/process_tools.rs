@@ -4,12 +4,12 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
-use minimax_core::{CancellationFuture, CancellationPort};
+use minimax_core::{CancellationFuture, CancellationPort, ToolSandboxPolicy};
 use minimax_protocol::{ToolCall, ToolEffect, ToolInvocation, ToolTerminalStatus};
 use minimax_tools::{
     BoundedProcess, ChildEvent, ChildEventFuture, ChildStopFuture, DirectChild, GitDiffTool,
-    GitStatusTool, NeverCancelled, NpmDiagnosticTool, ProcessLauncher, ProcessLimits,
-    ProcessRequest, RunDiagnosticTool, WorkspaceRoot,
+    GitStatusTool, NeverCancelled, NpmDiagnosticTool, ProcessLaunchError, ProcessLauncher,
+    ProcessLimits, ProcessRequest, RunDiagnosticTool, WorkspaceRoot,
 };
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -486,6 +486,94 @@ async fn spawn_io_binary_secret_and_preflight_cancellation_fail_closed() {
     assert_eq!(cancel_state.spawn_count.load(Ordering::SeqCst), 0);
 }
 
+#[tokio::test]
+async fn restricted_backend_failure_is_typed_and_never_retried_without_a_sandbox() {
+    let fixture = Fixture::new();
+    let starts = Arc::new(AtomicUsize::new(0));
+    let process = BoundedProcess::new(
+        Arc::new(UnavailableSandboxLauncher {
+            starts: Arc::clone(&starts),
+        }),
+        ProcessLimits::default(),
+    );
+    let result = RunDiagnosticTool::new(process)
+        .execute_with_policy(
+            &fixture.workspace,
+            &invocation("run_diagnostic", json!({"action": "cargo_fmt_check"})),
+            ToolSandboxPolicy::Restricted,
+            &NeverCancelled,
+        )
+        .await;
+
+    assert_eq!(result.status, ToolTerminalStatus::Failed);
+    assert_eq!(result.code, "sandbox_unavailable");
+    assert_eq!(starts.load(Ordering::SeqCst), 1, "no direct retry");
+    let receipt: Value = must(serde_json::from_str(must_option(result.output.as_deref())));
+    assert_eq!(receipt["error"]["backend"], "bubblewrap");
+    assert_eq!(receipt["error"]["platform"], "linux");
+    assert_eq!(receipt["error"]["remediation"], "install bubblewrap");
+}
+
+#[cfg(target_os = "windows")]
+#[tokio::test]
+async fn production_windows_restricted_process_fails_closed_before_node_starts() {
+    let fixture = Fixture::new();
+    must(std::fs::write(fixture.path("invalid.js"), "const = ;"));
+    let result = RunDiagnosticTool::production()
+        .execute_with_policy(
+            &fixture.workspace,
+            &invocation(
+                "run_diagnostic",
+                json!({"action": "node_check", "path": "invalid.js"}),
+            ),
+            ToolSandboxPolicy::Restricted,
+            &NeverCancelled,
+        )
+        .await;
+    assert_eq!(result.code, "sandbox_unavailable");
+    let receipt: Value = must(serde_json::from_str(must_option(result.output.as_deref())));
+    assert_eq!(receipt["error"]["backend"], "windows_native");
+    assert_eq!(receipt["error"]["platform"], "windows");
+}
+
+#[tokio::test]
+async fn production_full_access_explicitly_keeps_the_direct_process_path() {
+    let fixture = Fixture::new();
+    must(std::fs::write(fixture.path("valid.js"), "const value = 1;"));
+    let result = RunDiagnosticTool::production()
+        .execute_with_policy(
+            &fixture.workspace,
+            &invocation(
+                "run_diagnostic",
+                json!({"action": "node_check", "path": "valid.js"}),
+            ),
+            ToolSandboxPolicy::Disabled,
+            &NeverCancelled,
+        )
+        .await;
+    assert_eq!(result.status, ToolTerminalStatus::Succeeded, "{result:?}");
+}
+
+struct UnavailableSandboxLauncher {
+    starts: Arc<AtomicUsize>,
+}
+
+impl ProcessLauncher for UnavailableSandboxLauncher {
+    fn spawn(
+        &self,
+        _request: &ProcessRequest,
+        policy: ToolSandboxPolicy,
+    ) -> Result<Box<dyn DirectChild>, ProcessLaunchError> {
+        self.starts.fetch_add(1, Ordering::SeqCst);
+        assert_eq!(policy, ToolSandboxPolicy::Restricted);
+        Err(ProcessLaunchError::sandbox_unavailable(
+            "bubblewrap",
+            "linux",
+            "install bubblewrap",
+        ))
+    }
+}
+
 #[derive(Clone)]
 enum FakeStep {
     Event(ChildEvent),
@@ -508,7 +596,11 @@ struct FakeLauncher {
 }
 
 impl ProcessLauncher for FakeLauncher {
-    fn spawn(&self, request: &ProcessRequest) -> io::Result<Box<dyn DirectChild>> {
+    fn spawn(
+        &self,
+        request: &ProcessRequest,
+        _policy: ToolSandboxPolicy,
+    ) -> Result<Box<dyn DirectChild>, ProcessLaunchError> {
         self.state.spawn_count.fetch_add(1, Ordering::SeqCst);
         self.state
             .requests
@@ -516,7 +608,9 @@ impl ProcessLauncher for FakeLauncher {
             .expect("requests")
             .push(request.clone());
         if self.state.spawn_error {
-            return Err(io::Error::other("fixture spawn failure"));
+            return Err(ProcessLaunchError::from(io::Error::other(
+                "fixture spawn failure",
+            )));
         }
         Ok(Box::new(FakeChild {
             state: Arc::clone(&self.state),

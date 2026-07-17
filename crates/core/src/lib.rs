@@ -31,6 +31,7 @@ pub use session::{SessionCommand, SessionEffect, SessionMachine, SessionSummary}
 pub use tool::{
     AgentBudget, AgentBudgetError, BudgetKind, DecisionSnapshot, InvocationEffect, InvocationError,
     InvocationInput, InvocationMachine, InvocationRegistry, InvocationState, PermissionMode,
+    ToolSandboxPolicy,
 };
 pub use trace::{FoldedTrace, SafeTraceFact, SafeTraceRecorder};
 
