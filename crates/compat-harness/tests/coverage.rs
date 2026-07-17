@@ -225,3 +225,171 @@ fn retirement_of_a_locked_public_contract_and_missing_evidence_are_rejected() {
             .contains("no replacement evidence")
     );
 }
+
+#[test]
+fn semantic_audit_rejects_collapsed_unrelated_and_false_retirement_evidence() {
+    let root = repository_root();
+    let authority = load_source_authority(&root).expect("source authority");
+    let matrix = load_coverage_matrix(&root).expect("coverage matrix");
+    let raw: Value = serde_json::from_str(
+        &fs::read_to_string(
+            root.join("fixtures/compat/verification/typescript-responsibilities.v1.json"),
+        )
+        .expect("coverage matrix"),
+    )
+    .expect("coverage matrix JSON");
+    let mut failures = Vec::new();
+
+    let collapsed_retrieval_sources = [
+        "src/eval/capability-retrieval-report.ts",
+        "test/capability-bm25.test.ts",
+        "test/capability-catalog.test.ts",
+        "test/capability-commands.test.ts",
+        "test/capability-dispatcher.test.ts",
+        "test/capability-exact-resolution.test.ts",
+        "test/capability-facet-index.test.ts",
+        "test/capability-hybrid-retrieval.test.ts",
+        "test/capability-manifest.test.ts",
+        "test/capability-policy-engine.test.ts",
+        "test/capability-query-normalizer.test.ts",
+        "test/capability-refresh.test.ts",
+        "test/capability-retrieval-eval.test.ts",
+        "test/capability-retrieval-report.test.ts",
+        "test/capability-rrf.test.ts",
+        "test/capability-snapshot.test.ts",
+        "test/capability-source-adapters.test.ts",
+        "test/support/capability-fixtures.ts",
+    ];
+    let shared_lexical_owner = matrix
+        .sources
+        .iter()
+        .filter(|source| collapsed_retrieval_sources.contains(&source.source_path.as_str()))
+        .filter(|source| {
+            source.responsibilities.iter().any(|responsibility| {
+                responsibility.evidence.iter().any(|evidence| {
+                    evidence.path == "crates/retrieval/tests/lexical.rs"
+                        && evidence.test.as_deref()
+                            == Some("existing_typescript_175_case_fixture_meets_capability_gates")
+                })
+            })
+        })
+        .map(|source| source.source_path.as_str())
+        .collect::<Vec<_>>();
+    if shared_lexical_owner.len() > 1 {
+        failures.push(format!(
+            "shared lexical owner collapses unrelated catalog/command/dispatcher/policy/refresh/snapshot/adapter/ranking contracts: {}",
+            shared_lexical_owner.join(", ")
+        ));
+    }
+
+    let retry_continue = matrix
+        .sources
+        .iter()
+        .flat_map(|source| source.responsibilities.iter())
+        .find(|responsibility| responsibility.id == "ts-command-retry-continue-outcomes")
+        .expect("retry/continue responsibility");
+    if retry_continue.evidence.iter().any(|evidence| {
+        evidence.path == "crates/tui/tests/command_render.rs"
+            && evidence.test.as_deref()
+                == Some("parser_covers_every_manifest_command_alias_and_argument_shape")
+    }) {
+        failures.push(
+            "retry/continue outcome contract cites parser-only owner parser_covers_every_manifest_command_alias_and_argument_shape"
+                .to_owned(),
+        );
+    }
+
+    let retirement_families = [
+        (
+            "agent/kernel",
+            &[
+                "test/agent-item-storage.test.ts",
+                "test/agent-route-cutover.test.ts",
+                "test/agent-run-engine.test.ts",
+                "test/application-kernel.test.ts",
+            ][..],
+        ),
+        (
+            "permission/tool/budget/fail-closed",
+            &[
+                "test/agent-budget.test.ts",
+                "test/agent-run-recovery.test.ts",
+                "test/feature-flags.test.ts",
+            ][..],
+        ),
+        (
+            "model/profile/credential",
+            &[
+                "test/model-profile-registry.test.ts",
+                "test/model-profile.test.ts",
+                "test/model-selection-persistence.test.ts",
+                "test/model-selection-service.test.ts",
+                "test/model-state-store.test.ts",
+                "test/user-profile-store.test.ts",
+            ][..],
+        ),
+        ("summary/redaction", &["test/summary-generator.test.ts"][..]),
+    ];
+    for (family, paths) in retirement_families {
+        let retired = matrix
+            .sources
+            .iter()
+            .filter(|source| paths.contains(&source.source_path.as_str()))
+            .filter(|source| {
+                source.responsibilities.iter().any(|responsibility| {
+                    responsibility.disposition == CoverageDisposition::Retired
+                })
+            })
+            .map(|source| source.source_path.as_str())
+            .collect::<Vec<_>>();
+        if !retired.is_empty() {
+            failures.push(format!(
+                "public/safety {family} family is retired with generic no-shipped-outcome boilerplate: {}",
+                retired.join(", ")
+            ));
+        }
+    }
+
+    let responsibility_values = raw["sources"]
+        .as_array()
+        .expect("coverage sources")
+        .iter()
+        .flat_map(|source| {
+            source["responsibilities"]
+                .as_array()
+                .expect("responsibilities")
+        })
+        .collect::<Vec<_>>();
+    let missing_semantic_contracts = responsibility_values
+        .iter()
+        .filter(|responsibility| {
+            responsibility.get("evidenceClass").is_none()
+                || responsibility.get("evidenceContract").is_none()
+        })
+        .count();
+    if missing_semantic_contracts != 0 {
+        failures.push(format!(
+            "{missing_semantic_contracts} responsibilities lack a closed evidenceClass and responsibility-specific evidenceContract"
+        ));
+    }
+
+    let mut unrelated_owner = matrix.clone();
+    let retry_continue = unrelated_owner
+        .sources
+        .iter_mut()
+        .flat_map(|source| source.responsibilities.iter_mut())
+        .find(|responsibility| responsibility.id == "ts-command-retry-continue-outcomes")
+        .expect("retry/continue responsibility");
+    retry_continue.evidence = vec![minimax_compat_harness::CoverageEvidence {
+        path: "crates/retrieval/tests/lexical.rs".to_owned(),
+        test: Some("existing_typescript_175_case_fixture_meets_capability_gates".to_owned()),
+    }];
+    if validate_coverage_matrix(&root, &unrelated_owner, &authority).is_ok() {
+        failures.push(
+            "validator accepts an existing lexical ranking function as retry/continue outcome evidence without checking semantic compatibility"
+                .to_owned(),
+        );
+    }
+
+    assert!(failures.is_empty(), "{}", failures.join("\n- "));
+}
