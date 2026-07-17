@@ -171,11 +171,17 @@ fn clap_routes_all_phase_two_and_later_maintenance_commands() {
             .command,
         CliCommand::Doctor(_)
     ));
+    let migrate =
+        Cli::try_parse_from(["minimax-codex-rust", "migrate", "inventory"]).expect("migrate route");
     assert!(matches!(
-        Cli::try_parse_from(["minimax-codex-rust", "migrate", "inventory"])
-            .expect("migrate route")
-            .command,
-        CliCommand::Migrate(args) if matches!(args.action, MigrateAction::Inventory { .. })
+        migrate.command,
+        CliCommand::Migrate(args)
+            if matches!(
+                &args.action,
+                MigrateAction::Inventory { source, target }
+                    if source == std::path::Path::new(".mini-codex")
+                        && target == std::path::Path::new(".")
+            )
     ));
 }
 
