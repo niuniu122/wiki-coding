@@ -1,0 +1,110 @@
+{
+  "schemaVersion": 1,
+  "evaluationId": "provider-conformance-v1",
+  "fixtureFingerprint": "bab2e90a9641862a94f52bbfd1f793a37e5ea9d80685839d130c8f2c909b62df",
+  "protocols": [
+    {
+      "protocol": "responses",
+      "fixturePath": "fixtures/compat/provider-streams/responses.valid.jsonl",
+      "fixtureSha256": "abed17b26deee2ce628c70bb8ea7f930a02d56ae8d927d7fb4760b1d2f3934bb",
+      "checks": [
+        {
+          "id": "valid_text",
+          "passed": true
+        },
+        {
+          "id": "usage",
+          "passed": true
+        },
+        {
+          "id": "terminal_ordering",
+          "passed": true
+        },
+        {
+          "id": "native_tool_call_identity",
+          "passed": true
+        },
+        {
+          "id": "malformed_rejected",
+          "passed": true
+        },
+        {
+          "id": "premature_rejected",
+          "passed": true
+        },
+        {
+          "id": "safe_error_codes",
+          "passed": true
+        },
+        {
+          "id": "failure_redaction",
+          "passed": true
+        },
+        {
+          "id": "unsupported_feature_rejection",
+          "passed": true
+        },
+        {
+          "id": "deterministic_repeat",
+          "passed": true
+        }
+      ],
+      "passed": true
+    },
+    {
+      "protocol": "chat_completions",
+      "fixturePath": "fixtures/compat/provider-streams/chat-completions.valid.jsonl",
+      "fixtureSha256": "ae2bea30b5755c01397b9a18b8626dcff9500b5212e8f631115ee21a7fb03bcc",
+      "checks": [
+        {
+          "id": "valid_text",
+          "passed": true
+        },
+        {
+          "id": "usage",
+          "passed": true
+        },
+        {
+          "id": "terminal_ordering",
+          "passed": true
+        },
+        {
+          "id": "native_tool_call_identity",
+          "passed": true
+        },
+        {
+          "id": "malformed_rejected",
+          "passed": true
+        },
+        {
+          "id": "premature_rejected",
+          "passed": true
+        },
+        {
+          "id": "safe_error_codes",
+          "passed": true
+        },
+        {
+          "id": "failure_redaction",
+          "passed": true
+        },
+        {
+          "id": "unsupported_feature_rejection",
+          "passed": true
+        },
+        {
+          "id": "deterministic_repeat",
+          "passed": true
+        }
+      ],
+      "passed": true
+    }
+  ],
+  "totals": {
+    "protocols": 2,
+    "checks": 20,
+    "passed": 20,
+    "failed": 0
+  },
+  "passed": true
+}

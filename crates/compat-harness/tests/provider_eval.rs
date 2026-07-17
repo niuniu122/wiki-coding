@@ -25,10 +25,9 @@ fn provider_evaluation_matches_committed_golden_and_is_repeatable() {
     let second = run_provider_evaluation(&root).expect("second provider evaluation");
     let first_json = provider_report_json(&first).expect("first provider report JSON");
     let second_json = provider_report_json(&second).expect("second provider report JSON");
-    let golden = fs::read_to_string(
-        root.join("fixtures/compat/evaluations/provider-report.expected.json"),
-    )
-    .expect("provider report golden");
+    let golden =
+        fs::read_to_string(root.join("fixtures/compat/evaluations/provider-report.expected.json"))
+            .expect("provider report golden");
 
     assert_eq!(first, second);
     assert_eq!(first_json, normalize_newline(&golden));
@@ -72,10 +71,9 @@ fn provider_manifest_rejects_unknown_fields_duplicate_checks_and_fingerprint_dri
 
     let duplicate = FixtureRepository::copy_from(&repository);
     let manifest_path = duplicate.path("fixtures/compat/evaluations/provider.v1.json");
-    let mut manifest: Value = serde_json::from_str(
-        &fs::read_to_string(&manifest_path).expect("provider manifest"),
-    )
-    .expect("provider manifest JSON");
+    let mut manifest: Value =
+        serde_json::from_str(&fs::read_to_string(&manifest_path).expect("provider manifest"))
+            .expect("provider manifest JSON");
     let checks = manifest["protocols"][0]["requiredChecks"]
         .as_array_mut()
         .expect("required checks");
@@ -157,10 +155,9 @@ fn provider_golden_drift_is_release_blocking() {
 
 fn update_manifest_hash(root: &Path, fixture_path: &str) {
     let manifest_path = root.join("fixtures/compat/evaluations/provider.v1.json");
-    let mut manifest: Value = serde_json::from_str(
-        &fs::read_to_string(&manifest_path).expect("provider manifest"),
-    )
-    .expect("provider manifest JSON");
+    let mut manifest: Value =
+        serde_json::from_str(&fs::read_to_string(&manifest_path).expect("provider manifest"))
+            .expect("provider manifest JSON");
     let digest = sha256(&fs::read(root.join(fixture_path)).expect("fixture bytes"));
     let fixture = manifest["protocols"]
         .as_array_mut()
@@ -194,10 +191,8 @@ struct FixtureRepository {
 impl FixtureRepository {
     fn copy_from(repository: &Path) -> Self {
         let id = TEMP_ID.fetch_add(1, Ordering::Relaxed);
-        let root = std::env::temp_dir().join(format!(
-            "minimax-provider-eval-{}-{id}",
-            std::process::id()
-        ));
+        let root =
+            std::env::temp_dir().join(format!("minimax-provider-eval-{}-{id}", std::process::id()));
         if root.exists() {
             fs::remove_dir_all(&root).expect("remove stale fixture repository");
         }

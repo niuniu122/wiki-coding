@@ -7,6 +7,7 @@ pub mod architecture;
 pub mod baseline;
 pub mod coverage;
 pub mod manifest;
+pub mod provider_eval;
 pub mod report;
 pub mod source_authority;
 
@@ -30,6 +31,12 @@ pub use coverage::{
 pub use manifest::{
     BaselineStatus, CommandManifest, CompatManifests, ManifestError, ParityStatus,
     ProviderManifest, StatusItem, load_compat_manifests, repository_root,
+};
+pub use provider_eval::{
+    PROVIDER_EVALUATION_GOLDEN, PROVIDER_EVALUATION_MANIFEST, ProviderCheckReport,
+    ProviderEvaluationError, ProviderEvaluationReport, ProviderEvaluationTotals,
+    ProviderProtocolReport, provider_report_json, run_provider_evaluation,
+    verify_provider_evaluation,
 };
 pub use report::{CompatReport, ReportEntry, build_report, report_json, validate_report};
 pub use source_authority::{
