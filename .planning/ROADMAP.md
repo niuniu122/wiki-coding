@@ -210,7 +210,7 @@ Plans:
 | 8. Codex-style Subprocess Sandbox Hardening | 3/3 | Complete | 2026-07-17 |
 | 9. Capability Workspace and Non-Programmer Harness | 3/3 | Complete | 2026-07-17 |
 | 10. Rust Authority and Source Boundaries | 4/4 | Complete    | 2026-07-17 |
-| 11. Rust Verification and Evaluation Authority | 4/6 | Gap closure planned | - |
+| 11. Rust Verification and Evaluation Authority | 5/6 | In Progress|  |
 | 12. Fixture Compatibility and Rust Migration | 0/2 | Not started | - |
 | 13. Thin npm and Native Release | 0/3 | Not started | - |
 | 14. TypeScript Removal and Hosted Closure | 0/3 | Not started | - |
@@ -328,7 +328,7 @@ Plans:
   3. The Rust retrieval evaluation reports deterministic exact/BM25 and mixed-language ranking results, proves BM25 runs before embedding, rejects semantic outsiders, and records truthful degraded modes.
   4. Rust verification failures block parity and release decisions even if any transitional Node/package smoke passes.
 
-**Plans:** 4/6 plans complete; gap closure planned
+**Plans:** 5/6 plans executed
 
 Plans:
 
@@ -336,7 +336,7 @@ Plans:
 - [x] 11-02-PLAN.md
 - [x] 11-03-PLAN.md
 - [x] 11-04-PLAN.md
-- [ ] 11-05-PLAN.md
+- [x] 11-05-PLAN.md
 - [ ] 11-06-PLAN.md
 
 - [x] 11-01: Classify TypeScript coverage and close required Rust behavioral gaps
@@ -346,7 +346,7 @@ Plans:
 
 **Wave 8** *(gap closure; blocked on 11-04 completion)*
 
-- [ ] 11-05: Repair semantic responsibility evidence and execute distinct retry/continue outcomes
+- [x] 11-05: Repair semantic responsibility evidence and execute distinct retry/continue outcomes
 
 **Wave 9** *(gap closure; blocked on Wave 8 completion)*
 

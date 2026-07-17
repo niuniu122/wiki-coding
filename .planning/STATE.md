@@ -5,16 +5,16 @@ milestone_name: Rust Convergence
 current_phase: 11
 current_phase_name: rust-verification-and-evaluation-authority
 status: executing
-stopped_at: Completed 11-04-PLAN.md
-last_updated: "2026-07-17T18:00:08.313Z"
+stopped_at: Completed 11-05-PLAN.md
+last_updated: "2026-07-17T18:56:12.566Z"
 last_activity: 2026-07-17
-last_activity_desc: Phase 11 execution started
+last_activity_desc: Completed 11-05-PLAN.md
 progress:
   total_phases: 14
   completed_phases: 10
   total_plans: 46
-  completed_plans: 36
-  percent: 71
+  completed_plans: 37
+  percent: 80
 ---
 
 # Project State
@@ -28,9 +28,9 @@ See: `.planning/PROJECT.md` (updated 2026-07-15)
 ## Current Position
 
 Phase: 11 (rust-verification-and-evaluation-authority) — EXECUTING
-Plan: 1 of 6
-Status: Executing Phase 11
-Last activity: 2026-07-17 — Phase 11 execution started
+Plan: 6 of 6
+Status: Ready to execute
+Last activity: 2026-07-17 — Completed 11-05-PLAN.md
 
 ## Previous Phase 7 Hosted Baseline (superseded)
 
@@ -128,6 +128,8 @@ No package publication, tag, PR, merge, live Provider request, credential read, 
 - [Phase 11]: Package evaluation aliases are exact Rust compatibility-harness commands, and verify:agent composes coverage, Provider, then retrieval. — One shared aggregate prevents release-order drift and removes TypeScript evaluator authority.
 - [Phase 11]: CI requires coverage, Provider evaluation, and retrieval evaluation before every build, package, or evidence step. — A package smoke success cannot compensate for a failed Rust evaluator report.
 - [Phase 11]: Transitional TypeScript tests, static checks, build, and smoke remain allowed, but TypeScript evaluator commands and src/eval paths are denied. — Phase 11 cuts authority without deleting hash-pinned evidence reserved for Phase 14.
+- [Phase 11]: Bind every responsibility through one closed semantic evidence contract registry. — A strict row-to-contract bijection preserves per-source auditability while preventing unrelated test-owner reuse.
+- [Phase 11]: Keep parser recognition separate from retry and continue outcome authority. — Only executed CLI runtime behavior proves distinct durable requests, turns, terminals, immutable source, and replay.
 
 ## Performance Metrics
 
@@ -141,9 +143,10 @@ No package publication, tag, PR, merge, live Provider request, credential read, 
 | Phase 11 P02 | 45min | 2 tasks | 9 files |
 | Phase 11 P03 | 17min | 2 tasks | 9 files |
 | Phase 11 P04 | 26min | 1 task | 9 files |
+| Phase 11 P05 | 65min | 2 tasks | 7 files |
 
 ## Session
 
-**Last session:** 2026-07-17T17:00:13.765Z
-**Stopped at:** Completed 11-04-PLAN.md
+**Last session:** 2026-07-17T18:56:12.557Z
+**Stopped at:** Completed 11-05-PLAN.md
 **Resume file:** None
