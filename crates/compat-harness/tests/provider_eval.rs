@@ -1,11 +1,13 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use minimax_compat_harness::{
-    provider_report_json, run_provider_evaluation, verify_provider_evaluation,
+    provider_evaluation_authorizes_release, provider_report_json, run_provider_evaluation,
+    verify_provider_evaluation,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
 static TEMP_ID: AtomicU64 = AtomicU64::new(0);
@@ -150,6 +152,174 @@ fn provider_golden_drift_is_release_blocking() {
             .expect_err("golden drift must fail")
             .to_string()
             .contains("golden")
+    );
+}
+
+#[test]
+fn provider_eval_command_is_json_only_deterministic_and_credential_independent() {
+    let root = repository_root();
+    let binary = env!("CARGO_BIN_EXE_minimax-compat-harness");
+    let baseline = Command::new(binary)
+        .args(["provider-eval", "--format", "json"])
+        .current_dir(&root)
+        .output()
+        .expect("run Provider evaluator");
+    let secret_environment = Command::new(binary)
+        .args(["provider-eval", "--format", "json"])
+        .current_dir(&root)
+        .env("MINIMAX_API_KEY", "SECRET_MINIMAX_CREDENTIAL")
+        .env("HASHSIGHT_API_KEY", "SECRET_HASHSIGHT_CREDENTIAL")
+        .env("OPENAI_API_KEY", "SECRET_OPENAI_CREDENTIAL")
+        .env("TEST_PROVIDER_KEY", "SECRET_TEST_CREDENTIAL")
+        .output()
+        .expect("run Provider evaluator with secret-bearing environment");
+    let golden = fs::read(root.join("fixtures/compat/evaluations/provider-report.expected.json"))
+        .expect("Provider report golden");
+
+    assert!(baseline.status.success());
+    assert!(secret_environment.status.success());
+    assert!(baseline.stderr.is_empty());
+    assert!(secret_environment.stderr.is_empty());
+    assert_eq!(baseline.stdout, golden);
+    assert_eq!(secret_environment.stdout, baseline.stdout);
+    assert!(!String::from_utf8_lossy(&baseline.stdout).contains("SECRET_"));
+}
+
+#[test]
+fn provider_failure_blocks_release_even_when_package_smoke_succeeds() {
+    let root = repository_root();
+    let passing = run_provider_evaluation(&root).expect("passing Provider evaluation");
+    assert!(provider_evaluation_authorizes_release(&passing, true));
+
+    let mut failing = passing;
+    failing.protocols[0].checks[0].passed = false;
+    failing.protocols[0].passed = false;
+    failing.totals.passed -= 1;
+    failing.totals.failed += 1;
+    failing.passed = false;
+    assert!(!provider_evaluation_authorizes_release(&failing, true));
+}
+
+#[test]
+fn package_alias_and_repository_verification_use_the_rust_provider_gate() {
+    let root = repository_root();
+    let package: Value = serde_json::from_str(
+        &fs::read_to_string(root.join("package.json")).expect("package metadata"),
+    )
+    .expect("package JSON");
+    assert_eq!(
+        package["scripts"]["eval:provider"],
+        "cargo run -p minimax-compat-harness --locked -- provider-eval --format json"
+    );
+
+    let main = fs::read_to_string(root.join("crates/compat-harness/src/main.rs"))
+        .expect("compatibility harness main");
+    let verification = &main[main
+        .find("fn verify_repository")
+        .expect("repository verification function")..];
+    let provider_gate = verification
+        .find("verify_provider_evaluation")
+        .expect("Provider evaluation gate");
+    let compatibility = verification
+        .find("load_compat_manifests")
+        .expect("compatibility manifest gate");
+    assert!(provider_gate < compatibility);
+}
+
+#[test]
+fn immutable_retrieval_corpus_preserves_transitional_175_case_contract() {
+    let root = repository_root();
+    let source_path = "test/fixtures/capabilities/retrieval-cases-expanded.json";
+    let target_path = "fixtures/compat/retrieval/capability-cases-expanded.v1.json";
+    let source_bytes = fs::read(root.join(source_path)).expect("transitional retrieval corpus");
+    let source: Value = serde_json::from_slice(&source_bytes).expect("source retrieval JSON");
+    let target: Value = serde_json::from_str(
+        &fs::read_to_string(root.join(target_path)).expect("immutable retrieval corpus"),
+    )
+    .expect("immutable retrieval JSON");
+
+    assert_eq!(target["schemaVersion"], 1);
+    assert_eq!(target["corpusId"], "capability-retrieval-expanded-v1");
+    assert_eq!(target["source"]["path"], source_path);
+    assert_eq!(target["source"]["sha256"], sha256(&source_bytes));
+    assert_eq!(target["source"]["retainedUntil"], "14-01");
+    assert_eq!(target["descriptors"], source["descriptors"]);
+    assert_eq!(
+        target["thresholds"],
+        json!({
+            "minimumCases": 150,
+            "recallAt5": 0.95,
+            "top1": 0.85,
+            "mrr": 0.9,
+            "noMatchPrecision": 0.95,
+            "idValidity": 1.0
+        })
+    );
+
+    let source_groups = source["caseGroups"].as_array().expect("source groups");
+    let target_groups = target["caseGroups"].as_array().expect("target groups");
+    assert_eq!(target_groups.len(), source_groups.len());
+    let mut query_ids = std::collections::BTreeSet::new();
+    let mut cases = 0usize;
+    for (source_group, target_group) in source_groups.iter().zip(target_groups) {
+        assert_eq!(target_group["expectedIds"], source_group["expectedIds"]);
+        assert_eq!(
+            target_group["noMatch"].as_bool().expect("target noMatch"),
+            source_group["noMatch"].as_bool().unwrap_or(false)
+        );
+        assert_eq!(target_group["queries"], source_group["queries"]);
+        let queries = target_group["queries"].as_array().expect("queries");
+        let ids = target_group["queryIds"].as_array().expect("query IDs");
+        assert_eq!(ids.len(), queries.len());
+        for id in ids {
+            let id = id.as_str().expect("stable query ID");
+            assert!(id.starts_with("capability-case-"));
+            assert!(query_ids.insert(id));
+            cases += 1;
+        }
+    }
+    assert_eq!(cases, 175);
+    assert_eq!(query_ids.len(), 175);
+
+    let fingerprint_input = json!({
+        "caseGroups": target["caseGroups"],
+        "descriptors": target["descriptors"],
+        "thresholds": target["thresholds"]
+    });
+    assert_eq!(
+        target["corpusFingerprint"],
+        sha256(&serde_json::to_vec(&fingerprint_input).expect("fingerprint input"))
+    );
+
+    let matrix: Value = serde_json::from_str(
+        &fs::read_to_string(
+            root.join("fixtures/compat/verification/typescript-responsibilities.v1.json"),
+        )
+        .expect("TypeScript responsibility matrix"),
+    )
+    .expect("responsibility matrix JSON");
+    let retrieval = matrix["sources"]
+        .as_array()
+        .expect("matrix sources")
+        .iter()
+        .find(|entry| entry["sourcePath"] == "src/eval/capability-retrieval-report.ts")
+        .expect("retrieval evaluator responsibility");
+    assert!(
+        retrieval["responsibilities"][0]["evidence"]
+            .as_array()
+            .expect("retrieval evidence")
+            .iter()
+            .any(|evidence| {
+                evidence["path"] == "crates/compat-harness/tests/provider_eval.rs"
+                    && evidence["test"]
+                        == "immutable_retrieval_corpus_preserves_transitional_175_case_contract"
+            })
+    );
+    assert!(
+        retrieval["responsibilities"][0]["rationale"]
+            .as_str()
+            .expect("retrieval rationale")
+            .contains(target_path)
     );
 }
 
