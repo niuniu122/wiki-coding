@@ -4,8 +4,8 @@ use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use minimax_compat_harness::{
-    RETRIEVAL_EVALUATION_GOLDEN, RetrievalEvaluationError, repository_root,
-    retrieval_report_json, run_retrieval_evaluation, verify_retrieval_evaluation,
+    RETRIEVAL_EVALUATION_GOLDEN, RetrievalEvaluationError, repository_root, retrieval_report_json,
+    run_retrieval_evaluation, verify_retrieval_evaluation,
 };
 use serde_json::{Value, json};
 
@@ -34,7 +34,10 @@ fn report_proves_locked_corpus_metrics_candidate_isolation_and_degradation() {
     let report = run_retrieval_evaluation(&repository_root()).expect("retrieval evaluation");
     let value = serde_json::to_value(&report).expect("report value");
 
-    assert_eq!(value["corpus"]["fingerprint"], "cb0426f3fc7c111fe06b7a26b0d607eeadc6d165db3faeb85e09f8d898e15a65");
+    assert_eq!(
+        value["corpus"]["fingerprint"],
+        "cb0426f3fc7c111fe06b7a26b0d607eeadc6d165db3faeb85e09f8d898e15a65"
+    );
     assert_eq!(value["corpus"]["cases"], 175);
     assert_eq!(value["corpus"]["positiveCases"], 135);
     assert_eq!(value["corpus"]["noMatchCases"], 40);
@@ -47,10 +50,19 @@ fn report_proves_locked_corpus_metrics_candidate_isolation_and_degradation() {
     assert_eq!(value["corpus"]["metrics"]["idValidity"], 1.0);
 
     let boundary = &value["candidateBoundary"];
-    assert_eq!(boundary["observedCandidateIds"], boundary["lexicalCandidateIds"]);
-    assert_eq!(boundary["semanticCandidateIds"], boundary["lexicalCandidateIds"]);
+    assert_eq!(
+        boundary["observedCandidateIds"],
+        boundary["lexicalCandidateIds"]
+    );
+    assert_eq!(
+        boundary["semanticCandidateIds"],
+        boundary["lexicalCandidateIds"]
+    );
     assert_eq!(boundary["outsiderAttemptedId"], "outside/bm25");
-    assert_eq!(boundary["outsiderResultIds"], boundary["lexicalCandidateIds"]);
+    assert_eq!(
+        boundary["outsiderResultIds"],
+        boundary["lexicalCandidateIds"]
+    );
     assert_eq!(boundary["outsiderRejected"], true);
 
     let degradations = value["degradations"]
@@ -77,12 +89,15 @@ fn report_proves_locked_corpus_metrics_candidate_isolation_and_degradation() {
     );
     assert_eq!(value["workspace"]["cases"], 15);
     assert_eq!(value["workspace"]["passedCases"], 15);
-    assert_eq!(value["disabledPath"], json!({
-        "networkRequests": 0,
-        "providerRequests": 0,
-        "modelDownloads": 0,
-        "modelLoads": 0
-    }));
+    assert_eq!(
+        value["disabledPath"],
+        json!({
+            "networkRequests": 0,
+            "providerRequests": 0,
+            "modelDownloads": 0,
+            "modelLoads": 0
+        })
+    );
     assert_eq!(value["passed"], true);
 }
 
@@ -91,10 +106,9 @@ fn strict_manifest_and_golden_drift_fail_closed() {
     let root = repository_root();
     let repository = FixtureRepository::copy_from(&root);
     let manifest_path = repository.path("fixtures/compat/evaluations/retrieval.v1.json");
-    let mut manifest: Value = serde_json::from_str(
-        &fs::read_to_string(&manifest_path).expect("retrieval manifest"),
-    )
-    .expect("retrieval manifest JSON");
+    let mut manifest: Value =
+        serde_json::from_str(&fs::read_to_string(&manifest_path).expect("retrieval manifest"))
+            .expect("retrieval manifest JSON");
     manifest["surprise"] = Value::Bool(true);
     fs::write(
         &manifest_path,
@@ -107,8 +121,7 @@ fn strict_manifest_and_golden_drift_fail_closed() {
     ));
 
     let repository = FixtureRepository::copy_from(&root);
-    fs::write(repository.path(RETRIEVAL_EVALUATION_GOLDEN), "{}\n")
-        .expect("write golden drift");
+    fs::write(repository.path(RETRIEVAL_EVALUATION_GOLDEN), "{}\n").expect("write golden drift");
     assert_eq!(
         verify_retrieval_evaluation(repository.root()),
         Err(RetrievalEvaluationError::GoldenDrift)

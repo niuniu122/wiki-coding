@@ -9,6 +9,7 @@ pub mod coverage;
 pub mod manifest;
 pub mod provider_eval;
 pub mod report;
+pub mod retrieval_eval;
 pub mod source_authority;
 
 pub use architecture::{
@@ -39,6 +40,12 @@ pub use provider_eval::{
     run_provider_evaluation, verify_provider_evaluation,
 };
 pub use report::{CompatReport, ReportEntry, build_report, report_json, validate_report};
+pub use retrieval_eval::{
+    CandidateBoundaryReport, CorpusReport, DegradationReport, DisabledPathReport, ProjectReport,
+    RETRIEVAL_EVALUATION_GOLDEN, RETRIEVAL_EVALUATION_MANIFEST, RetrievalEvaluationError,
+    RetrievalEvaluationReport, RetrievalMetrics, RetrievalThresholds, WorkspaceReport,
+    retrieval_report_json, run_retrieval_evaluation, verify_retrieval_evaluation,
+};
 pub use source_authority::{
     SourceAuthorityError, SourceAuthorityManifest, load_source_authority,
     validate_javascript_source_text, validate_source_authority,
