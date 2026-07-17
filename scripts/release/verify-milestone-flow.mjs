@@ -38,8 +38,8 @@ if (release.schemaVersion !== 1
     || (evidencePlatform !== platform && evidencePlatform !== developmentPlatform)
     || release.productFingerprint !== product.fingerprint
     || release.productFileCount !== product.fileCount
-    || release.package?.npmPackage?.rustDefaultSmoke !== true
-    || release.package?.npmPackage?.legacyBin !== "dist/cli.js"
+    || release.package?.npmPackage?.installedRustIdentity?.binarySha256 !== release.package?.manifest?.binarySha256
+    || release.package?.npmPackage?.installedRustIdentity?.capabilityStatusSmoke !== true
     || release.offline !== true
     || release.providerCalls !== 0
     || release.credentialsRead !== 0
@@ -57,8 +57,7 @@ const report = {
     runtimeFinalizationWikiAndCurrentRetrieval: "lifecycle_wiki",
     bm25FirstProjectDiscovery: "discovery_commands",
     sourcePreservingMigrationAndNarrowRollback: "migration",
-    installedRustDefaultSmoke: true,
-    explicitLegacyBin: "dist/cli.js"
+    installedRustIdentity: release.package.npmPackage.installedRustIdentity
   },
   offline: true,
   providerCalls: 0,

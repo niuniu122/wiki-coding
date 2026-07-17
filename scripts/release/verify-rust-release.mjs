@@ -91,12 +91,12 @@ function verifyPackage(directory, sourceBinary, limits, expectedPlatform) {
   if (manifest.schemaVersion !== 1 || manifest.embeddingIncluded !== false || manifest.name !== "minimax-codex") {
     fail("release manifest is invalid or claims bundled embedding content");
   }
+  if (Object.hasOwn(manifest, "legacy")) fail("release manifest contains a legacy product field");
   if (manifest.platform !== expectedPlatform) fail(`release platform ${manifest.platform} does not match Rust host ${expectedPlatform}`);
   if (rootName !== `minimax-codex-v${manifest.version}-${manifest.platform}`) fail("release archive name does not match its manifest");
   const expectedBinary = manifest.platform.startsWith("windows-") ? "minimax-codex.exe" : "minimax-codex";
   if (manifest.binary !== expectedBinary) fail("release manifest binary name does not match its platform");
   if (manifest.launcher !== "bin/minimax-codex.cjs") fail("release manifest launcher path is invalid");
-  if (manifest.legacy !== "dist/cli.js") fail("release manifest legacy path is invalid");
   const expectedSupportTier = manifest.platform.endsWith("-dev") ? "development_only" : "hosted_release";
   if (manifest.supportTier !== expectedSupportTier) fail("release support tier does not match its platform");
   if (manifest.binarySha256 !== sha256(readFileSync(sourceBinary))) fail("packaged binary hash does not match the release binary");
@@ -161,8 +161,6 @@ function verifyNpmPackage(directory, manifest, limits) {
     "package/bin/minimax-codex.cjs",
     `package/${manifest.binary}`,
     "package/package.json",
-    "package/dist/",
-    "package/dist/cli.js",
     "package/docs/",
     "package/docs/release/",
     "package/README.md",
@@ -174,17 +172,18 @@ function verifyNpmPackage(directory, manifest, limits) {
   }
   for (const name of entries.keys()) {
     const forbiddenSource = /(?:^|\/)\.planning(?:\/|$)|(?:^|\/)crates(?:\/|$)/u.test(name);
+    const generatedApplicationPayload = /(?:^|\/)dist(?:\/|$)/u.test(name);
     const bundledModelResource = /\.(?:onnx|safetensors|gguf|bin)$/iu.test(name)
       || /(?:^|\/)(?:models?|model-weights?|embedding-resources?)(?:\/|$)/iu.test(name);
-    if (forbiddenSource || bundledModelResource) {
+    if (forbiddenSource || generatedApplicationPayload || bundledModelResource) {
       fail(`npm package contains a forbidden source or model path: ${name}`);
     }
   }
   const packageJson = JSON.parse(entries.get("package/package.json").bytes.toString("utf8"));
-  if (packageJson.bin?.["minimax-codex"] !== "bin/minimax-codex.cjs"
-      || packageJson.bin?.["minimax-codex-legacy"] !== "dist/cli.js") {
-    fail("npm package does not expose both Rust-default and TypeScript-legacy bins");
+  if (JSON.stringify(packageJson.bin) !== JSON.stringify({"minimax-codex": "bin/minimax-codex.cjs"})) {
+    fail("npm package must expose exactly the Rust launcher bin");
   }
+  assertOnlyProductExecutables(entries, new Set(["package/bin/minimax-codex.cjs", `package/${manifest.binary}`]));
   if (sha256(entries.get(`package/${manifest.binary}`).bytes) !== manifest.binarySha256
       || sha256(entries.get("package/bin/minimax-codex.cjs").bytes) !== manifest.launcherSha256) {
     fail("npm package launcher or native binary hash is invalid");
@@ -213,9 +212,24 @@ function verifyNpmPackage(directory, manifest, limits) {
     archive: archive.replaceAll("\\", "/"),
     archiveSha256: hash,
     compressedBytes: bytes.length,
-    rustDefaultSmoke: true,
-    legacyBin: "dist/cli.js"
+    installedRustIdentity: {
+      binarySha256: manifest.binarySha256,
+      capabilityStatusSmoke: true
+    }
   };
+}
+
+function assertOnlyProductExecutables(entries, expectedExecutablePaths) {
+  for (const [name, entry] of entries) {
+    if (entry.type !== "0") continue;
+    const executable = (entry.mode & 0o111) !== 0;
+    if (expectedExecutablePaths.has(name) && !executable) {
+      fail(`product entry is not executable: ${name}`);
+    }
+    if (!expectedExecutablePaths.has(name) && executable) {
+      fail(`npm package contains an extra executable entry: ${name}`);
+    }
+  }
 }
 
 function verifyLicenses() {
@@ -287,6 +301,7 @@ function parseTarGzip(bytes) {
     const prefix = readTarString(header, 345, 155);
     const path = prefix ? `${prefix}/${name}` : name;
     const size = readTarOctal(header, 124, 12);
+    const mode = readTarOctal(header, 100, 8);
     const storedChecksum = readTarOctal(header, 148, 8);
     const checksumHeader = Buffer.from(header);
     checksumHeader.fill(0x20, 148, 156);
@@ -302,7 +317,7 @@ function parseTarGzip(bytes) {
     const contentStart = offset + 512;
     const contentEnd = contentStart + size;
     if (contentEnd > tar.length) fail("release archive entry is truncated");
-    entries.set(path, {type, bytes: Buffer.from(tar.subarray(contentStart, contentEnd))});
+    entries.set(path, {type, mode, bytes: Buffer.from(tar.subarray(contentStart, contentEnd))});
     offset = contentStart + Math.ceil(size / 512) * 512;
   }
   if (entries.size === 0) fail("release archive is empty");

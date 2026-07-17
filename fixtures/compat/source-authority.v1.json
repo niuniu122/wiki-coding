@@ -45,14 +45,14 @@
     {
       "id": "milestone-verification",
       "path": "scripts/release/verify-milestone-flow.mjs",
-      "sha256": "21f3ac4ad6d3f5f4e3cc28a6e9ce8da9b2606824135f8886f285ba4c06c38688",
+      "sha256": "a8930c1d2e44497b46d79b821de6c7c705d54b465148f41d140f7f0334a332b2",
       "purpose": "milestoneVerification",
       "forbiddenCapabilities": ["fallback", "migration", "provider", "retrieval", "runtimeDownload", "session", "tool", "vault", "wiki"]
     },
     {
       "id": "release-verification",
       "path": "scripts/release/verify-rust-release.mjs",
-      "sha256": "ca1a2988c992b003560a21882e0880b38c24a0e7bc996a3817c74d9e6b2a3d8e",
+      "sha256": "a252c1aa47c8daa7da0f05dc314c0c40d68c1c3096985558c4de3688c299ddb9",
       "purpose": "rustReleaseVerification",
       "forbiddenCapabilities": ["fallback", "migration", "provider", "retrieval", "runtimeDownload", "session", "tool", "vault", "wiki"]
     }
