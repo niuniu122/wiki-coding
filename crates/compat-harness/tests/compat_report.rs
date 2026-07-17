@@ -13,6 +13,7 @@ use minimax_compat_harness::{
     validate_retrieval_source_text, validate_rust_command_surface, validate_rust_provider_profiles,
     validate_rust_retrieval_evidence, validate_rust_tool_evidence, validate_rust_vault_evidence,
     validate_ui_source_text, validate_vault_source_boundary, validate_vault_source_text,
+    verify_fixture_compatibility,
 };
 
 #[test]
@@ -20,10 +21,16 @@ fn compat_report_matches_golden_and_is_byte_identical_on_second_run() {
     let root = repository_root();
     let first_manifests = load_compat_manifests(&root).expect("strict manifests");
     let second_manifests = load_compat_manifests(&root).expect("strict manifests on second load");
-    let first = build_report(&first_manifests);
-    let second = build_report(&second_manifests);
-    validate_report(&first, &root).expect("valid report");
-    validate_report(&second, &root).expect("valid report on second run");
+    let first = build_report(&first_manifests, &root).expect("first report");
+    let second = build_report(&second_manifests, &root).expect("second report");
+    validate_report(&first, &first_manifests, &root).expect("valid report");
+    validate_report(&second, &second_manifests, &root).expect("valid report on second run");
+
+    assert_eq!(first.contract_version, "v1");
+    assert_eq!(
+        first.contract_fingerprint,
+        first_manifests.public_contract.content_fingerprint
+    );
 
     let first_json = report_json(&first).expect("first JSON");
     let second_json = report_json(&second).expect("second JSON");
@@ -45,7 +52,7 @@ fn compat_report_golden_accepts_windows_checkout_newlines() {
 fn compat_report_contains_every_contract_item_exactly_once() {
     let root = repository_root();
     let manifests = load_compat_manifests(&root).expect("strict manifests");
-    let report = build_report(&manifests);
+    let report = build_report(&manifests, &root).expect("contract report");
     let expected_ids = manifests
         .public_contract
         .items
@@ -116,6 +123,57 @@ fn public_contract_manifest_fails_closed_on_schema_identity_and_evidence_drift()
 }
 
 #[test]
+fn compatibility_report_and_verify_are_hermetic_without_typescript_runtime() {
+    let repository = repository_root();
+    let fixture = HermeticCompatibilityFixture::new(&repository);
+    assert!(!fixture.root.join("src").exists());
+    assert!(!fixture.root.join("dist").exists());
+    assert!(!fixture.root.join("test").exists());
+
+    verify_fixture_compatibility(&fixture.root, false).expect("fixture-only Rust verification");
+
+    let manifests = load_compat_manifests(&fixture.root).expect("hermetic manifests");
+    let report = build_report(&manifests, &fixture.root).expect("hermetic report");
+    validate_report(&report, &manifests, &fixture.root).expect("hermetic report validation");
+}
+
+#[test]
+fn compatibility_rejects_unknown_differences_live_rows_and_typescript_execution_links() {
+    let repository = repository_root();
+
+    let unknown_difference = HermeticCompatibilityFixture::new(&repository);
+    unknown_difference.rewrite_json("fixtures/compat/command-differences.v1.json", |fixture| {
+        let differences = fixture["differences"]
+            .as_array_mut()
+            .expect("command differences");
+        let mut unknown = differences[0].clone();
+        unknown["id"] = serde_json::json!("difference.command.unknown");
+        unknown["command"] = serde_json::json!("/unknown");
+        differences.push(unknown);
+    });
+    let manifests = load_compat_manifests(&unknown_difference.root).expect("strict manifests");
+    assert!(build_report(&manifests, &unknown_difference.root).is_err());
+
+    let live_row = HermeticCompatibilityFixture::new(&repository);
+    let manifests = load_compat_manifests(&live_row.root).expect("strict manifests");
+    let mut report = build_report(&manifests, &live_row.root).expect("contract report");
+    let mut row = report.entries[0].clone();
+    row.id = "typescript.product_entry".to_owned();
+    report.entries.push(row);
+    assert!(validate_report(&report, &manifests, &live_row.root).is_err());
+
+    for forbidden in [
+        "\nconst _: &str = \"import '../src/cli.tsx'\";\n",
+        "\nconst _: &str = \"npm run build && tsc -p tsconfig.json\";\n",
+        "\nfn legacy_process() { let _ = std::process::Command::new(\"node\").arg(\"dist/cli.js\"); }\n",
+    ] {
+        let fixture = HermeticCompatibilityFixture::new(&repository);
+        fixture.append_compat_source("crates/compat-harness/src/report.rs", forbidden);
+        assert!(verify_fixture_compatibility(&fixture.root, false).is_err());
+    }
+}
+
+#[test]
 fn rust_command_permission_provider_and_product_baselines_are_executable() {
     let root = repository_root();
     let manifests = load_compat_manifests(&root).expect("strict manifests");
@@ -170,7 +228,7 @@ fn cutover_rejects_a_pending_mandatory_rust_item() {
 fn compat_report_rejects_matched_item_without_evidence() {
     let root = repository_root();
     let manifests = load_compat_manifests(&root).expect("strict manifests");
-    let mut report = build_report(&manifests);
+    let mut report = build_report(&manifests, &root).expect("contract report");
     let matched = report
         .entries
         .iter_mut()
@@ -180,7 +238,7 @@ fn compat_report_rejects_matched_item_without_evidence() {
     matched.evidence.clear();
 
     assert_eq!(
-        validate_report(&report, &root),
+        validate_report(&report, &manifests, &root),
         Err(ManifestError::Validation(format!(
             "matched item requires evidence: {id}"
         )))
@@ -510,6 +568,88 @@ struct LauncherFixture {
 
 struct CompatManifestFixture {
     root: PathBuf,
+}
+
+struct HermeticCompatibilityFixture {
+    root: PathBuf,
+}
+
+impl HermeticCompatibilityFixture {
+    fn new(repository_root: &Path) -> Self {
+        let unique = format!(
+            "minimax-hermetic-compat-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock after epoch")
+                .as_nanos()
+        );
+        let root = std::env::temp_dir().join(unique);
+        fs::create_dir_all(&root).expect("create hermetic compatibility root");
+        for relative in [
+            "Cargo.toml",
+            "Cargo.lock",
+            "rust-toolchain.toml",
+            "package.json",
+            "bin",
+            "capabilities",
+            "crates",
+            "fixtures",
+            "scripts/release",
+            ".github/workflows",
+        ] {
+            copy_fixture_path(repository_root, &root, relative);
+        }
+        Self { root }
+    }
+
+    fn rewrite_json(&self, relative: &str, mutate: impl FnOnce(&mut serde_json::Value)) {
+        let path = self.root.join(relative);
+        let mut value: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&path).expect("fixture JSON"))
+                .expect("valid fixture JSON");
+        mutate(&mut value);
+        fs::write(
+            path,
+            serde_json::to_vec_pretty(&value).expect("serialize fixture JSON"),
+        )
+        .expect("rewrite fixture JSON");
+    }
+
+    fn append_compat_source(&self, relative: &str, suffix: &str) {
+        let path = self.root.join(relative);
+        let mut source = fs::read_to_string(&path).expect("compatibility source");
+        source.push_str(suffix);
+        fs::write(path, source).expect("rewrite compatibility source");
+    }
+}
+
+impl Drop for HermeticCompatibilityFixture {
+    fn drop(&mut self) {
+        fs::remove_dir_all(&self.root).expect("remove hermetic compatibility fixture");
+    }
+}
+
+fn copy_fixture_path(repository_root: &Path, fixture_root: &Path, relative: &str) {
+    let source = repository_root.join(relative);
+    let destination = fixture_root.join(relative);
+    if source.is_dir() {
+        fs::create_dir_all(&destination).expect("create copied fixture directory");
+        for entry in fs::read_dir(&source).expect("read copied fixture directory") {
+            let entry = entry.expect("fixture directory entry");
+            let name = entry.file_name();
+            let child = Path::new(relative).join(name);
+            copy_fixture_path(
+                repository_root,
+                fixture_root,
+                child.to_str().expect("UTF-8 fixture path"),
+            );
+        }
+    } else {
+        fs::create_dir_all(destination.parent().expect("copied fixture parent"))
+            .expect("create copied fixture parent");
+        fs::copy(source, destination).expect("copy hermetic fixture path");
+    }
 }
 
 impl CompatManifestFixture {
