@@ -43,7 +43,7 @@
               "test": "provider_evaluation_matches_committed_golden_and_is_repeatable"
             }
           ],
-          "rationale": "Historical src/eval/provider-conformance.ts Provider evaluation authority is replaced by the strict offline Rust evaluator, fingerprinted fixtures, and committed golden report.",
+          "rationale": "Historical src/eval/provider-conformance.ts authority is replaced by `cargo run -p minimax-compat-harness --locked -- provider-eval --format json`, the exact Rust evaluator test, and fixtures/compat/evaluations/provider-report.expected.json.",
           "id": "ts-src-eval-provider-conformance-ts"
         }
       ]
@@ -1372,7 +1372,7 @@
               "test": "provider_evaluation_matches_committed_golden_and_is_repeatable"
             }
           ],
-          "rationale": "Historical test/provider-conformance.test.ts Provider evaluation responsibility is replaced by the strict offline Rust evaluator and byte-stable golden report.",
+          "rationale": "Historical test/provider-conformance.test.ts responsibility is replaced by `provider-eval --format json`, the exact Rust evaluator test, and fixtures/compat/evaluations/provider-report.expected.json.",
           "id": "ts-test-provider-conformance-test-ts"
         }
       ]
@@ -1724,7 +1724,7 @@
               "test": "provider_evaluation_matches_committed_golden_and_is_repeatable"
             }
           ],
-          "rationale": "Historical test/support/provider-conformance-suite.ts Provider conformance authority is replaced by the strict offline Rust evaluator, production replay, and byte-stable golden report.",
+          "rationale": "Historical test/support/provider-conformance-suite.ts authority is replaced by `provider-eval --format json`, production replay, the exact Rust evaluator test, and fixtures/compat/evaluations/provider-report.expected.json.",
           "id": "ts-test-support-provider-conformance-suite-ts"
         }
       ]

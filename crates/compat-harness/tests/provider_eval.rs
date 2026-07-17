@@ -238,6 +238,30 @@ fn immutable_retrieval_corpus_preserves_transitional_175_case_contract() {
     )
     .expect("immutable retrieval JSON");
 
+    assert_object_keys(
+        &target,
+        &[
+            "caseGroups",
+            "corpusFingerprint",
+            "corpusId",
+            "descriptors",
+            "schemaVersion",
+            "source",
+            "thresholds",
+        ],
+    );
+    assert_object_keys(&target["source"], &["path", "retainedUntil", "sha256"]);
+    assert_object_keys(
+        &target["thresholds"],
+        &[
+            "idValidity",
+            "minimumCases",
+            "mrr",
+            "noMatchPrecision",
+            "recallAt5",
+            "top1",
+        ],
+    );
     assert_eq!(target["schemaVersion"], 1);
     assert_eq!(target["corpusId"], "capability-retrieval-expanded-v1");
     assert_eq!(target["source"]["path"], source_path);
@@ -262,6 +286,10 @@ fn immutable_retrieval_corpus_preserves_transitional_175_case_contract() {
     let mut query_ids = std::collections::BTreeSet::new();
     let mut cases = 0usize;
     for (source_group, target_group) in source_groups.iter().zip(target_groups) {
+        assert_object_keys(
+            target_group,
+            &["expectedIds", "id", "noMatch", "queries", "queryIds"],
+        );
         assert_eq!(target_group["expectedIds"], source_group["expectedIds"]);
         assert_eq!(
             target_group["noMatch"].as_bool().expect("target noMatch"),
@@ -273,7 +301,7 @@ fn immutable_retrieval_corpus_preserves_transitional_175_case_contract() {
         assert_eq!(ids.len(), queries.len());
         for id in ids {
             let id = id.as_str().expect("stable query ID");
-            assert!(id.starts_with("capability-case-"));
+            assert_eq!(id, format!("capability-case-{:03}", cases + 1));
             assert!(query_ids.insert(id));
             cases += 1;
         }
@@ -348,6 +376,16 @@ fn sha256(bytes: &[u8]) -> String {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect()
+}
+
+fn assert_object_keys(value: &Value, expected: &[&str]) {
+    let actual = value
+        .as_object()
+        .expect("strict schema object")
+        .keys()
+        .map(String::as_str)
+        .collect::<std::collections::BTreeSet<_>>();
+    assert_eq!(actual, expected.iter().copied().collect());
 }
 
 fn normalize_newline(value: &str) -> String {
