@@ -1,20 +1,19 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: Rust rewrite
-current_phase: 8
-current_phase_name: Codex-style subprocess sandbox hardening
-status: complete
-stopped_at: Phase 8 and the v1.0 Rust rewrite milestone completed with fresh candidate and strict hosted evidence
-last_updated: "2026-07-17T12:10:00+08:00"
+milestone: v2.0
+milestone_name: Capability Workspace
+current_phase: 9
+current_phase_name: Capability Workspace and Non-Programmer Harness
+status: executing
+last_updated: "2026-07-17T07:49:32.081Z"
 last_activity: 2026-07-17
-last_activity_desc: Completed Phase 8 after candidate and strict Windows/Linux sandbox, release, and milestone gates passed
+last_activity_desc: Phase 9 execution started
 progress:
-  total_phases: 8
+  total_phases: 9
   completed_phases: 8
-  total_plans: 25
+  total_plans: 28
   completed_plans: 25
-  percent: 100
+  percent: 89
 ---
 
 # Project State
@@ -27,14 +26,10 @@ See: `.planning/PROJECT.md` (updated 2026-07-15)
 
 ## Current Position
 
-The v1.0 milestone is complete. Phase 8 replaced advisory subprocess safety with an enforced/fail-closed Linux boundary and truthful unsupported-platform behavior.
-
-- Requirements: 52/52 complete
-- Cross-phase integrations: 38/38
-- End-to-end flows: 7/7
-- Plans: 25/25
-- Phase 8 plans: 3/3
-- Final audit blockers: 0
+Phase: 9 (Capability Workspace and Non-Programmer Harness) — EXECUTING
+Plan: 1 of 3
+Status: Executing Phase 9
+Last activity: 2026-07-17 — Phase 9 execution started
 
 ## Previous Phase 7 Hosted Baseline (superseded)
 
@@ -89,3 +84,9 @@ No package publication, tag, PR, merge, live Provider request, credential read, 
 - Approval and sandboxing are independent axes: confirm maps to restricted execution, while process-scoped full access explicitly disables the subprocess sandbox.
 - Confirm-mode process execution fails closed on platforms or installations without a proven backend; no partial Windows imitation is presented as safe.
 - Phase 8 code, docs, CI contracts, adversarial canaries, native release artifacts, and refreshed product-fingerprint evidence all pass. The milestone has no remaining mandatory gate.
+
+## Decisions
+
+- [Phase 9]: External project, Skill, and MCP metadata lives under capabilities/; crates/tools remains the fixed internal adapter set. — Separates discovery metadata from executable authority.
+- [Phase 9]: BM25 is authoritative recall; verified embedding may rerank only the bounded lexical candidate union. — Preserves offline usefulness and prevents semantic expansion.
+- [Phase 9]: Discovery exposes ready, needs_install, or needs_authorization but never performs the next action. — Makes prerequisites understandable without granting install or execution authority.

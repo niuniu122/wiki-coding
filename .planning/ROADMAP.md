@@ -2,7 +2,7 @@
 
 ## Overview
 
-The milestone proceeds as eight vertical, verifiable boundaries: freeze compatibility and core contracts, deliver a usable Rust conversation shell, add safe tools, add the per-project Vault and main-model Wiki workflow, restore and complete three-domain hybrid retrieval, migrate/package/cut over, close every cross-phase integration gap found by the milestone audit, then replace advisory subprocess safety with a Codex-style enforced/fail-closed boundary.
+The product proceeds through nine vertical, verifiable boundaries: eight completed v1 phases established the Rust runtime, safe tools, Vault/Wiki, hybrid retrieval, release cutover, and subprocess sandbox; v2 begins with a dedicated read-only capability workspace that extends discovery to projects, Skills, and MCP servers without expanding execution authority.
 
 ## Phases
 
@@ -14,6 +14,7 @@ The milestone proceeds as eight vertical, verifiable boundaries: freeze compatib
 - [x] **Phase 6: Migration, Release, and Cutover** - Import safely, meet release gates, and switch the default entry only after parity. (completed 2026-07-16)
 - [x] **Phase 7: Close Milestone Integration Gaps** - Wire the product flows, prove the exact final artifacts, and pass the repeated milestone audit. (completed 2026-07-16)
 - [x] **Phase 8: Codex-style subprocess sandbox hardening** - Separate approval from isolation and enforce or fail closed for every confirm-mode process tool. (completed 2026-07-17)
+- [ ] **Phase 9: Capability Workspace and Non-Programmer Harness** - Isolate project/Skill/MCP catalogs, retrieve them BM25-first, and explain safe readiness without automatic execution.
 
 ## Phase Details
 
@@ -202,6 +203,7 @@ Plans:
 | 6. Migration, Release, and Cutover | 3/3 | Complete | 2026-07-16 |
 | 7. Close Milestone Integration Gaps | 4/4 | Complete | 2026-07-16 |
 | 8. Codex-style Subprocess Sandbox Hardening | 3/3 | Complete | 2026-07-17 |
+| 9. Capability Workspace and Non-Programmer Harness | 0/3 | In progress | — |
 
 ### Phase 7: Close milestone integration gaps
 
@@ -245,3 +247,24 @@ Plans:
 - [x] 08-01: Introduce the independent sandbox policy and fail-closed launch contract
 - [x] 08-02: Implement Linux Bubblewrap enforcement and adversarial canaries
 - [x] 08-03: Wire truthful diagnostics, documentation, CI, and full regression gates
+
+### Phase 9: Capability Workspace and Non-Programmer Harness
+
+**Goal:** Let a non-programmer search a dedicated external capability workspace for open-source projects, Skills, and MCP servers, understand what is ready or still required, and remain protected from implicit installation, authorization, or execution.
+**Requirements**: CAPW-01, CAPW-02, CAPW-03, CAPW-04, CAPW-05, CAPW-06, CAPW-07, CAPW-08
+**Depends on:** Phase 8
+**Success Criteria** (what must be TRUE):
+
+  1. Source-controlled project, Skill, and MCP catalogs live under one dedicated `capabilities/` root and never share mutable runtime state or internal tool-adapter code.
+  2. Three typed indexes share exact/BM25 algorithms but reject cross-kind documents; optional embedding observes and reranks only a bounded lexical candidate union.
+  3. CLI text and JSON expose kind, readiness, reason, permissions, source facts, actual retrieval mode, and a safe next action in language a non-programmer can follow.
+  4. Missing, corrupt, unsafe, incompatible, or slow external metadata/resources fail closed or degrade to BM25 without triggering network, credentials, installation, or process launch.
+  5. Deterministic catalog, retrieval, readiness, prompt-augmentation, and compatibility tests pass without a Provider call or downloaded model.
+
+**Plans:** 0/3 plans complete
+
+Plans:
+
+- [ ] 09-01: Create the dedicated workspace, strict capability-card schema, and three typed retrieval indexes
+- [ ] 09-02: Add inventory-derived readiness, unified CLI search, safe prompt context, and authority guardrails
+- [ ] 09-03: Add evaluation fixtures, non-programmer documentation, compatibility gates, and full verification

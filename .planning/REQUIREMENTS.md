@@ -90,12 +90,25 @@
 - [x] **REL-03**: Offline unit, contract, parity, recovery, security, migration, and cross-platform CI pass without real credentials or API spend.
 - [x] **REL-04**: Rust becomes the default entry only after mandatory acceptance gates pass; TypeScript remains usable until cutover and its source data is never deleted automatically.
 
-## v2 Requirements
+## v2.0 Requirements
+
+### Capability Workspace
+
+- [ ] **CAPW-01**: A maintainer can curate project, Skill, and MCP metadata in one dedicated source workspace whose three catalogs are physically separate from internal tool adapters and runtime state.
+- [ ] **CAPW-02**: Every external item uses one strict capability-card contract containing kind, intent, source, platform, license, install, authorization, permission, and maintenance facts without inventing unknown values.
+- [ ] **CAPW-03**: A user can search project, Skill, and MCP catalogs through three schema-isolated exact/BM25 indexes that share the retrieval kernel but cannot accept one another's document types.
+- [ ] **CAPW-04**: An optional verified embedding resource can rerank only the bounded BM25 candidates from the selected catalogs, and every semantic failure preserves useful lexical results with a stable degraded reason.
+- [ ] **CAPW-05**: A non-programmer can search all capability kinds or one kind and see `ready`, `needs_install`, or `needs_authorization` plus a plain-language next action for every result.
+- [ ] **CAPW-06**: Capability status comes from a separate local inventory overlay; source catalogs never contain credentials, mutable install state, or executable process state.
+- [ ] **CAPW-07**: Search, status, prompt augmentation, and catalog loading are read-only and cannot download, install, authorize, or execute a discovered project, Skill, or MCP server.
+- [ ] **CAPW-08**: Deterministic fixtures and evaluations cover kind isolation, mixed Chinese/English intent, candidate-only embedding, readiness precedence, unsafe metadata rejection, and CLI text/JSON parity.
+
+## Future Requirements
 
 ### Extensions
 
 - **EXT-01**: Add macOS support after its full platform matrix passes.
-- **EXT-02**: Add MCP and plugin extension points without weakening the core/tool boundary.
+- **EXT-02**: Add an explicitly confirmed installer/resolver and sandboxed Skill/MCP runtime without weakening the core/tool boundary.
 - **EXT-03**: Add explicit read-only global knowledge above isolated project Vaults.
 
 ## Out of Scope
@@ -106,7 +119,8 @@
 | Background daemon | v1 is one foreground process and one writer |
 | Application-layer Vault encryption | Obsidian-readable files are protected by OS controls |
 | Bundled embedding model | Base distribution must remain small and functional without it |
-| Unrestricted shell, MCP, plugins, subagents | Outside the v1 safety and compatibility contract |
+| Automatic project/Skill/MCP installation or execution | Discovery does not grant authority; a later milestone must design confirmation, provenance, rollback, and sandboxing |
+| General plugins, subagents, or unrestricted shell | Outside this milestone's read-only capability-workspace contract |
 
 ## Traceability
 
@@ -164,13 +178,22 @@
 | REL-02 | Phase 6 | Complete |
 | REL-03 | Phase 6 | Complete |
 | REL-04 | Phase 6 | Complete |
+| CAPW-01 | Phase 9 | Pending |
+| CAPW-02 | Phase 9 | Pending |
+| CAPW-03 | Phase 9 | Pending |
+| CAPW-04 | Phase 9 | Pending |
+| CAPW-05 | Phase 9 | Pending |
+| CAPW-06 | Phase 9 | Pending |
+| CAPW-07 | Phase 9 | Pending |
+| CAPW-08 | Phase 9 | Pending |
 
 **Coverage:**
 
-- v1 requirements: 52 total
-- Mapped to phases: 52
+- v1 requirements: 52 complete
+- v2.0 requirements: 8 active
+- Mapped to phases: 60
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-07-15*
-*Last updated: 2026-07-17 for Phase 8 subprocess sandbox hardening*
+*Last updated: 2026-07-17 after defining the v2.0 Capability Workspace milestone*
