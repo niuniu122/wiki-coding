@@ -17,7 +17,7 @@ The four process-backed adapters are Cargo diagnostics, Git status/diff, npm dia
 
 The sandbox intentionally does not pass Bubblewrap's `--disable-userns`. Bubblewrap 0.9 implements that option by denying `clone3`, which prevents Cargo from starting `rustc` on current Ubuntu runners. This follows Codex's Bubblewrap behavior: the child is already inside a new user namespace with all capabilities dropped, while the filesystem mounts, network namespace, and inherited seccomp filter remain in force for descendants.
 
-Rust toolchains and non-credential Cargo cache directories may be mounted read-only so offline checks still work. Cargo credential/config files are not mounted. Child environments remain allowlisted and never receive Provider API credentials.
+Rust toolchains, system linker alternatives, and non-credential Cargo cache directories may be mounted read-only so offline checks still work. Cargo credential/config files are not mounted. Child environments remain allowlisted and never receive Provider API credentials.
 
 The runtime executes the complete Bubblewrap-plus-seccomp probe first. The syscall filter denies new sockets (including Unix-domain sockets), io_uring setup, and kernel keyring access; the separate network namespace remains a second layer. Local `socketpair` remains available because Rust's standard process launcher uses it to report child `exec` failures, and a newly created pair cannot connect to a host endpoint. Missing Bubblewrap returns `sandbox_unavailable`; a backend that cannot create the namespaces or install the filter returns `sandbox_denied`. Neither error retries the target without a sandbox.
 

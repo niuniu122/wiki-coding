@@ -121,6 +121,10 @@ pub(crate) fn bubblewrap_args(
         }
     }
     push_args(&mut args, &["--dir", "/etc"]);
+    let alternatives = Path::new("/etc/alternatives");
+    if alternatives.is_dir() {
+        push_path_bind(&mut args, "--ro-bind", alternatives, alternatives);
+    }
     for system_file in [
         "/etc/ld.so.cache",
         "/etc/passwd",

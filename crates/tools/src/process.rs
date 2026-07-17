@@ -1077,6 +1077,12 @@ mod sandbox_tests {
         }
         assert!(!rendered.contains(&"--disable-userns".into()));
         assert!(!rendered.contains(&"--share-net".into()));
+        #[cfg(target_os = "linux")]
+        assert!(rendered.windows(3).any(|window| {
+            window[0] == "--ro-bind"
+                && window[1] == "/etc/alternatives"
+                && window[2] == "/etc/alternatives"
+        }));
         assert!(
             rendered
                 .windows(2)
