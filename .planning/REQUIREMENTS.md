@@ -103,6 +103,37 @@
 - [x] **CAPW-07**: Search, status, prompt augmentation, and catalog loading are read-only and cannot download, install, authorize, or execute a discovered project, Skill, or MCP server.
 - [x] **CAPW-08**: Deterministic fixtures and evaluations cover kind isolation, mixed Chinese/English intent, candidate-only embedding, readiness precedence, unsafe metadata rejection, and CLI text/JSON parity.
 
+## v3.0 Requirements
+
+### Rust Authority
+
+- [ ] **RUST-01**: Rust is the only executable product implementation for CLI/TUI, Provider, sessions, tools, Vault/Wiki, retrieval, capability discovery, migration, and compatibility behavior.
+- [ ] **RUST-02**: JavaScript is confined to an explicit npm launcher/release allowlist and cannot import product-domain source, implement business behavior, download an unverified runtime, or fall back to TypeScript.
+- [ ] **RUST-03**: `.minimax` and Rust schemas are the only writable runtime authority; no legacy process can write `.mini-codex` state after cutover.
+
+### Rust Verification Authority
+
+- [ ] **RVE-01**: Still-required public CLI, lifecycle, Provider, tool, retrieval, and rendering behaviors covered by TypeScript tests are represented by deterministic Rust tests or an explicit documented retirement decision.
+- [ ] **RVE-02**: Provider conformance evaluation is Rust-owned, fixture-only, machine-readable, and covers the supported Responses and Chat Completions profiles without credentials or API spend.
+- [ ] **RVE-03**: Retrieval evaluation is Rust-owned and proves exact/BM25 usefulness, labeled mixed-language cases, BM25-before-embedding ordering, candidate-only semantic reranking, and truthful degradation.
+
+### Compatibility and Migration
+
+- [ ] **RCMP-01**: The compatibility harness evaluates the current Rust product against immutable public-contract fixtures and explicit differences without building or executing a TypeScript runtime.
+- [ ] **RCMP-02**: TypeScript-era migration inventory, dry-run, apply, verify, idempotency, collision, interruption recovery, and narrow rollback remain source-preserving and release-gated for at least two public releases after v3.0.
+
+### npm and Native Release
+
+- [ ] **RNPM-01**: `npm install -g minimax-codex` and `npx minimax-codex` launch the packaged Rust binary on supported hosts through one no-fallback command entry.
+- [ ] **RNPM-02**: The npm package has no `minimax-codex-legacy`, `dist/cli.js`, TypeScript compiler/runtime, React/Ink runtime, or TypeScript-only production/build dependency.
+- [ ] **RNPM-03**: Packed-package verification rejects missing, wrong-platform, renamed, non-executable, or hash-mismatched Rust binaries with actionable errors before release.
+
+### Final Cutover
+
+- [ ] **RCUT-01**: The repository contains no TypeScript/TSX product or test source, and CI blocks reintroduction outside static migration data fixtures.
+- [ ] **RCUT-02**: Windows x64 MSVC and Linux x64 GNU pass Rust tests, evaluations, packaging, installed smoke, checksum, upgrade/rollback, security, license, and performance gates against one final product fingerprint.
+- [ ] **RCUT-03**: User and maintainer documentation describes Rust-only architecture, npm/native installation, supported platforms, no-fallback failures, migration/rollback, and the two-release compatibility window.
+
 ## Future Requirements
 
 ### Extensions
@@ -186,14 +217,29 @@
 | CAPW-06 | Phase 9 | Complete |
 | CAPW-07 | Phase 9 | Complete |
 | CAPW-08 | Phase 9 | Complete |
+| RUST-01 | Phase 10 | Pending |
+| RUST-02 | Phase 10 | Pending |
+| RUST-03 | Phase 10 | Pending |
+| RVE-01 | Phase 11 | Pending |
+| RVE-02 | Phase 11 | Pending |
+| RVE-03 | Phase 11 | Pending |
+| RCMP-01 | Phase 12 | Pending |
+| RCMP-02 | Phase 12 | Pending |
+| RNPM-01 | Phase 13 | Pending |
+| RNPM-02 | Phase 13 | Pending |
+| RNPM-03 | Phase 13 | Pending |
+| RCUT-01 | Phase 14 | Pending |
+| RCUT-02 | Phase 14 | Pending |
+| RCUT-03 | Phase 14 | Pending |
 
 **Coverage:**
 
 - v1 requirements: 52 complete
 - v2.0 requirements: 8 complete
-- Mapped to phases: 60
+- v3.0 requirements: 14 pending
+- Mapped to phases: 74
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-07-15*
-*Last updated: 2026-07-17 after verifying the v2.0 Capability Workspace milestone locally*
+*Last updated: 2026-07-17 when defining the v3.0 Rust Convergence milestone*

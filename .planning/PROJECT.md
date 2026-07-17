@@ -22,7 +22,11 @@ A non-programmer can describe a goal and safely use one local, recoverable CLI t
 
 ### Active
 
-- [ ] Refresh hosted Windows/Linux release evidence for the changed product fingerprint before release.
+- [ ] Make Rust the only product/runtime implementation and remove the live TypeScript CLI, tests, evaluations, and build dependencies.
+- [ ] Keep npm as a thin distribution shell that launches the packaged Rust binary and never falls back to TypeScript.
+- [ ] Preserve upgrade safety through the Rust-owned TypeScript-data importer and immutable compatibility fixtures for at least two public releases after cutover.
+- [ ] Replace TypeScript verification authority with deterministic Rust tests/evaluations before deleting any covered source.
+- [ ] Refresh hosted Windows/Linux release evidence for the final Rust-converged product fingerprint before release.
 
 ### Out of Scope
 
@@ -33,10 +37,12 @@ A non-programmer can describe a goal and safely use one local, recoverable CLI t
 - Bundling an embedding model in the base executable — semantic resources are separately installed and verified.
 - macOS v1 support — it follows after keyring, terminal, file replacement, and packaging tests pass.
 - Cross-project writable knowledge — every project has one isolated writable Vault.
+- Removing npm/Node distribution entirely — npm remains a supported convenience channel, but not a product implementation.
+- Adding macOS, ARM, new Providers, new runtime tools, or a capability installer during convergence — this milestone removes duplicate authority rather than expanding features.
 
 ## Context
 
-The v1 Rust rewrite, Phase 8 subprocess hardening, and Phase 9 capability workspace are implemented. External project, Skill, and MCP metadata now has separate source catalogs and typed indexes, while runtime install/access state remains an optional local overlay. BM25 remains useful without a model and optional verified embedding cannot introduce results outside the lexical candidate union. Hosted release evidence must be refreshed for this changed product fingerprint before release.
+The v1 Rust rewrite, Phase 8 subprocess hardening, and Phase 9 capability workspace are implemented. Rust is already the default product entry, but the repository still contains a live TypeScript implementation, TypeScript tests/evaluations, a legacy CLI entry, and release/compatibility gates that require `dist/cli.js`. That duplicate authority is now the primary reliability risk. v3 removes the live TypeScript product after equivalent Rust verification exists, while retaining a minimal npm launcher/package layer and source-preserving Rust migration support.
 
 ## Constraints
 
@@ -45,11 +51,15 @@ The v1 Rust rewrite, Phase 8 subprocess hardening, and Phase 9 capability worksp
 - **Data**: Raw evidence finalizes before Wiki evaluation; every durable Wiki claim has source IDs and a recoverable transaction receipt.
 - **Retrieval**: BM25 remains the no-model baseline; project discovery always recalls with BM25 before embedding rerank.
 - **Capability workspace**: Project, Skill, and MCP source metadata are physically separate and schema-isolated; runtime installs, credentials, and process state never live in the source catalog.
+- **Rust authority**: Product behavior, state ownership, compatibility decisions, tests, and evaluations have one executable authority in Rust.
+- **npm boundary**: JavaScript may locate/package a platform Rust binary but may not implement Provider, retrieval, Vault, session, tool, migration, or fallback behavior.
+- **Cutover order**: A TypeScript responsibility is deleted only after its Rust replacement and deterministic acceptance gate pass on the current branch.
+- **Compatibility support**: TypeScript source data remains importable through Rust for at least two public releases after v3.0; fixtures remain static evidence and are not an executable legacy runtime.
 - **Authority**: Search and recommendation are read-only. A result may describe a next action but may never install, authorize, or execute it.
 - **Permissions**: Public modes are exactly `confirm` and `full-access`; hard safety gates remain in both.
 - **Credentials**: Environment variables override OS keyring; headless systems without keyring accept env only; plaintext persistence is forbidden.
 - **Performance**: Cold start <= 500 ms excluding recovery/model load, idle RSS <= 150 MB, base compressed artifact <= 50 MB, and BM25 p95 <= 100 ms at 10k Wiki pages.
-- **Execution**: v2 work occurs on `codex/capability-workspace-v2` from the completed Phase 8 baseline, with atomic local commits after verified slices.
+- **Execution**: v3 planning starts from the completed Phase 9 branch; implementation proceeds in small verified slices and does not require a branch switch during planning.
 - **Authorization**: No push/PR, real API spend, embedding model download, or destructive migration without fresh approval.
 
 ## Key Decisions
@@ -67,16 +77,23 @@ The v1 Rust rewrite, Phase 8 subprocess hardening, and Phase 9 capability worksp
 | Dedicated external capability workspace | Keep third-party metadata and future install state out of the fixed internal tool adapters | Locked |
 | Three readiness labels | Translate runtime prerequisites into ready, needs install, or needs authorization for non-programmers | Locked |
 | Discovery never grants execution authority | Prevent a recommendation from silently becoming a download, credential request, or process launch | Locked |
+| Rust is the sole business implementation | Eliminate dual behavior, state, and verification authorities that can drift independently | Locked |
+| npm remains a thin Rust distribution shell | Preserve convenient `npm install -g`/`npx` installation without keeping a second product runtime | Locked |
+| Current Rust/public contract is the parity baseline | Avoid re-porting dormant or unshipped TypeScript-only behavior | Locked |
+| Rust keeps source-preserving legacy-data import | Remove the old executable while protecting existing users and rollback evidence | Locked |
+| Windows x64 and Linux x64 remain the release matrix | Keep convergence focused; platform expansion is a separate milestone | Locked |
 
-## Current Milestone: v2.0 Capability Workspace
+## Current Milestone: v3.0 Rust Convergence
 
-**Goal:** Let a non-programmer search one safe external-tool workspace for projects, Skills, and MCP servers while preserving typed isolation, BM25-first retrieval, and explicit authority boundaries.
+**Goal:** Make Rust the only executable product and verification authority while retaining npm as a thin, no-fallback distribution shell and preserving safe upgrades from TypeScript-era user data.
 
 **Target features:**
 
-- Source-controlled `capabilities/` catalogs for projects, Skills, and MCP servers, separate from runtime tools and user state.
-- One strict capability-card contract with three isolated indexes and optional candidate-only embedding reranking.
-- Readiness and next-action output that says ready, needs installation, or needs authorization without taking the action.
+- A source/ownership gate that forbids TypeScript business logic and dual state writers.
+- Rust-native tests and deterministic retrieval/Provider evaluations replacing TypeScript verification authority.
+- A fixture-driven compatibility harness and Rust migration support that no longer execute `dist/cli.js`.
+- An npm package whose only runtime path launches the supported platform Rust binary with clear fail-closed errors.
+- Final removal of `.ts/.tsx`, legacy CLI/build dependencies, and TypeScript CI jobs after all replacement gates pass.
 
 ## Evolution
 
@@ -94,4 +111,4 @@ This document evolves at phase transitions and milestone boundaries.
 3. Update context with shipped behavior and evaluation evidence.
 
 ---
-*Last updated: 2026-07-17 after completing local verification for the v2.0 Capability Workspace milestone*
+*Last updated: 2026-07-17 when starting the v3.0 Rust Convergence milestone*

@@ -2,7 +2,7 @@
 
 ## Overview
 
-The product proceeds through nine vertical, verifiable boundaries: eight completed v1 phases established the Rust runtime, safe tools, Vault/Wiki, hybrid retrieval, release cutover, and subprocess sandbox; v2 begins with a dedicated read-only capability workspace that extends discovery to projects, Skills, and MCP servers without expanding execution authority.
+The product proceeds through fourteen vertical, verifiable boundaries. Eight completed v1 phases established the Rust runtime, safe tools, Vault/Wiki, hybrid retrieval, release cutover, and subprocess sandbox; the completed v2 phase added a read-only capability workspace. v3.0 Rust Convergence now moves authority in five ordered slices: establish Rust-only execution and state boundaries, replace TypeScript verification, preserve fixture-based compatibility and migration, reduce npm to a no-fallback native launcher, and only then delete the inert TypeScript tree before refreshing final hosted evidence.
 
 ## Phases
 
@@ -15,6 +15,11 @@ The product proceeds through nine vertical, verifiable boundaries: eight complet
 - [x] **Phase 7: Close Milestone Integration Gaps** - Wire the product flows, prove the exact final artifacts, and pass the repeated milestone audit. (completed 2026-07-16)
 - [x] **Phase 8: Codex-style subprocess sandbox hardening** - Separate approval from isolation and enforce or fail closed for every confirm-mode process tool. (completed 2026-07-17)
 - [x] **Phase 9: Capability Workspace and Non-Programmer Harness** - Isolate project/Skill/MCP catalogs, retrieve them BM25-first, and explain safe readiness without automatic execution.
+- [ ] **Phase 10: Rust Authority and Source Boundaries** - Make Rust the sole executable and writable product authority while constraining JavaScript to an explicit distribution allowlist.
+- [ ] **Phase 11: Rust Verification and Evaluation Authority** - Replace still-required TypeScript behavioral, Provider, and retrieval verification with deterministic Rust-owned gates.
+- [ ] **Phase 12: Fixture Compatibility and Rust Migration** - Verify compatibility and TypeScript-era upgrades from immutable fixtures without building or executing the legacy runtime.
+- [ ] **Phase 13: Thin npm and Native Release** - Ship one no-fallback npm command that launches a verified platform Rust binary and rejects invalid packages before release.
+- [ ] **Phase 14: TypeScript Removal and Hosted Closure** - Delete the inert TypeScript implementation, converge CI and documentation, and bind final Windows/Linux evidence to one product fingerprint.
 
 ## Phase Details
 
@@ -204,6 +209,11 @@ Plans:
 | 7. Close Milestone Integration Gaps | 4/4 | Complete | 2026-07-16 |
 | 8. Codex-style Subprocess Sandbox Hardening | 3/3 | Complete | 2026-07-17 |
 | 9. Capability Workspace and Non-Programmer Harness | 3/3 | Complete | 2026-07-17 |
+| 10. Rust Authority and Source Boundaries | 0/3 | Not started | - |
+| 11. Rust Verification and Evaluation Authority | 0/3 | Not started | - |
+| 12. Fixture Compatibility and Rust Migration | 0/2 | Not started | - |
+| 13. Thin npm and Native Release | 0/3 | Not started | - |
+| 14. TypeScript Removal and Hosted Closure | 0/3 | Not started | - |
 
 ### Phase 7: Close milestone integration gaps
 
@@ -268,3 +278,110 @@ Plans:
 - [x] 09-01: Create the dedicated workspace, strict capability-card schema, and three typed retrieval indexes
 - [x] 09-02: Add inventory-derived readiness, unified CLI search, safe prompt context, and authority guardrails
 - [x] 09-03: Add evaluation fixtures, non-programmer documentation, compatibility gates, and full verification
+
+### Phase 10: Rust Authority and Source Boundaries
+
+**Goal:** Users and maintainers have one executable product and writable runtime authority in Rust, while any JavaScript that remains is visibly limited to distribution orchestration.
+**Requirements**: RUST-01, RUST-02, RUST-03
+**Depends on:** Phase 9
+**Success Criteria** (what must be TRUE):
+
+  1. Every supported CLI/TUI, Provider, session, tool, Vault/Wiki, retrieval, capability, migration, and compatibility product path executes the Rust implementation; a legacy product entry cannot start a second implementation.
+  2. A repository gate reports the complete JavaScript allowlist and fails when JavaScript imports product-domain source, implements domain behavior, downloads an unverified runtime, or introduces a fallback path.
+  3. Runtime commands write only the Rust-owned `.minimax` schemas; no supported or legacy command can create or mutate `.mini-codex` state after the authority cutover.
+  4. The Rust CLI and the current npm-installed command remain usable after the authority boundary is enforced, before TypeScript source is deleted.
+
+**Plans:** 3 plans planned
+
+Plans:
+**Wave 1**
+
+- [ ] 10-01: Inventory product ownership and lock the Rust/JavaScript source allowlists
+
+**Wave 2** *(blocked on Wave 1 completion)*
+
+- [ ] 10-02: Disable legacy execution and enforce Rust-only writable state
+
+**Wave 3** *(blocked on Wave 2 completion)*
+
+- [ ] 10-03: Gate the sole-authority product surface and verify both direct and npm entry paths
+
+### Phase 11: Rust Verification and Evaluation Authority
+
+**Goal:** Maintainers can decide parity and release readiness from deterministic Rust tests and evaluations before any TypeScript-covered source is removed.
+**Requirements**: RVE-01, RVE-02, RVE-03
+**Depends on:** Phase 10
+**Success Criteria** (what must be TRUE):
+
+  1. Every still-required public CLI, lifecycle, Provider, tool, retrieval, and rendering behavior formerly covered by TypeScript has a deterministic Rust test, while each intentionally retired behavior has an explicit reviewable decision.
+  2. The Rust Provider evaluation runs offline against Responses and Chat Completions fixtures, needs no credentials or API spend, and emits a machine-readable pass/fail report.
+  3. The Rust retrieval evaluation reports deterministic exact/BM25 and mixed-language ranking results, proves BM25 runs before embedding, rejects semantic outsiders, and records truthful degraded modes.
+  4. Rust verification failures block parity and release decisions even if any transitional Node/package smoke passes.
+
+**Plans:** 4 plans planned
+
+Plans:
+
+- [ ] 11-01: Classify TypeScript coverage and close required Rust behavioral gaps
+- [ ] 11-02: Port Provider conformance fixtures and machine-readable evaluation to Rust
+- [ ] 11-03: Implement and verify the deterministic Rust retrieval evaluator
+- [ ] 11-04: Make Rust Provider/retrieval reports blocking package and CI authority
+
+### Phase 12: Fixture Compatibility and Rust Migration
+
+**Goal:** Existing users can verify compatibility and migrate TypeScript-era durable data through Rust without keeping the TypeScript runtime executable.
+**Requirements**: RCMP-01, RCMP-02
+**Depends on:** Phase 11
+**Success Criteria** (what must be TRUE):
+
+  1. The compatibility harness compares the current Rust product with immutable public-contract fixtures and approved differences without building, importing, or executing TypeScript.
+  2. Compatibility reports are deterministic and machine-readable, contain no live `typescript.*` product rows, and fail when fixture intent and Rust behavior disagree.
+  3. Rust migration tests cover inventory, dry-run, apply, verify, idempotency, collision handling, interruption recovery, and narrow rollback while leaving all source data unchanged.
+  4. Static TypeScript v1 migration fixtures and release metadata make the two-public-release support window observable and prevent accidental early removal.
+
+**Plans:** 2 plans planned
+
+Plans:
+
+- [ ] 12-01: Rebase compatibility reports on immutable contract fixtures and explicit differences
+- [ ] 12-02: Harden Rust migration fixtures, recovery gates, and support-window evidence
+
+### Phase 13: Thin npm and Native Release
+
+**Goal:** Users can install through npm or native archives and always run the verified Rust binary through one clear, no-fallback command path.
+**Requirements**: RNPM-01, RNPM-02, RNPM-03
+**Depends on:** Phase 12
+**Success Criteria** (what must be TRUE):
+
+  1. On supported Windows x64 and Linux x64 hosts, both `npm install -g minimax-codex` and `npx minimax-codex` launch the Rust binary packaged for that host through the single `minimax-codex` command.
+  2. The packed npm artifact exposes no legacy command or `dist/cli.js` path and contains no TypeScript compiler/runtime, React/Ink runtime, or TypeScript-only production/build dependency.
+  3. Package verification rejects missing, wrong-platform, renamed, non-executable, or hash-mismatched binaries with a stable actionable non-zero error and never tries another runtime.
+  4. Offline installed-package smoke proves the npm and native release paths use the expected checksummed Rust artifact without a runtime download.
+
+**Plans:** 3 plans planned
+
+Plans:
+
+- [ ] 13-01: Reduce package metadata and the launcher to one Rust-only command path
+- [ ] 13-02: Assemble checksummed Windows/Linux native and npm artifacts
+- [ ] 13-03: Add offline installed smoke and fail-closed package corruption tests
+
+### Phase 14: TypeScript Removal and Hosted Closure
+
+**Goal:** The repository and release evidence describe one Rust-only product after the replaced TypeScript implementation is deleted.
+**Requirements**: RCUT-01, RCUT-02, RCUT-03
+**Depends on:** Phase 13
+**Success Criteria** (what must be TRUE):
+
+  1. Repository scans find no TypeScript/TSX product or test source, compiler configuration, legacy build path, or executable fallback; CI rejects reintroduction outside immutable migration fixture data.
+  2. The Rust workspace, evaluations, compatibility and migration gates, packaging, and installed command remain green after the TypeScript tree and all stale references are removed.
+  3. Hosted Windows x64 MSVC and Linux x64 GNU jobs pass tests, evaluations, checksums, install, upgrade/rollback, security, license, and performance gates against one final product fingerprint; stale v2/Phase 9 or local GNU-LLVM evidence cannot satisfy the gate.
+  4. User and maintainer documentation explains the Rust-only architecture, npm/native installation, supported platforms, actionable no-fallback failures, migration/rollback, and the two-release compatibility window.
+
+**Plans:** 3 plans planned
+
+Plans:
+
+- [ ] 14-01: Delete replaced TypeScript source, tests, configuration, and legacy references
+- [ ] 14-02: Make permanent source, CI, release, and product-fingerprint gates enforce the Rust-only tree
+- [ ] 14-03: Finalize Rust-only docs, freeze the final fingerprint/intake, collect hosted Windows/Linux evidence, and close v3.0
