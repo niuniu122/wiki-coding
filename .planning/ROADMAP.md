@@ -201,7 +201,7 @@ Plans:
 | 5. Retrieval and Project Discovery | 3/3 | Complete   | 2026-07-16 |
 | 6. Migration, Release, and Cutover | 3/3 | Complete | 2026-07-16 |
 | 7. Close Milestone Integration Gaps | 4/4 | Complete | 2026-07-16 |
-| 8. Codex-style Subprocess Sandbox Hardening | 0/3 | Planning | - |
+| 8. Codex-style Subprocess Sandbox Hardening | 0/3 | In Progress | - |
 
 ### Phase 7: Close milestone integration gaps
 

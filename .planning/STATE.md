@@ -4,15 +4,15 @@ milestone: v1.0
 milestone_name: Rust rewrite
 current_phase: 8
 current_phase_name: Codex-style subprocess sandbox hardening
-status: planning
-stopped_at: Phase 8 specification locked; implementation planning in progress
-last_updated: "2026-07-17T09:20:00+08:00"
+status: in_progress
+stopped_at: Phase 8 plans locked; Plan 08-01 red tests next
+last_updated: "2026-07-17T09:35:00+08:00"
 last_activity: 2026-07-17
 last_activity_desc: Added Phase 8 and locked the Codex-style subprocess sandbox specification
 progress:
   total_phases: 8
   completed_phases: 7
-  total_plans: 22
+  total_plans: 25
   completed_plans: 22
   percent: 88
 ---
@@ -33,6 +33,7 @@ Phase 7 remains complete. Phase 8 reopens the milestone to replace advisory subp
 - Cross-phase integrations: 38/38
 - End-to-end flows: 7/7
 - Plans: 22/22
+- Phase 8 plans: 0/3
 - Final audit blockers: 0
 
 ## Final Evidence
