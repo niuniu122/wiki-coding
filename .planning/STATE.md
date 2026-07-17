@@ -5,16 +5,16 @@ milestone_name: Rust Convergence
 current_phase: 11
 current_phase_name: rust-verification-and-evaluation-authority
 status: executing
-stopped_at: Completed 11-01-PLAN.md
-last_updated: "2026-07-17T15:25:49.516Z"
+stopped_at: Completed 11-02-PLAN.md
+last_updated: "2026-07-17T15:58:07.900Z"
 last_activity: 2026-07-17
 last_activity_desc: Phase 11 execution started
 progress:
   total_phases: 14
   completed_phases: 10
   total_plans: 44
-  completed_plans: 33
-  percent: 75
+  completed_plans: 34
+  percent: 77
 ---
 
 # Project State
@@ -28,7 +28,7 @@ See: `.planning/PROJECT.md` (updated 2026-07-15)
 ## Current Position
 
 Phase: 11 (rust-verification-and-evaluation-authority) — EXECUTING
-Plan: 2 of 4
+Plan: 3 of 4
 Status: Ready to execute
 Last activity: 2026-07-17 — Phase 11 execution started
 
@@ -118,6 +118,10 @@ No package publication, tag, PR, merge, live Provider request, credential read, 
 - [Phase 11]: Freeze every Phase 10 verification source by exact path and SHA-256 while allowing multiple responsibility rows per source. — Preserves reviewable history without collapsing distinct public outcomes or requiring one Rust filename per TypeScript file.
 - [Phase 11]: Rust-cover documented public and safety behavior, and explicitly retire only dormant, internal, or unshipped TypeScript responsibilities. — Avoids porting undocumented internals merely for file-count parity while making every non-port reviewable.
 - [Phase 11]: Treat the responsibility matrix as evidence rather than runtime authority and require every Rust-covered row to name an existing Rust file and exact test function. — Keeps product behavior in Rust while making stale or fabricated coverage bindings fail closed.
+- [Phase 11]: Provider evaluation uses fingerprinted immutable fixtures and production Rust replay/config/profile APIs only. — Keeps evaluation deterministic, offline, credential-free, and free of a second Provider implementation.
+- [Phase 11]: Both Provider protocols publish the same ordered ten-check contract and verification requires its byte-stable golden. — Makes fixture/check/report drift reviewable and fail-closed.
+- [Phase 11]: Transitional package smoke cannot override any failed Rust Provider check. — Preserves D-11-03 and D-11-05 Rust evaluation authority.
+- [Phase 11]: The 175-case retrieval corpus moves to immutable compatibility ownership with stable IDs and locked thresholds. — Lets Plan 11-03 consume one fingerprinted corpus while the original remains hash-pinned until 14-01.
 
 ## Performance Metrics
 
@@ -128,9 +132,10 @@ No package publication, tag, PR, merge, live Provider request, credential read, 
 | Phase 10 P03 | 31min | 3 tasks | 8 files |
 | Phase 10 P04 | 20min | 2 tasks | 8 files |
 | Phase 11 P01 | 30min | 2 tasks | 9 files |
+| Phase 11 P02 | 45min | 2 tasks | 9 files |
 
 ## Session
 
-**Last session:** 2026-07-17T15:25:49.504Z
-**Stopped at:** Completed 11-01-PLAN.md
+**Last session:** 2026-07-17T15:57:35.134Z
+**Stopped at:** Completed 11-02-PLAN.md
 **Resume file:** None
