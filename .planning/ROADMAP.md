@@ -209,7 +209,7 @@ Plans:
 | 7. Close Milestone Integration Gaps | 4/4 | Complete | 2026-07-16 |
 | 8. Codex-style Subprocess Sandbox Hardening | 3/3 | Complete | 2026-07-17 |
 | 9. Capability Workspace and Non-Programmer Harness | 3/3 | Complete | 2026-07-17 |
-| 10. Rust Authority and Source Boundaries | 3/3 | Complete   | 2026-07-17 |
+| 10. Rust Authority and Source Boundaries | 3/4 | Gap closure planned | - |
 | 11. Rust Verification and Evaluation Authority | 0/3 | Not started | - |
 | 12. Fixture Compatibility and Rust Migration | 0/2 | Not started | - |
 | 13. Thin npm and Native Release | 0/3 | Not started | - |
@@ -291,13 +291,14 @@ Plans:
   3. Runtime commands write only the Rust-owned `.minimax` schemas; no supported or legacy command can create or mutate `.mini-codex` state after the authority cutover.
   4. The Rust CLI and the current npm-installed command remain usable after the authority boundary is enforced, before TypeScript source is deleted.
 
-**Plans:** 3/3 plans complete
+**Plans:** 3/4 plans complete; gap closure planned
 
 Plans:
 
 - [x] 10-01-PLAN.md
 - [x] 10-02-PLAN.md
 - [x] 10-03-PLAN.md
+- [ ] 10-04-PLAN.md
 
 **Wave 1**
 
@@ -310,6 +311,10 @@ Plans:
 **Wave 3** *(blocked on Wave 2 completion)*
 
 - [x] 10-03: Gate the sole-authority product surface and verify both direct and npm entry paths
+
+**Wave 4** *(gap closure; blocked on Wave 3 completion)*
+
+- [ ] 10-04: Replace the live TypeScript dev route with Rust and reject future TS/legacy product scripts
 
 ### Phase 11: Rust Verification and Evaluation Authority
 
