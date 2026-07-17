@@ -61,7 +61,7 @@ fn parser_covers_every_manifest_command_alias_and_argument_shape() {
     );
     assert_matrix_responsibility(
         "test/chat-input-policy.test.ts",
-        "ts-command-retry-continue-outcomes",
+        "ts-test-chat-input-policy-test-ts",
         "parser_covers_every_manifest_command_alias_and_argument_shape",
     );
 }

@@ -165,6 +165,76 @@ async fn conversation_reconstructs_then_lists_resumes_continues_retries_and_comp
 }
 
 #[tokio::test]
+async fn retry_and_continue_execute_distinct_durable_outcomes() {
+    let project = tempfile::tempdir().expect("temporary project");
+    let provider = MockProvider {
+        runs: VecDeque::from([
+            MockProvider::completed(&["source answer"]),
+            MockProvider::completed(&["continued answer"]),
+            MockProvider::completed(&["retried answer"]),
+        ]),
+    };
+    let mut driver = RuntimeDriver::open(
+        project.path(),
+        binding(),
+        provider,
+        DriverIds::new("retry-continue", 25_000),
+    )
+    .expect("driver");
+
+    let source = driver
+        .run_prompt("source prompt", 128)
+        .await
+        .expect("source turn");
+    let session_id = source.receipt.session_id.clone();
+    let source_turn_id = source.receipt.turn_id.clone();
+    let source_before = driver.session(&session_id).expect("session").turns[0].clone();
+
+    let continued = driver
+        .run_prompt("continue with a new prompt", 128)
+        .await
+        .expect("continued turn");
+    let retried = driver
+        .retry_turn(source_turn_id.clone(), 128)
+        .await
+        .expect("retried turn");
+
+    assert_ne!(continued.receipt.turn_id, source_turn_id);
+    assert_ne!(retried.receipt.turn_id, source_turn_id);
+    assert_ne!(continued.receipt.turn_id, retried.receipt.turn_id);
+    assert_ne!(continued.receipt.request_id, source.receipt.request_id);
+    assert_ne!(retried.receipt.request_id, source.receipt.request_id);
+    assert_ne!(continued.receipt.request_id, retried.receipt.request_id);
+    assert_eq!(continued.receipt.outcome, RuntimeTerminalOutcome::Completed);
+    assert_eq!(retried.receipt.outcome, RuntimeTerminalOutcome::Completed);
+
+    let turns = &driver.session(&session_id).expect("session").turns;
+    assert_eq!(turns.len(), 3);
+    assert_eq!(turns[0], source_before, "retry must not rewrite its source");
+    assert!(turns[1].retry_of.is_none(), "continue is a normal new turn");
+    assert_eq!(
+        turns[2].retry_of.as_ref(),
+        Some(&source_turn_id),
+        "retry records its immutable terminal source"
+    );
+    assert!(turns.iter().all(|turn| turn.status.is_terminal()));
+    drop(driver);
+
+    let replayed = RuntimeStore::open(project.path()).expect("persisted replay");
+    let turns = &replayed
+        .machine()
+        .sessions()
+        .get(&session_id)
+        .expect("replayed session")
+        .turns;
+    assert_eq!(turns.len(), 3);
+    assert_eq!(turns[0], source_before);
+    assert!(turns[1].retry_of.is_none());
+    assert_eq!(turns[2].retry_of.as_ref(), Some(&source_turn_id));
+    assert!(turns.iter().all(|turn| turn.status.is_terminal()));
+}
+
+#[tokio::test]
 async fn controlled_cancellation_persists_once_and_releases_lease() {
     let project = tempfile::tempdir().expect("temporary project");
     let session_id;

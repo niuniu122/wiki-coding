@@ -169,8 +169,8 @@ fn unresolved_unknown_fields_and_typescript_evidence_are_rejected() {
     )
     .expect("coverage matrix");
     let unknown = raw.replacen(
-        "\"schemaVersion\": 1,",
-        "\"schemaVersion\": 1, \"unknown\": true,",
+        "\"schemaVersion\": 2,",
+        "\"schemaVersion\": 2, \"unknown\": true,",
         1,
     );
     assert!(serde_json::from_str::<CoverageMatrix>(&unknown).is_err());
@@ -231,14 +231,13 @@ fn semantic_audit_rejects_collapsed_unrelated_and_false_retirement_evidence() {
     let root = repository_root();
     let authority = load_source_authority(&root).expect("source authority");
     let matrix = load_coverage_matrix(&root).expect("coverage matrix");
-    let raw: Value = serde_json::from_str(
-        &fs::read_to_string(
-            root.join("fixtures/compat/verification/typescript-responsibilities.v1.json"),
-        )
-        .expect("coverage matrix"),
-    )
-    .expect("coverage matrix JSON");
     let mut failures = Vec::new();
+
+    if let Err(error) = validate_coverage_matrix(&root, &matrix, &authority) {
+        failures.push(format!(
+            "baseline semantic evidence matrix is invalid: {error}"
+        ));
+    }
 
     let collapsed_retrieval_sources = [
         "src/eval/capability-retrieval-report.ts",
@@ -260,25 +259,69 @@ fn semantic_audit_rejects_collapsed_unrelated_and_false_retirement_evidence() {
         "test/capability-source-adapters.test.ts",
         "test/support/capability-fixtures.ts",
     ];
-    let shared_lexical_owner = matrix
+    let retrieval_responsibility_ids = matrix
         .sources
         .iter()
         .filter(|source| collapsed_retrieval_sources.contains(&source.source_path.as_str()))
-        .filter(|source| {
-            source.responsibilities.iter().any(|responsibility| {
-                responsibility.evidence.iter().any(|evidence| {
-                    evidence.path == "crates/retrieval/tests/lexical.rs"
-                        && evidence.test.as_deref()
-                            == Some("existing_typescript_175_case_fixture_meets_capability_gates")
-                })
+        .flat_map(|source| {
+            source
+                .responsibilities
+                .iter()
+                .map(|responsibility| responsibility.id.as_str())
+        })
+        .collect::<BTreeSet<_>>();
+    let retrieval_contracts = matrix
+        .evidence_contracts
+        .iter()
+        .filter(|contract| {
+            contract
+                .responsibility_ids
+                .iter()
+                .any(|id| retrieval_responsibility_ids.contains(id.as_str()))
+        })
+        .map(|contract| contract.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let expected_retrieval_contracts = [
+        "capability-catalog-policy-contract",
+        "capability-command-dispatch-contract",
+        "capability-corpus-manifest-contract",
+        "capability-exact-bm25-contract",
+        "capability-hybrid-candidate-contract",
+        "capability-snapshot-refresh-contract",
+        "retrieval-evaluation-authority",
+    ]
+    .into_iter()
+    .collect::<BTreeSet<_>>();
+    if retrieval_contracts != expected_retrieval_contracts {
+        failures.push(format!(
+            "unrelated retrieval responsibilities are not separated into the seven closed semantic contracts: {retrieval_contracts:?}"
+        ));
+    }
+
+    let shared_lexical_owner_ids = matrix
+        .sources
+        .iter()
+        .flat_map(|source| source.responsibilities.iter())
+        .filter(|responsibility| retrieval_responsibility_ids.contains(responsibility.id.as_str()))
+        .filter(|responsibility| {
+            responsibility.evidence.iter().any(|evidence| {
+                evidence.path == "crates/retrieval/tests/lexical.rs"
+                    && evidence.test.as_deref()
+                        == Some("existing_typescript_175_case_fixture_meets_capability_gates")
             })
         })
-        .map(|source| source.source_path.as_str())
-        .collect::<Vec<_>>();
-    if shared_lexical_owner.len() > 1 {
+        .map(|responsibility| responsibility.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let expected_lexical_owner_ids = [
+        "ts-test-capability-bm25-test-ts",
+        "ts-test-capability-exact-resolution-test-ts",
+        "ts-test-capability-query-normalizer-test-ts",
+    ]
+    .into_iter()
+    .collect::<BTreeSet<_>>();
+    if shared_lexical_owner_ids != expected_lexical_owner_ids {
         failures.push(format!(
-            "shared lexical owner collapses unrelated catalog/command/dispatcher/policy/refresh/snapshot/adapter/ranking contracts: {}",
-            shared_lexical_owner.join(", ")
+            "shared lexical owner must be limited to its compatible ranking contract: {shared_lexical_owner_ids:?}"
         ));
     }
 
@@ -320,11 +363,13 @@ fn semantic_audit_rejects_collapsed_unrelated_and_false_retirement_evidence() {
         (
             "model/profile/credential",
             &[
+                "test/credential-consent.test.ts",
                 "test/model-profile-registry.test.ts",
                 "test/model-profile.test.ts",
                 "test/model-selection-persistence.test.ts",
                 "test/model-selection-service.test.ts",
                 "test/model-state-store.test.ts",
+                "test/secret-store.test.ts",
                 "test/user-profile-store.test.ts",
             ][..],
         ),
@@ -350,26 +395,30 @@ fn semantic_audit_rejects_collapsed_unrelated_and_false_retirement_evidence() {
         }
     }
 
-    let responsibility_values = raw["sources"]
-        .as_array()
-        .expect("coverage sources")
+    let responsibility_ids = matrix
+        .sources
         .iter()
-        .flat_map(|source| {
-            source["responsibilities"]
-                .as_array()
-                .expect("responsibilities")
-        })
+        .flat_map(|source| source.responsibilities.iter())
+        .map(|responsibility| responsibility.id.as_str())
+        .collect::<BTreeSet<_>>();
+    let assigned_responsibility_ids = matrix
+        .evidence_contracts
+        .iter()
+        .flat_map(|contract| contract.responsibility_ids.iter())
+        .map(String::as_str)
         .collect::<Vec<_>>();
-    let missing_semantic_contracts = responsibility_values
+    let assigned_responsibility_set = assigned_responsibility_ids
         .iter()
-        .filter(|responsibility| {
-            responsibility.get("evidenceClass").is_none()
-                || responsibility.get("evidenceContract").is_none()
-        })
-        .count();
-    if missing_semantic_contracts != 0 {
+        .copied()
+        .collect::<BTreeSet<_>>();
+    if assigned_responsibility_ids.len() != responsibility_ids.len()
+        || assigned_responsibility_set != responsibility_ids
+    {
         failures.push(format!(
-            "{missing_semantic_contracts} responsibilities lack a closed evidenceClass and responsibility-specific evidenceContract"
+            "semantic evidence contracts are not a one-to-one closure over responsibilities: rows={}, assignments={}, unique_assignments={}",
+            responsibility_ids.len(),
+            assigned_responsibility_ids.len(),
+            assigned_responsibility_set.len()
         ));
     }
 
