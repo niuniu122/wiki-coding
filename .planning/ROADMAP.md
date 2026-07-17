@@ -16,7 +16,7 @@ The product proceeds through fourteen vertical, verifiable boundaries. Eight com
 - [x] **Phase 8: Codex-style subprocess sandbox hardening** - Separate approval from isolation and enforce or fail closed for every confirm-mode process tool. (completed 2026-07-17)
 - [x] **Phase 9: Capability Workspace and Non-Programmer Harness** - Isolate project/Skill/MCP catalogs, retrieve them BM25-first, and explain safe readiness without automatic execution.
 - [x] **Phase 10: Rust Authority and Source Boundaries** - Make Rust the sole executable and writable product authority while constraining JavaScript to an explicit distribution allowlist. (completed 2026-07-17)
-- [ ] **Phase 11: Rust Verification and Evaluation Authority** - Replace still-required TypeScript behavioral, Provider, and retrieval verification with deterministic Rust-owned gates.
+- [x] **Phase 11: Rust Verification and Evaluation Authority** - Replace still-required TypeScript behavioral, Provider, and retrieval verification with deterministic Rust-owned gates. (completed 2026-07-17)
 - [ ] **Phase 12: Fixture Compatibility and Rust Migration** - Verify compatibility and TypeScript-era upgrades from immutable fixtures without building or executing the legacy runtime.
 - [ ] **Phase 13: Thin npm and Native Release** - Ship one no-fallback npm command that launches a verified platform Rust binary and rejects invalid packages before release.
 - [ ] **Phase 14: TypeScript Removal and Hosted Closure** - Delete the inert TypeScript implementation, converge CI and documentation, and bind final Windows/Linux evidence to one product fingerprint.
@@ -210,7 +210,7 @@ Plans:
 | 8. Codex-style Subprocess Sandbox Hardening | 3/3 | Complete | 2026-07-17 |
 | 9. Capability Workspace and Non-Programmer Harness | 3/3 | Complete | 2026-07-17 |
 | 10. Rust Authority and Source Boundaries | 4/4 | Complete    | 2026-07-17 |
-| 11. Rust Verification and Evaluation Authority | 5/6 | In Progress|  |
+| 11. Rust Verification and Evaluation Authority | 6/6 | Complete   | 2026-07-17 |
 | 12. Fixture Compatibility and Rust Migration | 0/2 | Not started | - |
 | 13. Thin npm and Native Release | 0/3 | Not started | - |
 | 14. TypeScript Removal and Hosted Closure | 0/3 | Not started | - |
@@ -328,7 +328,7 @@ Plans:
   3. The Rust retrieval evaluation reports deterministic exact/BM25 and mixed-language ranking results, proves BM25 runs before embedding, rejects semantic outsiders, and records truthful degraded modes.
   4. Rust verification failures block parity and release decisions even if any transitional Node/package smoke passes.
 
-**Plans:** 5/6 plans executed
+**Plans:** 6/6 plans complete
 
 Plans:
 
@@ -337,7 +337,7 @@ Plans:
 - [x] 11-03-PLAN.md
 - [x] 11-04-PLAN.md
 - [x] 11-05-PLAN.md
-- [ ] 11-06-PLAN.md
+- [x] 11-06-PLAN.md
 
 - [x] 11-01: Classify TypeScript coverage and close required Rust behavioral gaps
 - [x] 11-02: Port Provider conformance fixtures and machine-readable evaluation to Rust
@@ -350,7 +350,7 @@ Plans:
 
 **Wave 9** *(gap closure; blocked on Wave 8 completion)*
 
-- [ ] 11-06: Make TypeScript evaluators transitively inert under Rust and test-discovery authority
+- [x] 11-06: Make TypeScript evaluators transitively inert under Rust and test-discovery authority
 
 ### Phase 12: Fixture Compatibility and Rust Migration
 

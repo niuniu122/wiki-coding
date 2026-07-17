@@ -4,17 +4,17 @@ milestone: v3.0
 milestone_name: Rust Convergence
 current_phase: 11
 current_phase_name: rust-verification-and-evaluation-authority
-status: executing
-stopped_at: Completed 11-05-PLAN.md
-last_updated: "2026-07-17T18:56:12.566Z"
+status: verifying
+stopped_at: Completed 11-06-PLAN.md
+last_updated: "2026-07-17T19:43:34.102Z"
 last_activity: 2026-07-17
-last_activity_desc: Completed 11-05-PLAN.md
+last_activity_desc: Completed 11-06-PLAN.md
 progress:
   total_phases: 14
-  completed_phases: 10
+  completed_phases: 11
   total_plans: 46
-  completed_plans: 37
-  percent: 80
+  completed_plans: 38
+  percent: 79
 ---
 
 # Project State
@@ -29,8 +29,8 @@ See: `.planning/PROJECT.md` (updated 2026-07-15)
 
 Phase: 11 (rust-verification-and-evaluation-authority) — EXECUTING
 Plan: 6 of 6
-Status: Ready to execute
-Last activity: 2026-07-17 — Completed 11-05-PLAN.md
+Status: Phase complete — ready for verification
+Last activity: 2026-07-17 — Completed 11-06-PLAN.md
 
 ## Previous Phase 7 Hosted Baseline (superseded)
 
@@ -130,6 +130,9 @@ No package publication, tag, PR, merge, live Provider request, credential read, 
 - [Phase 11]: Transitional TypeScript tests, static checks, build, and smoke remain allowed, but TypeScript evaluator commands and src/eval paths are denied. — Phase 11 cuts authority without deleting hash-pinned evidence reserved for Phase 14.
 - [Phase 11]: Bind every responsibility through one closed semantic evidence contract registry. — A strict row-to-contract bijection preserves per-source auditability while preventing unrelated test-owner reuse.
 - [Phase 11]: Keep parser recognition separate from retry and continue outcome authority. — Only executed CLI runtime behavior proves distinct durable requests, turns, terminals, immutable source, and replay.
+- [Phase 11]: Validate the complete discovered TypeScript test dependency graph before any test import. — Pre-import closure prevents an earlier test module from producing side effects before a later forbidden evaluator edge is detected.
+- [Phase 11]: Keep independent TypeScript AST and Rust lexical graph validators. — Shared fail-closed semantics with separate implementations prevent one parser defect from silently authorizing both gates.
+- [Phase 11]: Retain TypeScript evaluator sources as hash-pinned Phase 14 inputs while Rust owns executable evaluation. — Static evidence preserves migration provenance without leaving a Node evaluator route in npm test.
 
 ## Performance Metrics
 
@@ -144,9 +147,10 @@ No package publication, tag, PR, merge, live Provider request, credential read, 
 | Phase 11 P03 | 17min | 2 tasks | 9 files |
 | Phase 11 P04 | 26min | 1 task | 9 files |
 | Phase 11 P05 | 65min | 2 tasks | 7 files |
+| Phase 11 P06 | 42min | 2 tasks | 10 files |
 
 ## Session
 
-**Last session:** 2026-07-17T18:56:12.557Z
-**Stopped at:** Completed 11-05-PLAN.md
+**Last session:** 2026-07-17T19:42:27.156Z
+**Stopped at:** Completed 11-06-PLAN.md
 **Resume file:** None
