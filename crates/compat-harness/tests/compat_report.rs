@@ -5,10 +5,10 @@ use minimax_compat_harness::{
     ArchitectureError, ArchitectureGraph, ArchitecturePackage, ManifestError, ParityStatus,
     build_report, load_cargo_architecture, load_compat_manifests, report_json, repository_root,
     validate_architecture, validate_cli_tui_markdown_boundary, validate_core_source_boundary,
-    validate_core_source_directory, validate_core_source_text, validate_cutover_evidence,
-    validate_migration_source_boundary, validate_migration_source_text, validate_product_entry,
-    validate_report, validate_retrieval_source_boundary, validate_retrieval_source_text,
-    validate_rust_command_surface, validate_rust_provider_profiles,
+    validate_core_source_directory, validate_core_source_text, validate_cutover_candidate,
+    validate_cutover_evidence, validate_migration_source_boundary, validate_migration_source_text,
+    validate_product_entry, validate_report, validate_retrieval_source_boundary,
+    validate_retrieval_source_text, validate_rust_command_surface, validate_rust_provider_profiles,
     validate_rust_retrieval_evidence, validate_rust_tool_evidence, validate_rust_vault_evidence,
     validate_ui_source_text, validate_vault_source_boundary, validate_vault_source_text,
 };
@@ -94,6 +94,14 @@ fn rust_command_permission_provider_and_product_baselines_are_executable() {
     validate_rust_provider_profiles(&manifests.providers)
         .expect("executable Rust Provider profile evidence");
     validate_product_entry(&root).expect("Rust npm product entry");
+    validate_cutover_candidate(&root, &manifests.baseline)
+        .expect("hosted cutover candidate prerequisites");
+}
+
+#[test]
+fn hosted_cutover_evidence_matches_current_product() {
+    let root = repository_root();
+    let manifests = load_compat_manifests(&root).expect("strict manifests");
     validate_cutover_evidence(&root, &manifests.baseline).expect("hosted cutover evidence");
 }
 
@@ -109,7 +117,7 @@ fn cutover_rejects_a_pending_mandatory_rust_item() {
         .expect("release item");
     release.status = ParityStatus::Pending;
     release.evidence.clear();
-    assert!(validate_cutover_evidence(&root, &baseline).is_err());
+    assert!(validate_cutover_candidate(&root, &baseline).is_err());
 }
 
 #[test]

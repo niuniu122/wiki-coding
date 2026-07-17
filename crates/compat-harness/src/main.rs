@@ -6,10 +6,10 @@ use std::process::ExitCode;
 use minimax_compat_harness::{
     build_report, load_cargo_architecture, load_compat_manifests, report_json, repository_root,
     validate_architecture, validate_cli_tui_markdown_boundary, validate_core_source_boundary,
-    validate_cutover_evidence, validate_migration_source_boundary, validate_product_entry,
-    validate_report, validate_rust_command_surface, validate_rust_provider_profiles,
-    validate_rust_retrieval_evidence, validate_rust_tool_evidence, validate_rust_vault_evidence,
-    validate_vault_source_boundary,
+    validate_cutover_candidate, validate_cutover_evidence, validate_migration_source_boundary,
+    validate_product_entry, validate_report, validate_rust_command_surface,
+    validate_rust_provider_profiles, validate_rust_retrieval_evidence, validate_rust_tool_evidence,
+    validate_rust_vault_evidence, validate_vault_source_boundary,
 };
 use minimax_protocol::{ProtocolErrorCode, ProviderProtocolKind, StreamEvent};
 use minimax_provider::{CompatibilityEvent, replay_fixture};
@@ -33,7 +33,11 @@ fn run(arguments: Vec<String>) -> Result<Option<String>, String> {
     let root = repository_root();
     match arguments.as_slice() {
         [command] if command == "verify" => {
-            verify_repository(&root)?;
+            verify_repository(&root, true)?;
+            Ok(None)
+        }
+        [command] if command == "verify-candidate" => {
+            verify_repository(&root, false)?;
             Ok(None)
         }
         [command, format_flag, format]
@@ -46,11 +50,14 @@ fn run(arguments: Vec<String>) -> Result<Option<String>, String> {
                 .map(Some)
                 .map_err(|error| error.to_string())
         }
-        _ => Err("usage: minimax-compat-harness <verify|report --format json>".to_owned()),
+        _ => Err(
+            "usage: minimax-compat-harness <verify|verify-candidate|report --format json>"
+                .to_owned(),
+        ),
     }
 }
 
-fn verify_repository(root: &Path) -> Result<(), String> {
+fn verify_repository(root: &Path, require_hosted_evidence: bool) -> Result<(), String> {
     let first_manifests = load_compat_manifests(root).map_err(|error| error.to_string())?;
     validate_rust_command_surface(&first_manifests.commands).map_err(|error| error.to_string())?;
     validate_rust_tool_evidence(root, &first_manifests.baseline)
@@ -60,8 +67,13 @@ fn verify_repository(root: &Path) -> Result<(), String> {
     validate_rust_provider_profiles(&first_manifests.providers)
         .map_err(|error| error.to_string())?;
     validate_product_entry(root).map_err(|error| error.to_string())?;
-    validate_cutover_evidence(root, &first_manifests.baseline)
-        .map_err(|error| error.to_string())?;
+    if require_hosted_evidence {
+        validate_cutover_evidence(root, &first_manifests.baseline)
+            .map_err(|error| error.to_string())?;
+    } else {
+        validate_cutover_candidate(root, &first_manifests.baseline)
+            .map_err(|error| error.to_string())?;
+    }
     verify_provider_fixtures(root)?;
     let architecture = load_cargo_architecture(root).map_err(|error| error.to_string())?;
     validate_architecture(&architecture).map_err(|error| error.to_string())?;

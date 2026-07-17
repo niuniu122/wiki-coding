@@ -402,6 +402,13 @@ pub fn validate_cutover_evidence(
     baseline: &BaselineStatus,
 ) -> Result<(), BaselineError> {
     validate_hosted_release_gate(root)?;
+    validate_cutover_candidate(root, baseline)
+}
+
+pub fn validate_cutover_candidate(
+    root: &Path,
+    baseline: &BaselineStatus,
+) -> Result<(), BaselineError> {
     validate_command_behavior_evidence(root)?;
     if baseline
         .items
@@ -479,10 +486,10 @@ fn validate_hosted_release_gate(root: &Path) -> Result<(), BaselineError> {
         || gate.run_id == 0
         || gate.run_url
             != format!(
-                "https://github.com/niuniu122/minimax-codex/actions/runs/{}",
+                "https://github.com/niuniu122/wiki-coding/actions/runs/{}",
                 gate.run_id
             )
-        || gate.branch != "codex/rust-rewrite"
+        || gate.branch != "main"
         || !valid_hex(&gate.head_sha, 40)
         || !valid_hex(&gate.tree_sha, 40)
         || !valid_hex(&gate.product_fingerprint, 64)

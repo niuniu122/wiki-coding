@@ -15,6 +15,12 @@ The prerequisite release gate is GitHub Actions run `29474558013`, tree `b4c19d5
 
 Both stayed below the 500 ms, 150 MiB, 50 MiB, and 100 ms limits. They checked 234 dependency packages and recorded zero invalid licenses, unsafe Rust files, database packages, migration network/credential paths, credentials read, Provider calls, or model downloads. The machine-readable record is `fixtures/compat/release/hosted-gates.v1.json`; the final cutover tree must pass the same matrix again.
 
+## Refreshing hosted evidence
+
+An ordinary push or pull request always runs the strict gate and rejects stale hosted evidence. To refresh evidence after an intentional product change, manually dispatch the `CI` workflow. Manual dispatch is the only candidate mode: it skips only comparison with the previous hosted record, while retaining the complete Windows/Linux matrix, offline compatibility and architecture checks, release packaging, performance/security budgets, and the Linux malicious-sandbox canary. Each matrix job uploads its release-evidence JSON for seven days.
+
+After both candidate jobs succeed, bind `fixtures/compat/release/hosted-gates.v1.json` to that run, its two job IDs, the current tree, and the identical product fingerprint from both artifacts. Commit the record, then require a subsequent ordinary push run to pass in strict mode. Candidate mode is never selected for push or pull-request events and cannot make the final strict gate optional.
+
 ## Fresh install and first migration
 
 1. Verify the release archive against its `.sha256` sidecar and inspect `RELEASE-MANIFEST.json`.

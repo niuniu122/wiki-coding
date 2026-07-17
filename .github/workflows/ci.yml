@@ -3,6 +3,7 @@ name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -19,10 +20,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Linux subprocess sandbox
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap && sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Verify Linux subprocess sandbox
         if: runner.os == 'Linux'
-        run: bwrap --version
+        run: bwrap --unshare-user --disable-userns --unshare-ipc --unshare-pid --unshare-net --unshare-uts --unshare-cgroup-try --die-with-parent --new-session --cap-drop ALL --clearenv --ro-bind / / /bin/true
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -35,12 +36,30 @@ jobs:
       - run: npm run check
       - run: npm test
       - run: npm run check:rust
-      - run: npm run test:rust
-      - run: npm run verify:rust-contracts
+      - name: Run strict Rust tests
+        if: github.event_name != 'workflow_dispatch'
+        run: npm run test:rust
+      - name: Run hosted evidence candidate Rust tests
+        if: github.event_name == 'workflow_dispatch'
+        run: npm run test:rust:candidate
+      - name: Verify strict Rust contracts
+        if: github.event_name != 'workflow_dispatch'
+        run: npm run verify:rust-contracts
+      - name: Verify hosted evidence candidate Rust contracts
+        if: github.event_name == 'workflow_dispatch'
+        run: npm run verify:rust-contracts:candidate
       - run: npm run build
       - run: npm run eval:retrieval
       - run: npm run eval:provider
       - run: npm run build:rust:release
       - run: npm run package:rust
       - run: npm run verify:rust-release
+      - name: Upload hosted release evidence candidate
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: hosted-release-evidence-${{ runner.os }}
+          path: target/release-evidence/*.json
+          if-no-files-found: error
+          retention-days: 7
       - run: npm run verify:milestone-flow

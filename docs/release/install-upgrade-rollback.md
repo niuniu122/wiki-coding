@@ -8,7 +8,9 @@ Before installation, compare the chosen artifact SHA-256 with its sidecar and in
 
 ## Subprocess sandbox prerequisite
 
-On Linux, install Bubblewrap from the operating-system package manager before using confirm-mode Cargo/Git/npm diagnostics. For example, Debian/Ubuntu use `sudo apt-get install bubblewrap`. Run `bwrap --version`, then run `minimax-codex doctor`; the `subprocess_sandbox` check must report an enforced Bubblewrap backend. A missing or namespace-blocked backend causes process tools to fail closed before target code starts.
+On Linux, install Bubblewrap from the operating-system package manager before using confirm-mode Cargo/Git/npm diagnostics. For example, Debian/Ubuntu use `sudo apt-get install bubblewrap`. A version check proves only that the executable exists; run `minimax-codex doctor` and require the `subprocess_sandbox` check to report an enforced Bubblewrap-plus-seccomp backend. A missing or namespace-blocked backend causes process tools to fail closed before target code starts.
+
+Ubuntu 24.04 may block Bubblewrap user namespaces through AppArmor. For a normal workstation or server, prefer an administrator-managed, targeted AppArmor `userns` profile for `/usr/bin/bwrap` instead of disabling the restriction globally. The failure receipt points to this condition. Do not use `full-access` as an installation workaround for an unfamiliar project.
 
 Windows remains a supported CLI/Provider/file-tool/retrieval/Vault/Wiki platform, but this version does not bundle Codex's large restricted-token/ACL/firewall subsystem. Therefore confirm-mode process diagnostics report `sandbox_unavailable`. `full-access` is the explicit process-scoped escape hatch for a project you already trust; it disables subprocess filesystem/network isolation and must not be used for unknown repositories.
 

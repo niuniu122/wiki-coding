@@ -36,6 +36,11 @@ const REQUIRED_RUN_COMMANDS = [
   "npm run verify:milestone-flow"
 ] as const;
 
+const LINUX_SANDBOX_INSTALL = "sudo apt-get update && sudo apt-get install -y bubblewrap && sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0";
+const LINUX_SANDBOX_PREFLIGHT = "bwrap --unshare-user --disable-userns --unshare-ipc --unshare-pid --unshare-net --unshare-uts --unshare-cgroup-try --die-with-parent --new-session --cap-drop ALL --clearenv --ro-bind / / /bin/true";
+const STRICT_EVENT_CONDITION = "github.event_name != 'workflow_dispatch'";
+const CANDIDATE_EVENT_CONDITION = "github.event_name == 'workflow_dispatch'";
+
 export function validateCiWorkflow(source: string): CiValidationResult {
   const errors: string[] = [];
   let lines: WorkflowLine[];
@@ -98,18 +103,19 @@ function validateTriggers(
   errors: string[]
 ): void {
   if (header.value) {
-    errors.push("Top-level on must be a block containing push and pull_request.");
+    errors.push("Top-level on must be a block containing push, pull_request, and workflow_dispatch.");
     return;
   }
   const entries = childEntries(lines, header.index, errors, "top-level on");
   const actual = entries.map(({key}) => key).sort();
   if (
     entries.some(({value}) => value !== "") ||
-    actual.length !== 2 ||
+    actual.length !== 3 ||
     actual[0] !== "pull_request" ||
-    actual[1] !== "push"
+    actual[1] !== "push" ||
+    actual[2] !== "workflow_dispatch"
   ) {
-    errors.push("Top-level on must contain exactly push and pull_request.");
+    errors.push("Top-level on must contain exactly push, pull_request, and workflow_dispatch.");
   }
 }
 
@@ -236,8 +242,8 @@ function validateSteps(
   errors: string[]
 ): void {
   const steps = parseSteps(lines, stepsHeader, errors);
-  if (steps.length !== 19) {
-    errors.push("jobs.verify steps must contain exactly nineteen allowlisted steps.");
+  if (steps.length !== 22) {
+    errors.push("jobs.verify steps must contain exactly twenty-two allowlisted steps.");
     return;
   }
 
@@ -253,7 +259,7 @@ function validateSteps(
     steps[1]!,
     ["name", "if", "run"],
     "run",
-    "sudo apt-get update && sudo apt-get install -y bubblewrap",
+    LINUX_SANDBOX_INSTALL,
     errors,
     2
   );
@@ -267,7 +273,7 @@ function validateSteps(
     steps[2]!,
     ["name", "if", "run"],
     "run",
-    "bwrap --version",
+    LINUX_SANDBOX_PREFLIGHT,
     errors,
     3
   );
@@ -308,7 +314,7 @@ function validateSteps(
     errors,
     6
   );
-  for (let index = 1; index < REQUIRED_RUN_COMMANDS.length; index += 1) {
+  for (let index = 1; index <= 4; index += 1) {
     validateStep(
       steps[index + 5]!,
       ["run"],
@@ -317,6 +323,109 @@ function validateSteps(
       errors,
       index + 6
     );
+  }
+  validateEvidenceModeStep(
+    steps[10]!,
+    "Run strict Rust tests",
+    STRICT_EVENT_CONDITION,
+    REQUIRED_RUN_COMMANDS[5],
+    errors,
+    11
+  );
+  validateEvidenceModeStep(
+    steps[11]!,
+    "Run hosted evidence candidate Rust tests",
+    CANDIDATE_EVENT_CONDITION,
+    "npm run test:rust:candidate",
+    errors,
+    12
+  );
+  validateEvidenceModeStep(
+    steps[12]!,
+    "Verify strict Rust contracts",
+    STRICT_EVENT_CONDITION,
+    REQUIRED_RUN_COMMANDS[6],
+    errors,
+    13
+  );
+  validateEvidenceModeStep(
+    steps[13]!,
+    "Verify hosted evidence candidate Rust contracts",
+    CANDIDATE_EVENT_CONDITION,
+    "npm run verify:rust-contracts:candidate",
+    errors,
+    14
+  );
+  for (let index = 7; index <= 12; index += 1) {
+    validateStep(
+      steps[index + 7]!,
+      ["run"],
+      "run",
+      REQUIRED_RUN_COMMANDS[index]!,
+      errors,
+      index + 8
+    );
+  }
+  validateHostedEvidenceUpload(lines, steps[20]!, errors);
+  validateStep(steps[21]!, ["run"], "run", REQUIRED_RUN_COMMANDS[13], errors, 22);
+}
+
+function validateEvidenceModeStep(
+  step: WorkflowStep,
+  expectedName: string,
+  expectedCondition: string,
+  expectedCommand: string,
+  errors: string[],
+  position: number
+): void {
+  validateStep(step, ["name", "if", "run"], "run", expectedCommand, errors, position);
+  if (
+    scalar(step.entries.get("name")?.value ?? "") !== expectedName ||
+    scalar(step.entries.get("if")?.value ?? "") !== expectedCondition
+  ) {
+    errors.push(`jobs.verify evidence step ${position} has an invalid name or event condition.`);
+  }
+}
+
+function validateHostedEvidenceUpload(
+  lines: WorkflowLine[],
+  step: WorkflowStep,
+  errors: string[]
+): void {
+  validateStep(
+    step,
+    ["name", "if", "uses", "with"],
+    "uses",
+    "actions/upload-artifact@v4",
+    errors,
+    21
+  );
+  if (
+    scalar(step.entries.get("name")?.value ?? "") !== "Upload hosted release evidence candidate" ||
+    scalar(step.entries.get("if")?.value ?? "") !== CANDIDATE_EVENT_CONDITION
+  ) {
+    errors.push("The hosted evidence upload must be manual-dispatch-only.");
+  }
+  const withEntry = step.entries.get("with");
+  if (!withEntry || withEntry.value) {
+    errors.push("The hosted evidence upload must use the exact artifact contract.");
+    return;
+  }
+  const entries = childEntries(lines, withEntry.index, errors, "upload-artifact with");
+  validateExactKeys(
+    entries,
+    ["name", "path", "if-no-files-found", "retention-days"],
+    errors,
+    "upload-artifact with"
+  );
+  const values = entryMap(entries, errors, "upload-artifact with");
+  if (
+    scalar(values.get("name")?.value ?? "") !== "hosted-release-evidence-${{ runner.os }}" ||
+    scalar(values.get("path")?.value ?? "") !== "target/release-evidence/*.json" ||
+    scalar(values.get("if-no-files-found")?.value ?? "") !== "error" ||
+    scalar(values.get("retention-days")?.value ?? "") !== "7"
+  ) {
+    errors.push("The hosted evidence upload artifact contract is invalid.");
   }
 }
 

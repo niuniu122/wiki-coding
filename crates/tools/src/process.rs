@@ -267,7 +267,7 @@ fn detect_sandbox_capability(workspace: &Path) -> SandboxCapability {
             backend: "bubblewrap",
             platform: "linux",
             state: SandboxCapabilityState::Unavailable,
-            detail: "Bubblewrap cannot create the required namespaces or seccomp filter; confirm-mode process execution fails closed",
+            detail: "Bubblewrap cannot create the required namespaces or seccomp filter; on Ubuntu 24.04 check the AppArmor userns policy; confirm-mode process execution fails closed",
         }
     }
 }

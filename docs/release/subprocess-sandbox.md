@@ -19,6 +19,12 @@ Rust toolchains and non-credential Cargo cache directories may be mounted read-o
 
 The runtime executes the complete Bubblewrap-plus-seccomp probe first. The syscall filter denies new sockets (including Unix-domain sockets), socket pairs, io_uring setup, and kernel keyring access; the separate network namespace remains a second layer. Missing Bubblewrap returns `sandbox_unavailable`; a backend that cannot create the namespaces or install the filter returns `sandbox_denied`. Neither error retries the target without a sandbox.
 
+### Ubuntu 24.04 and AppArmor
+
+Ubuntu 24.04 can restrict unprivileged user namespaces through AppArmor. In that state `bwrap --version` succeeds even though Bubblewrap cannot create the user/network namespaces required by the sandbox. `wiki-coding doctor` therefore runs the complete backend probe and reports the backend unavailable instead of treating the installed binary as proof.
+
+On a long-lived machine, keep the global AppArmor restriction enabled and ask the administrator to grant a targeted `userns` profile to the trusted system Bubblewrap executable. Do not switch an unfamiliar project to full access to work around this error. The GitHub Actions workflow uses a temporary sysctl adjustment only inside its disposable Ubuntu runner, then executes a real namespace preflight and the malicious build-script canary.
+
 ## What is outside the sandbox
 
 Provider HTTPS is opened by the host Provider adapter, not by a project child process. Denying child networking therefore does not break model calls. BM25-first project discovery, optional embedding reranking, Vault/Wiki Markdown, and direct bounded file tools keep their existing boundaries.
