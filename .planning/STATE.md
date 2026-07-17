@@ -5,16 +5,16 @@ milestone_name: Rust Convergence
 current_phase: 10
 current_phase_name: rust-authority-and-source-boundaries
 status: executing
-stopped_at: Completed 10-01-PLAN.md
-last_updated: "2026-07-17T12:03:37.942Z"
+stopped_at: Completed 10-02-PLAN.md
+last_updated: "2026-07-17T12:43:56.440Z"
 last_activity: 2026-07-17
-last_activity_desc: Phase 10 execution started
+last_activity_desc: Completed 10-02-PLAN.md
 progress:
   total_phases: 14
   completed_phases: 9
   total_plans: 43
-  completed_plans: 29
-  percent: 64
+  completed_plans: 30
+  percent: 70
 ---
 
 # Project State
@@ -28,9 +28,9 @@ See: `.planning/PROJECT.md` (updated 2026-07-15)
 ## Current Position
 
 Phase: 10 (rust-authority-and-source-boundaries) — EXECUTING
-Plan: 2 of 3
+Plan: 3 of 3
 Status: Ready to execute
-Last activity: 2026-07-17 — Phase 10 execution started
+Last activity: 2026-07-17 — Completed 10-02-PLAN.md
 
 ## Previous Phase 7 Hosted Baseline (superseded)
 
@@ -62,7 +62,7 @@ Last activity: 2026-07-17 — Phase 10 execution started
 
 ## Locked Decisions
 
-- Rust is the default product entry; `minimax-codex-legacy` keeps the explicit TypeScript path for the support window.
+- Rust is the sole supported product entry; `minimax-codex` reaches only the fixed native launcher and no legacy command is exposed.
 - Permissions are exactly `confirm` and process-scoped `full-access`; all hard safety gates remain active.
 - The product uses one project-bound Obsidian-compatible Vault and no SQLite.
 - Raw terminal sessions finalize before the separate pinned-main-model Wiki workflow.
@@ -107,15 +107,18 @@ No package publication, tag, PR, merge, live Provider request, credential read, 
 - [Phase 10]: Hash-pin every tracked TS/TSX path as inert transitional evidence until Phase 11 retirement. — Any addition or content edit must become an explicit source-authority review.
 - [Phase 10]: Keep the three diagnostic JavaScript fixtures in a separate lifecycle class outside executable authority. — Phase 11 must disposition them and Phase 14 must delete them and zero the class.
 - [Phase 10]: Exclude generated dist contents from source authority while validating committed sources and package executable links. — The offline gate must be independent of generated build outputs.
+- [Phase 10]: The supported npm surface exposes only minimax-codex through the fixed Rust launcher; TypeScript remains inert source evidence until retirement. — Removes duplicate executable authority without deleting Phase 10 transition evidence.
+- [Phase 10]: .minimax is the only project writable runtime root; .mini-codex is read-only migration input and rollback is receipt-scoped. — Keeps migration source-preserving and makes every project mutation attributable to Rust state.
 
 ## Performance Metrics
 
 | Phase | Plan | Duration | Notes |
 |-------|------|----------|-------|
 | Phase 10 P01 | 29min | 2 tasks | 5 files |
+| Phase 10 P02 | 31min | 2 tasks | 9 files |
 
 ## Session
 
-**Last session:** 2026-07-17T12:02:59.403Z
-**Stopped at:** Completed 10-01-PLAN.md
+**Last session:** 2026-07-17T12:43:56.428Z
+**Stopped at:** Completed 10-02-PLAN.md
 **Resume file:** None
