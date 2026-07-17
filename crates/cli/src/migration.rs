@@ -296,7 +296,7 @@ impl MigrationReceipt {
         {
             return Err(MigrationError::Receipt);
         }
-        Ok(())
+        validate_receipt_ownership(self)
     }
 }
 
@@ -413,7 +413,12 @@ pub fn apply_migration(
         verify_receipt_targets(&receipt)?;
         return Ok(receipt);
     }
-    recover_interrupted(&target_root, &plan.migration_id)?;
+    recover_interrupted(
+        &target_root,
+        &plan.migration_id,
+        &plan.plan_hash,
+        &plan.targets,
+    )?;
     let rebuilt = build_migration(Path::new(&plan.source_root), &target_root)?;
     if rebuilt.plan.body() != plan.body() || rebuilt.plan.plan_hash != plan.plan_hash {
         return Err(MigrationError::Drift);
@@ -662,6 +667,9 @@ fn normalize_source(
 
 fn normalize_config(bytes: &[u8]) -> Result<Vec<u8>, MigrationError> {
     let value: Value = serde_json::from_slice(bytes).map_err(|_| MigrationError::Malformed)?;
+    if contains_private_reasoning(&value) {
+        return Err(MigrationError::Secret);
+    }
     let object = value.as_object().ok_or(MigrationError::Malformed)?;
     if object.get("schemaVersion").and_then(Value::as_u64) != Some(1) {
         return Err(MigrationError::Malformed);
@@ -751,6 +759,9 @@ fn normalize_sessions(
     };
     let index: Value =
         serde_json::from_slice(&thread_file.bytes).map_err(|_| MigrationError::Malformed)?;
+    if contains_private_reasoning(&index) {
+        return Err(MigrationError::Secret);
+    }
     let threads = index
         .get("threads")
         .and_then(Value::as_array)
@@ -761,6 +772,9 @@ fn normalize_sessions(
     for file in files.iter().filter(|file| file.kind == SourceKind::Session) {
         for value in parse_jsonl(&file.bytes)? {
             let payload = envelope_payload(value, "thread.item")?;
+            if contains_private_reasoning(&payload) {
+                return Err(MigrationError::Secret);
+            }
             let thread_id = payload
                 .get("threadId")
                 .and_then(Value::as_str)
@@ -774,6 +788,9 @@ fn normalize_sessions(
     for file in files.iter().filter(|file| file.kind == SourceKind::Turn) {
         for value in parse_jsonl(&file.bytes)? {
             let (kind, payload) = envelope_or_legacy_turn(value)?;
+            if contains_private_reasoning(&payload) {
+                return Err(MigrationError::Secret);
+            }
             if kind == "turn.snapshot" {
                 let thread_id = payload
                     .get("threadId")
@@ -1094,6 +1111,9 @@ fn normalize_capabilities(
     {
         let value: Value =
             serde_json::from_slice(&file.bytes).map_err(|_| MigrationError::Malformed)?;
+        if contains_private_reasoning(&value) {
+            return Err(MigrationError::Secret);
+        }
         if contains_secret(&value) {
             excluded.push(MigrationExclusion {
                 relative_path: file.relative_path.clone(),
@@ -1161,11 +1181,7 @@ fn walk_source(
         let relative = relative_string(source_root, &path)?;
         let metadata = std::fs::symlink_metadata(&path).map_err(|_| MigrationError::Read)?;
         if metadata.file_type().is_symlink() {
-            exclusions.push(MigrationExclusion {
-                relative_path: relative,
-                reason: "symlink".to_owned(),
-            });
-            continue;
+            return Err(MigrationError::Symlink);
         }
         if metadata.is_dir() {
             walk_source(source_root, &path, files, exclusions)?;
@@ -1269,6 +1285,35 @@ fn validate_unique_targets(targets: &[MigrationTarget]) -> Result<(), MigrationE
     Ok(())
 }
 
+fn validate_receipt_ownership(receipt: &MigrationReceipt) -> Result<(), MigrationError> {
+    if !valid_migration_id(&receipt.migration_id)
+        || !is_sha256(&receipt.plan_hash)
+        || !is_sha256(&receipt.source_fingerprint)
+        || !is_sha256(&receipt.receipt_hash)
+    {
+        return Err(MigrationError::Receipt);
+    }
+    let allowed = BTreeSet::from([
+        ".minimax/config.json".to_owned(),
+        ".minimax/runtime/v1/sessions.jsonl".to_owned(),
+        format!(
+            ".minimax/migrations/v1/{}/capability-metadata.json",
+            receipt.migration_id
+        ),
+    ]);
+    let mut seen = BTreeSet::new();
+    for target in receipt.created.iter().chain(&receipt.reused) {
+        if validate_relative_path(&target.relative_path).is_err()
+            || !allowed.contains(&target.relative_path)
+            || !seen.insert(target.relative_path.as_str())
+            || !is_sha256(&target.sha256)
+        {
+            return Err(MigrationError::Receipt);
+        }
+    }
+    Ok(())
+}
+
 fn verify_receipt_targets(receipt: &MigrationReceipt) -> Result<(), MigrationError> {
     receipt.validate()?;
     let root = canonical_directory(Path::new(&receipt.target_root), MigrationError::Target)?;
@@ -1324,7 +1369,12 @@ fn rollback_created(
     Ok(())
 }
 
-fn recover_interrupted(target_root: &Path, migration_id: &str) -> Result<(), MigrationError> {
+fn recover_interrupted(
+    target_root: &Path,
+    migration_id: &str,
+    expected_plan_hash: &str,
+    expected_targets: &[MigrationTarget],
+) -> Result<(), MigrationError> {
     let directory = operation_directory(target_root, migration_id)?;
     let manifest_path = directory.join("operation.json");
     if !manifest_path.is_file() {
@@ -1335,8 +1385,24 @@ fn recover_interrupted(target_root: &Path, migration_id: &str) -> Result<(), Mig
     }
     let manifest: OperationManifest =
         read_json_bounded(&manifest_path, MAX_PLAN_BYTES, MigrationError::Recovery)?;
-    if manifest.schema_version != SCHEMA_VERSION {
+    if manifest.schema_version != SCHEMA_VERSION || manifest.plan_hash != expected_plan_hash {
         return Err(MigrationError::Recovery);
+    }
+    let expected = expected_targets
+        .iter()
+        .map(|target| (target.relative_path.as_str(), target))
+        .collect::<BTreeMap<_, _>>();
+    let mut seen = BTreeSet::new();
+    for candidate in &manifest.candidates {
+        let Some(target) = expected.get(candidate.relative_path.as_str()) else {
+            return Err(MigrationError::Recovery);
+        };
+        if !seen.insert(candidate.relative_path.as_str())
+            || candidate.sha256 != target.sha256
+            || candidate.bytes != target.bytes
+        {
+            return Err(MigrationError::Recovery);
+        }
     }
     rollback_created(target_root, &manifest.candidates)?;
     remove_operation_files(&directory)
@@ -1618,6 +1684,23 @@ fn contains_secret(value: &Value) -> bool {
     }
 }
 
+fn contains_private_reasoning(value: &Value) -> bool {
+    match value {
+        Value::Object(object) => object.iter().any(|(key, value)| {
+            let normalized = key
+                .bytes()
+                .filter(u8::is_ascii_alphanumeric)
+                .map(|byte| byte.to_ascii_lowercase())
+                .collect::<Vec<_>>();
+            let normalized = String::from_utf8_lossy(&normalized);
+            matches!(normalized.as_ref(), "privatereasoning" | "reasoningcontent")
+                || contains_private_reasoning(value)
+        }),
+        Value::Array(values) => values.iter().any(contains_private_reasoning),
+        _ => false,
+    }
+}
+
 fn secret_key(key: &str) -> bool {
     let normalized = key
         .bytes()
@@ -1660,6 +1743,21 @@ fn looks_like_secret_token(value: &str) -> bool {
                     .bytes()
                     .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
         })
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn valid_migration_id(value: &str) -> bool {
+    value.len() == 19
+        && value.starts_with("ts-")
+        && value[3..]
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn imported_id(kind: &str, original: &str) -> String {
