@@ -210,7 +210,7 @@ Plans:
 | 8. Codex-style Subprocess Sandbox Hardening | 3/3 | Complete | 2026-07-17 |
 | 9. Capability Workspace and Non-Programmer Harness | 3/3 | Complete | 2026-07-17 |
 | 10. Rust Authority and Source Boundaries | 4/4 | Complete    | 2026-07-17 |
-| 11. Rust Verification and Evaluation Authority | 2/4 | In Progress|  |
+| 11. Rust Verification and Evaluation Authority | 3/4 | In Progress|  |
 | 12. Fixture Compatibility and Rust Migration | 0/2 | Not started | - |
 | 13. Thin npm and Native Release | 0/3 | Not started | - |
 | 14. TypeScript Removal and Hosted Closure | 0/3 | Not started | - |
@@ -328,18 +328,18 @@ Plans:
   3. The Rust retrieval evaluation reports deterministic exact/BM25 and mixed-language ranking results, proves BM25 runs before embedding, rejects semantic outsiders, and records truthful degraded modes.
   4. Rust verification failures block parity and release decisions even if any transitional Node/package smoke passes.
 
-**Plans:** 2/4 plans executed
+**Plans:** 3/4 plans executed
 
 Plans:
 
 - [x] 11-01-PLAN.md
 - [x] 11-02-PLAN.md
-- [ ] 11-03-PLAN.md
+- [x] 11-03-PLAN.md
 - [ ] 11-04-PLAN.md
 
 - [x] 11-01: Classify TypeScript coverage and close required Rust behavioral gaps
 - [x] 11-02: Port Provider conformance fixtures and machine-readable evaluation to Rust
-- [ ] 11-03: Implement and verify the deterministic Rust retrieval evaluator
+- [x] 11-03: Implement and verify the deterministic Rust retrieval evaluator
 - [ ] 11-04: Make Rust Provider/retrieval reports blocking package and CI authority
 
 ### Phase 12: Fixture Compatibility and Rust Migration

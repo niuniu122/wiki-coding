@@ -115,7 +115,7 @@
 
 - [x] **RVE-01**: Still-required public CLI, lifecycle, Provider, tool, retrieval, and rendering behaviors covered by TypeScript tests are represented by deterministic Rust tests or an explicit documented retirement decision.
 - [x] **RVE-02**: Provider conformance evaluation is Rust-owned, fixture-only, machine-readable, and covers the supported Responses and Chat Completions profiles without credentials or API spend.
-- [ ] **RVE-03**: Retrieval evaluation is Rust-owned and proves exact/BM25 usefulness, labeled mixed-language cases, BM25-before-embedding ordering, candidate-only semantic reranking, and truthful degradation.
+- [x] **RVE-03**: Retrieval evaluation is Rust-owned and proves exact/BM25 usefulness, labeled mixed-language cases, BM25-before-embedding ordering, candidate-only semantic reranking, and truthful degradation.
 
 ### Compatibility and Migration
 
@@ -222,7 +222,7 @@
 | RUST-03 | Phase 10 | Complete |
 | RVE-01 | Phase 11 | Complete |
 | RVE-02 | Phase 11 | Complete |
-| RVE-03 | Phase 11 | Pending |
+| RVE-03 | Phase 11 | Complete |
 | RCMP-01 | Phase 12 | Pending |
 | RCMP-02 | Phase 12 | Pending |
 | RNPM-01 | Phase 13 | Pending |
