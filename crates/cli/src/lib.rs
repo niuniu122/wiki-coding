@@ -18,6 +18,7 @@ pub use driver::{
 pub use headless::{ExitClass, JsonlWriter, exit_for_error, exit_for_report};
 pub use index::{
     IndexError, augment_agent_prompt, capability_search, capability_status,
+    capability_workspace_search, capability_workspace_status, is_capability_discovery_intent,
     is_project_discovery_intent, project_search, project_status, wiki_search, wiki_status,
 };
 pub use maintenance::{ForgetPlanOutput, GcPlanOutput, VaultStatusOutput};
@@ -35,7 +36,8 @@ pub use wiki::{
 /// Human-readable boundary used by architecture checks and documentation.
 pub const CRATE_ROLE: &str = "composition root for Rust development commands and adapters";
 pub use app::{
-    CapabilityIndexAction, ChatArgs, Cli, CliCommand, CommonArgs, DoctorArgs, IndexAction,
-    IndexArgs, MigrateAction, MigrateArgs, PermissionArg, ProjectIndexAction, ProtocolArg, RunArgs,
-    VaultAction, VaultArgs, VaultForgetAction, VaultGcAction, WikiIndexAction,
+    CapabilityIndexAction, CapabilityKindArg, ChatArgs, Cli, CliCommand, CommonArgs, DoctorArgs,
+    IndexAction, IndexArgs, MigrateAction, MigrateArgs, PermissionArg, ProjectIndexAction,
+    ProtocolArg, RunArgs, VaultAction, VaultArgs, VaultForgetAction, VaultGcAction,
+    WikiIndexAction, WorkspaceIndexAction,
 };

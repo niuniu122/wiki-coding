@@ -87,6 +87,10 @@ pub enum IndexAction {
         #[command(subcommand)]
         action: ProjectIndexAction,
     },
+    Workspace {
+        #[command(subcommand)]
+        action: WorkspaceIndexAction,
+    },
     Wiki {
         #[command(subcommand)]
         action: WikiIndexAction,
@@ -115,6 +119,50 @@ pub enum ProjectIndexAction {
         query: String,
         #[arg(long)]
         catalog: Option<PathBuf>,
+        #[arg(long)]
+        embedding_resource: Option<PathBuf>,
+        #[arg(long, default_value_t = 5)]
+        limit: usize,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+#[value(rename_all = "snake_case")]
+pub enum CapabilityKindArg {
+    All,
+    Project,
+    Skill,
+    Mcp,
+}
+
+impl CapabilityKindArg {
+    #[must_use]
+    pub const fn selected_kind(self) -> Option<minimax_protocol::CapabilityKind> {
+        match self {
+            Self::All => None,
+            Self::Project => Some(minimax_protocol::CapabilityKind::Project),
+            Self::Skill => Some(minimax_protocol::CapabilityKind::Skill),
+            Self::Mcp => Some(minimax_protocol::CapabilityKind::Mcp),
+        }
+    }
+}
+
+#[derive(Clone, Debug, Subcommand)]
+pub enum WorkspaceIndexAction {
+    Status {
+        #[arg(long)]
+        catalog_root: Option<PathBuf>,
+        #[arg(long)]
+        embedding_resource: Option<PathBuf>,
+    },
+    Search {
+        query: String,
+        #[arg(long, value_enum, default_value = "all")]
+        kind: CapabilityKindArg,
+        #[arg(long)]
+        catalog_root: Option<PathBuf>,
+        #[arg(long)]
+        inventory: Option<PathBuf>,
         #[arg(long)]
         embedding_resource: Option<PathBuf>,
         #[arg(long, default_value_t = 5)]
@@ -274,6 +322,10 @@ pub struct CommonArgs {
     pub project_id: Option<String>,
     #[arg(long)]
     pub embedding_resource: Option<PathBuf>,
+    #[arg(long)]
+    pub capability_root: Option<PathBuf>,
+    #[arg(long)]
+    pub capability_inventory: Option<PathBuf>,
     #[arg(long)]
     pub provider_id: Option<String>,
     #[arg(long)]

@@ -9,11 +9,12 @@ use minimax_cli::{
     ForgetPlanOutput, GcPlanOutput, HeadlessApprovalPort, HttpProviderPort, IndexAction, IndexArgs,
     InteractiveApprovalPort, JsonlWriter, MigrateAction, MigrateArgs, ProjectIndexAction, RunArgs,
     RuntimeDriver, VaultAction, VaultArgs, VaultForgetAction, VaultGcAction, VaultStatusOutput,
-    WikiIndexAction, WikiRunReport, apply_migration, augment_agent_prompt, build_migration_plan,
-    capability_search, capability_status, exit_for_error, exit_for_report,
-    finalize_active_session_wiki, inspect, inventory_migration, is_project_discovery_intent,
-    permission_status, project_search, project_status, resolve_project_vault, rollback_migration,
-    verify_migration, wiki_search, wiki_status,
+    WikiIndexAction, WikiRunReport, WorkspaceIndexAction, apply_migration, augment_agent_prompt,
+    build_migration_plan, capability_search, capability_status, capability_workspace_search,
+    capability_workspace_status, exit_for_error, exit_for_report, finalize_active_session_wiki,
+    inspect, inventory_migration, is_capability_discovery_intent, permission_status,
+    project_search, project_status, resolve_project_vault, rollback_migration, verify_migration,
+    wiki_search, wiki_status,
 };
 use minimax_core::{CompactionBudget, PermissionMode, WikiGenerationPort};
 use minimax_protocol::{
@@ -143,6 +144,38 @@ async fn execute_index(args: IndexArgs) -> ExitClass {
                 Err(error) => index_error(error),
             },
         },
+        IndexAction::Workspace { action } => match action {
+            WorkspaceIndexAction::Status {
+                catalog_root,
+                embedding_resource,
+            } => match capability_workspace_status(
+                catalog_root.as_deref(),
+                embedding_resource.as_deref(),
+            ) {
+                Ok(status) => render_capability_workspace_status(args.jsonl, status),
+                Err(error) => index_error(error),
+            },
+            WorkspaceIndexAction::Search {
+                query,
+                kind,
+                catalog_root,
+                inventory,
+                embedding_resource,
+                limit,
+            } => match capability_workspace_search(
+                catalog_root.as_deref(),
+                inventory.as_deref(),
+                embedding_resource.as_deref(),
+                &query,
+                kind.selected_kind(),
+                limit,
+            )
+            .await
+            {
+                Ok(response) => render_capability_workspace_search(args.jsonl, response),
+                Err(error) => index_error(error),
+            },
+        },
         IndexAction::Wiki { action } => match action {
             WikiIndexAction::Status {
                 project,
@@ -196,6 +229,22 @@ fn render_index_search(jsonl: bool, response: minimax_protocol::RetrievalRespons
     render_index_value(jsonl, &response, text)
 }
 
+fn render_capability_workspace_status(
+    jsonl: bool,
+    status: minimax_protocol::CapabilityWorkspaceStatusRecord,
+) -> ExitClass {
+    let text = EventRenderer::capability_workspace_status(&status);
+    render_index_value(jsonl, &status, text)
+}
+
+fn render_capability_workspace_search(
+    jsonl: bool,
+    response: minimax_protocol::CapabilityWorkspaceResponse,
+) -> ExitClass {
+    let text = EventRenderer::capability_workspace(&response);
+    render_index_value(jsonl, &response, text)
+}
+
 fn render_index_value<T: serde::Serialize>(jsonl: bool, value: &T, text: String) -> ExitClass {
     if jsonl {
         let mut writer = JsonlWriter::new(io::stdout().lock());
@@ -212,7 +261,9 @@ fn render_index_value<T: serde::Serialize>(jsonl: bool, value: &T, text: String)
 fn index_error(error: minimax_cli::IndexError) -> ExitClass {
     eprintln!("index failed: {error}");
     match error {
-        minimax_cli::IndexError::Read | minimax_cli::IndexError::Catalog(_) => ExitClass::Usage,
+        minimax_cli::IndexError::Read
+        | minimax_cli::IndexError::Catalog(_)
+        | minimax_cli::IndexError::CapabilityCatalog(_) => ExitClass::Usage,
         minimax_cli::IndexError::Vault(_) => ExitClass::Workspace,
     }
 }
@@ -620,8 +671,13 @@ async fn execute_run(args: RunArgs) -> ExitClass {
         driver.set_permission_mode(args.permission.into());
     }
     let prompt = if args.agent {
-        match augment_agent_prompt(None, args.common.embedding_resource.as_deref(), args.prompt)
-            .await
+        match augment_agent_prompt(
+            args.common.capability_root.as_deref(),
+            args.common.capability_inventory.as_deref(),
+            args.common.embedding_resource.as_deref(),
+            args.prompt,
+        )
+        .await
         {
             Ok(prompt) => prompt,
             Err(error) => {
@@ -798,7 +854,8 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
                     }
                     CommandIntent::AgentSubmit(prompt) => {
                         let prompt = match augment_agent_prompt(
-                            None,
+                            args.common.capability_root.as_deref(),
+                            args.common.capability_inventory.as_deref(),
                             args.common.embedding_resource.as_deref(),
                             prompt,
                         )
@@ -958,19 +1015,26 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
                                 "{}",
                                 EventRenderer::retrieval(&capability_search(&query, 5))
                             );
-                            if is_project_discovery_intent(&query) {
-                                match project_search(
-                                    None,
+                            if is_capability_discovery_intent(&query) {
+                                match capability_workspace_search(
+                                    args.common.capability_root.as_deref(),
+                                    args.common.capability_inventory.as_deref(),
                                     args.common.embedding_resource.as_deref(),
                                     &query,
+                                    None,
                                     5,
                                 )
                                 .await
                                 {
                                     Ok(response) => {
-                                        println!("{}", EventRenderer::retrieval(&response));
+                                        println!(
+                                            "{}",
+                                            EventRenderer::capability_workspace(&response)
+                                        );
                                     }
-                                    Err(error) => eprintln!("project discovery failed: {error}"),
+                                    Err(error) => {
+                                        eprintln!("capability discovery failed: {error}");
+                                    }
                                 }
                             }
                         }

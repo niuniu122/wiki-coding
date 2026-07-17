@@ -2,8 +2,8 @@
 
 A local-first, Codex-style command-line agent for MiniMax and compatible
 Providers. The supported product runtime is Rust. It combines a typed agent
-loop, bounded workspace tools, BM25-first open-source project discovery, and an
-Obsidian-compatible per-project Vault. SQLite is not used.
+loop, bounded workspace tools, a BM25-first project/Skill/MCP capability
+workspace, and an Obsidian-compatible per-project Vault. SQLite is not used.
 
 ## Install and run
 
@@ -72,29 +72,40 @@ The first run creates a stable project-to-Vault binding at
 binding, the Vault is a sibling directory recommended by the runtime. It stays
 plain Markdown and JSON so Obsidian and ordinary file tools can inspect it.
 
-## Open-source project discovery
+## Project, Skill, and MCP discovery
 
+External metadata is kept under the dedicated source-only [`capabilities/`](capabilities/README.md)
+workspace, not in the fixed executable adapters under `crates/tools`.
 Non-programmers do not need to prepare a catalog flag. Ordinary agent prompts
-that explicitly ask for an open-source project, library, or tool automatically
-receive bounded read-only discovery context:
+that ask for an open-source project, Skill, MCP server, library, or tool
+automatically receive bounded read-only discovery context:
 
-1. BM25 extracts and ranks lexical candidates first.
+1. Three typed project, Skill, and MCP indexes run exact/BM25 first.
 2. An optional, separately installed and hash-verified embedding resource may
-   rerank only those candidates.
+   rerank only the bounded lexical candidate union.
 3. Missing, incompatible, or unhealthy embeddings leave the BM25 order intact.
+4. A separate local inventory overlay reports `ready`, `needs_install`, or
+   `needs_authorization` and prints a safe next action.
 
-Discovery never installs or executes a candidate. The embedded catalog is the
-zero-configuration default; `--catalog` remains a strict expert override.
+Discovery never downloads, installs, authorizes, or executes a candidate.
+Catalogs contain source facts only; they do not contain credentials, mutable
+installed flags, shell commands, or process state. The embedded catalogs are
+the zero-configuration default; `--catalog-root` and `--inventory` are strict
+read-only expert overrides for the workspace command.
 
 Read-only inspection is also available directly:
 
 ```bash
 minimax-codex index capabilities status
+minimax-codex index workspace status
+minimax-codex index workspace search "帮我找一个管理 GitHub issue 的 MCP" --kind mcp
+minimax-codex index workspace search "查 OpenAI API 官方文档" --kind skill
 minimax-codex index projects search "本地知识库命令行工具"
 minimax-codex index wiki search "release decision" --vault <path> --project-id <id>
 ```
 
 The base distribution never bundles or downloads model weights. See the
+[capability workspace guide](docs/capability-workspace.md) and the
 [optional embedding package contract](docs/release/embedding-package.md).
 
 ## Vault maintenance and migration
@@ -131,6 +142,8 @@ CLI/TUI
       -> runtime journal
       -> Vault/Wiki workflow
       -> retrieval kernel (exact/BM25, optional candidate rerank)
+          -> dedicated project/Skill/MCP source catalogs
+          -> separate read-only readiness inventory
 ```
 
 Provider adapters normalize Responses and Chat Completions streams into one
