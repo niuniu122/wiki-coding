@@ -10,8 +10,9 @@ use minimax_cli::{
 };
 use minimax_core::PermissionMode;
 use minimax_protocol::{
-    ModelBinding, ModelId, ProviderId, ProviderProtocolKind, RuntimeErrorCode, RuntimeFailure,
-    StreamEvent, TerminalOutcome, Usage, parse_runtime_event_v1,
+    ModelBinding, ModelId, ProviderId, ProviderProtocolKind, RuntimeErrorCode, RuntimeEvent,
+    RuntimeEventV1, RuntimeFailure, RuntimeTerminalOutcome, StreamEvent, TerminalOutcome, Usage,
+    parse_runtime_event_v1,
 };
 use minimax_provider::{ConfigLayer, CredentialError, CredentialSource, resolve_config};
 use minimax_tools::SandboxCapability;
@@ -282,12 +283,70 @@ fn version_flag_reports_the_rust_package_identity_and_succeeds() {
     );
 }
 
+#[test]
+fn text_and_jsonl_terminal_outcomes_match_public_exit_contract() {
+    for (outcome, expected_text) in [
+        (RuntimeTerminalOutcome::Completed, "terminal | completed"),
+        (
+            RuntimeTerminalOutcome::Interrupted,
+            "terminal | interrupted",
+        ),
+    ] {
+        let event = RuntimeEventV1::new(RuntimeEvent::Terminal { outcome });
+        let json = serde_json::to_string(&event).expect("terminal JSONL");
+        let reparsed = parse_runtime_event_v1(&json).expect("schema-v1 terminal JSONL");
+        assert_eq!(reparsed, event);
+        assert_eq!(EventRenderer::event(&reparsed), expected_text);
+        assert!(!expected_text.contains('\u{1b}'));
+    }
+    assert_eq!(ExitClass::Completed.code(), 0);
+    assert_eq!(ExitClass::Interrupted.code(), 4);
+    assert_matrix_responsibility(
+        "test/ui-status.test.ts",
+        "ts-cli-terminal-output-parity",
+        "text_and_jsonl_terminal_outcomes_match_public_exit_contract",
+    );
+}
+
 fn binding() -> ModelBinding {
     ModelBinding {
         provider_id: ProviderId::new("fixture").expect("provider id"),
         model_id: ModelId::new("fixture-model").expect("model id"),
         protocol: ProviderProtocolKind::Responses,
     }
+}
+
+fn assert_matrix_responsibility(source_path: &str, id: &str, test_name: &str) {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("repository root");
+    let matrix: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            root.join("fixtures/compat/verification/typescript-responsibilities.v1.json"),
+        )
+        .expect("coverage matrix"),
+    )
+    .expect("coverage matrix JSON");
+    let source = matrix["sources"]
+        .as_array()
+        .expect("coverage sources")
+        .iter()
+        .find(|source| source["sourcePath"] == source_path)
+        .expect("historical source");
+    assert!(
+        source["responsibilities"]
+            .as_array()
+            .expect("responsibilities")
+            .iter()
+            .any(|responsibility| responsibility["id"] == id
+                && responsibility["evidence"]
+                    .as_array()
+                    .is_some_and(|evidence| evidence
+                        .iter()
+                        .any(|item| item["path"] == "crates/cli/tests/headless.rs"
+                            && item["test"] == test_name)))
+    );
 }
 
 #[derive(Default)]

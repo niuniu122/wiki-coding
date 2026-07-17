@@ -48,8 +48,21 @@ fn parser_covers_every_manifest_command_alias_and_argument_shape() {
         assert_eq!(intent.canonical_name(), canonical);
     }
     assert_eq!(
+        parse_input("/continue"),
+        Ok(ParsedInput::Command(CommandIntent::AgentContinue))
+    );
+    assert_eq!(
+        parse_input("/retry"),
+        Ok(ParsedInput::Command(CommandIntent::RetryInitialization))
+    );
+    assert_eq!(
         parse_input("ordinary prompt"),
         Ok(ParsedInput::Prompt("ordinary prompt".to_owned()))
+    );
+    assert_matrix_responsibility(
+        "test/chat-input-policy.test.ts",
+        "ts-command-retry-continue-outcomes",
+        "parser_covers_every_manifest_command_alias_and_argument_shape",
     );
 }
 
@@ -295,4 +308,37 @@ fn non_tty_never_enables_raw_mode_and_raw_guard_restores_on_drop() {
         .begin()
         .expect("unsupported raw mode falls back to line input");
     assert_eq!(fallback.mode(), ShellMode::Line);
+}
+
+fn assert_matrix_responsibility(source_path: &str, id: &str, test_name: &str) {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("repository root");
+    let matrix: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            root.join("fixtures/compat/verification/typescript-responsibilities.v1.json"),
+        )
+        .expect("coverage matrix"),
+    )
+    .expect("coverage matrix JSON");
+    let source = matrix["sources"]
+        .as_array()
+        .expect("coverage sources")
+        .iter()
+        .find(|source| source["sourcePath"] == source_path)
+        .expect("historical source");
+    assert!(
+        source["responsibilities"]
+            .as_array()
+            .expect("responsibilities")
+            .iter()
+            .any(|responsibility| responsibility["id"] == id
+                && responsibility["evidence"]
+                    .as_array()
+                    .is_some_and(|evidence| evidence
+                        .iter()
+                        .any(|item| item["path"] == "crates/tui/tests/command_render.rs"
+                            && item["test"] == test_name)))
+    );
 }
