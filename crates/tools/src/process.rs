@@ -260,7 +260,7 @@ fn detect_sandbox_capability(workspace: &Path) -> SandboxCapability {
             backend: "bubblewrap+seccomp",
             platform: "linux",
             state: SandboxCapabilityState::Enforced,
-            detail: "confirm-mode uses Bubblewrap plus a syscall filter for workspace-scoped writes and denied child network",
+            detail: "confirm-mode process execution uses Bubblewrap plus a syscall filter for workspace-scoped writes and denied child network",
         }
     } else {
         SandboxCapability {
