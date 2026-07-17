@@ -5,15 +5,15 @@ milestone_name: Rust Convergence
 current_phase: 12
 current_phase_name: fixture-compatibility-and-rust-migration
 status: executing
-stopped_at: Completed 11-06-PLAN.md
-last_updated: "2026-07-17T20:05:51.489Z"
+stopped_at: Completed 12-01-PLAN.md
+last_updated: "2026-07-17T20:35:13.947Z"
 last_activity: 2026-07-17
 last_activity_desc: Phase 12 execution started
 progress:
   total_phases: 14
   completed_phases: 11
   total_plans: 46
-  completed_plans: 38
+  completed_plans: 39
   percent: 79
 ---
 
@@ -28,8 +28,8 @@ See: `.planning/PROJECT.md` (updated 2026-07-15)
 ## Current Position
 
 Phase: 12 (fixture-compatibility-and-rust-migration) — EXECUTING
-Plan: 1 of 2
-Status: Executing Phase 12
+Plan: 2 of 2
+Status: Ready to execute
 Last activity: 2026-07-17 — Phase 12 execution started
 
 ## Previous Phase 7 Hosted Baseline (superseded)
@@ -133,6 +133,9 @@ No package publication, tag, PR, merge, live Provider request, credential read, 
 - [Phase 11]: Validate the complete discovered TypeScript test dependency graph before any test import. — Pre-import closure prevents an earlier test module from producing side effects before a later forbidden evaluator edge is detected.
 - [Phase 11]: Keep independent TypeScript AST and Rust lexical graph validators. — Shared fail-closed semantics with separate implementations prevent one parser defect from silently authorizing both gates.
 - [Phase 11]: Retain TypeScript evaluator sources as hash-pinned Phase 14 inputs while Rust owns executable evaluation. — Static evidence preserves migration provenance without leaving a Node evaluator route in npm test.
+- [Phase 12]: Use immutable contract.* IDs as the fixture-owned public compatibility surface — Separates public product contracts from legacy TypeScript or Rust implementation identities.
+- [Phase 12]: Require approved command differences to match explicit fixture IDs, commands, and outcomes — Prevents unknown or loosely matched migration differences from passing verification.
+- [Phase 12]: Run candidate compatibility verification through Rust-only fixture consumers — Allows hermetic verification without top-level TypeScript source, tests, dist artifacts, or Node execution.
 
 ## Performance Metrics
 
@@ -148,9 +151,10 @@ No package publication, tag, PR, merge, live Provider request, credential read, 
 | Phase 11 P04 | 26min | 1 task | 9 files |
 | Phase 11 P05 | 65min | 2 tasks | 7 files |
 | Phase 11 P06 | 42min | 2 tasks | 10 files |
+| Phase 12 P01 | 22min | 2 tasks | 14 files |
 
 ## Session
 
-**Last session:** 2026-07-17T19:42:27.156Z
-**Stopped at:** Completed 11-06-PLAN.md
+**Last session:** 2026-07-17T20:35:13.937Z
+**Stopped at:** Completed 12-01-PLAN.md
 **Resume file:** None

@@ -211,7 +211,7 @@ Plans:
 | 9. Capability Workspace and Non-Programmer Harness | 3/3 | Complete | 2026-07-17 |
 | 10. Rust Authority and Source Boundaries | 4/4 | Complete    | 2026-07-17 |
 | 11. Rust Verification and Evaluation Authority | 6/6 | Complete   | 2026-07-17 |
-| 12. Fixture Compatibility and Rust Migration | 0/2 | Not started | - |
+| 12. Fixture Compatibility and Rust Migration | 1/2 | In Progress|  |
 | 13. Thin npm and Native Release | 0/3 | Not started | - |
 | 14. TypeScript Removal and Hosted Closure | 0/3 | Not started | - |
 
@@ -364,11 +364,14 @@ Plans:
   3. Rust migration tests cover inventory, dry-run, apply, verify, idempotency, collision handling, interruption recovery, and narrow rollback while leaving all source data unchanged.
   4. Static TypeScript v1 migration fixtures and release metadata make the two-public-release support window observable and prevent accidental early removal.
 
-**Plans:** 2 plans planned
+**Plans:** 1/2 plans executed
 
 Plans:
 
-- [ ] 12-01: Rebase compatibility reports on immutable contract fixtures and explicit differences
+- [x] 12-01-PLAN.md
+- [ ] 12-02-PLAN.md
+
+- [x] 12-01: Rebase compatibility reports on immutable contract fixtures and explicit differences
 - [ ] 12-02: Harden Rust migration fixtures, recovery gates, and support-window evidence
 
 ### Phase 13: Thin npm and Native Release
