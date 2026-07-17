@@ -4,17 +4,17 @@ milestone: v3.0
 milestone_name: Rust Convergence
 current_phase: 10
 current_phase_name: rust-authority-and-source-boundaries
-status: executing
-stopped_at: Completed 10-02-PLAN.md
-last_updated: "2026-07-17T12:43:56.440Z"
+status: verifying
+stopped_at: Completed 10-03-PLAN.md
+last_updated: "2026-07-17T13:23:30.552Z"
 last_activity: 2026-07-17
-last_activity_desc: Completed 10-02-PLAN.md
+last_activity_desc: Completed 10-03-PLAN.md
 progress:
   total_phases: 14
-  completed_phases: 9
+  completed_phases: 10
   total_plans: 43
-  completed_plans: 30
-  percent: 70
+  completed_plans: 31
+  percent: 71
 ---
 
 # Project State
@@ -27,10 +27,10 @@ See: `.planning/PROJECT.md` (updated 2026-07-15)
 
 ## Current Position
 
-Phase: 10 (rust-authority-and-source-boundaries) — EXECUTING
+Phase: 10 (rust-authority-and-source-boundaries) — VERIFYING
 Plan: 3 of 3
-Status: Ready to execute
-Last activity: 2026-07-17 — Completed 10-02-PLAN.md
+Status: Phase complete — ready for verification
+Last activity: 2026-07-17 — Completed 10-03-PLAN.md
 
 ## Previous Phase 7 Hosted Baseline (superseded)
 
@@ -109,6 +109,10 @@ No package publication, tag, PR, merge, live Provider request, credential read, 
 - [Phase 10]: Exclude generated dist contents from source authority while validating committed sources and package executable links. — The offline gate must be independent of generated build outputs.
 - [Phase 10]: The supported npm surface exposes only minimax-codex through the fixed Rust launcher; TypeScript remains inert source evidence until retirement. — Removes duplicate executable authority without deleting Phase 10 transition evidence.
 - [Phase 10]: .minimax is the only project writable runtime root; .mini-codex is read-only migration input and rollback is receipt-scoped. — Keeps migration source-preserving and makes every project mutation attributable to Rust state.
+- [Phase 10]: Candidate archives expose only the fixed launcher and one platform Rust binary; generated TypeScript output is not packaged.
+- [Phase 10]: Installed identity requires matching direct and launcher versions plus the exact packaged binary SHA-256 under a controlled environment.
+- [Phase 10]: CI runs Rust contracts before transitional Node checks and every package or installed smoke step.
+- [Phase 10]: Milestone evidence is selected by the actual rustc host so GNU-LLVM development evidence cannot satisfy a hosted tier.
 
 ## Performance Metrics
 
@@ -116,9 +120,10 @@ No package publication, tag, PR, merge, live Provider request, credential read, 
 |-------|------|----------|-------|
 | Phase 10 P01 | 29min | 2 tasks | 5 files |
 | Phase 10 P02 | 31min | 2 tasks | 9 files |
+| Phase 10 P03 | 31min | 3 tasks | 8 files |
 
 ## Session
 
-**Last session:** 2026-07-17T12:43:56.428Z
-**Stopped at:** Completed 10-02-PLAN.md
+**Last session:** 2026-07-17T13:23:30.539Z
+**Stopped at:** Completed 10-03-PLAN.md
 **Resume file:** None

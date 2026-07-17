@@ -15,7 +15,7 @@ The product proceeds through fourteen vertical, verifiable boundaries. Eight com
 - [x] **Phase 7: Close Milestone Integration Gaps** - Wire the product flows, prove the exact final artifacts, and pass the repeated milestone audit. (completed 2026-07-16)
 - [x] **Phase 8: Codex-style subprocess sandbox hardening** - Separate approval from isolation and enforce or fail closed for every confirm-mode process tool. (completed 2026-07-17)
 - [x] **Phase 9: Capability Workspace and Non-Programmer Harness** - Isolate project/Skill/MCP catalogs, retrieve them BM25-first, and explain safe readiness without automatic execution.
-- [ ] **Phase 10: Rust Authority and Source Boundaries** - Make Rust the sole executable and writable product authority while constraining JavaScript to an explicit distribution allowlist.
+- [x] **Phase 10: Rust Authority and Source Boundaries** - Make Rust the sole executable and writable product authority while constraining JavaScript to an explicit distribution allowlist. (completed 2026-07-17)
 - [ ] **Phase 11: Rust Verification and Evaluation Authority** - Replace still-required TypeScript behavioral, Provider, and retrieval verification with deterministic Rust-owned gates.
 - [ ] **Phase 12: Fixture Compatibility and Rust Migration** - Verify compatibility and TypeScript-era upgrades from immutable fixtures without building or executing the legacy runtime.
 - [ ] **Phase 13: Thin npm and Native Release** - Ship one no-fallback npm command that launches a verified platform Rust binary and rejects invalid packages before release.
@@ -209,7 +209,7 @@ Plans:
 | 7. Close Milestone Integration Gaps | 4/4 | Complete | 2026-07-16 |
 | 8. Codex-style Subprocess Sandbox Hardening | 3/3 | Complete | 2026-07-17 |
 | 9. Capability Workspace and Non-Programmer Harness | 3/3 | Complete | 2026-07-17 |
-| 10. Rust Authority and Source Boundaries | 2/3 | In Progress|  |
+| 10. Rust Authority and Source Boundaries | 3/3 | Complete   | 2026-07-17 |
 | 11. Rust Verification and Evaluation Authority | 0/3 | Not started | - |
 | 12. Fixture Compatibility and Rust Migration | 0/2 | Not started | - |
 | 13. Thin npm and Native Release | 0/3 | Not started | - |
@@ -291,13 +291,13 @@ Plans:
   3. Runtime commands write only the Rust-owned `.minimax` schemas; no supported or legacy command can create or mutate `.mini-codex` state after the authority cutover.
   4. The Rust CLI and the current npm-installed command remain usable after the authority boundary is enforced, before TypeScript source is deleted.
 
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans complete
 
 Plans:
 
 - [x] 10-01-PLAN.md
 - [x] 10-02-PLAN.md
-- [ ] 10-03-PLAN.md
+- [x] 10-03-PLAN.md
 
 **Wave 1**
 
@@ -309,7 +309,7 @@ Plans:
 
 **Wave 3** *(blocked on Wave 2 completion)*
 
-- [ ] 10-03: Gate the sole-authority product surface and verify both direct and npm entry paths
+- [x] 10-03: Gate the sole-authority product surface and verify both direct and npm entry paths
 
 ### Phase 11: Rust Verification and Evaluation Authority
 
