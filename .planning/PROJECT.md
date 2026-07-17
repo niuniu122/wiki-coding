@@ -15,13 +15,14 @@ A non-programmer can describe a goal and safely use one local, recoverable CLI t
 - The Rust CLI/TUI is the default product path on Windows and Linux, with the TypeScript path retained explicitly for the support window.
 - Exact + BM25 retrieval is active across schema-isolated command, project, and Wiki indexes; optional embedding can only rerank BM25 project candidates.
 - Provider/tool event identity, the per-project Vault/Wiki workflow, deterministic fixtures, and the confirm-mode subprocess boundary are release-gated and verified.
+- Project, Skill, and MCP source metadata lives in a dedicated `capabilities/` workspace outside internal executable adapters.
+- Three typed exact/BM25 indexes preserve kind isolation; optional verified embedding can rerank only their bounded lexical candidate union.
+- Read-only workspace search reports `ready`, `needs_install`, or `needs_authorization` with source facts and a safe next action.
+- Discovery and prompt augmentation cannot download, install, authorize, start, or execute a discovered capability.
 
 ### Active
 
-- [ ] Separate source-controlled project, Skill, and MCP metadata into one dedicated capability workspace outside `crates/tools`.
-- [ ] Search three typed external-capability indexes with exact/BM25 first and optional verified embedding over candidates only.
-- [ ] Show non-programmers whether a result is ready, needs installation, or needs authorization, with a safe next action.
-- [ ] Keep discovery read-only; installation, authorization, and execution remain separate explicitly confirmed workflows.
+- [ ] Refresh hosted Windows/Linux release evidence for the changed product fingerprint before release.
 
 ### Out of Scope
 
@@ -35,7 +36,7 @@ A non-programmer can describe a goal and safely use one local, recoverable CLI t
 
 ## Context
 
-The v1 Rust rewrite and Phase 8 subprocess hardening are complete. External discovery currently has only a bundled project catalog; internal commands live in the capability index, while Skills and MCP servers have no typed catalog, isolated index, or user-facing readiness state. The new workspace combines Codex-style progressive capability metadata with the existing BM25-first, candidate-only embedding contract without copying third-party runtimes into the core tool boundary.
+The v1 Rust rewrite, Phase 8 subprocess hardening, and Phase 9 capability workspace are implemented. External project, Skill, and MCP metadata now has separate source catalogs and typed indexes, while runtime install/access state remains an optional local overlay. BM25 remains useful without a model and optional verified embedding cannot introduce results outside the lexical candidate union. Hosted release evidence must be refreshed for this changed product fingerprint before release.
 
 ## Constraints
 
@@ -93,4 +94,4 @@ This document evolves at phase transitions and milestone boundaries.
 3. Update context with shipped behavior and evaluation evidence.
 
 ---
-*Last updated: 2026-07-17 after starting the v2.0 Capability Workspace milestone*
+*Last updated: 2026-07-17 after completing local verification for the v2.0 Capability Workspace milestone*

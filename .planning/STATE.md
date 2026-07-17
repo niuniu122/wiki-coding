@@ -3,17 +3,17 @@ gsd_state_version: 1.0
 milestone: v2.0
 milestone_name: Capability Workspace
 current_phase: 9
-current_phase_name: Capability Workspace and Non-Programmer Harness
-status: executing
-last_updated: "2026-07-17T07:49:32.081Z"
+status: completed
+last_updated: "2026-07-17T09:02:18.554Z"
 last_activity: 2026-07-17
-last_activity_desc: Phase 9 execution started
+last_activity_desc: Phase 9 marked complete
 progress:
   total_phases: 9
-  completed_phases: 8
+  completed_phases: 9
   total_plans: 28
-  completed_plans: 25
-  percent: 89
+  completed_plans: 28
+  percent: 100
+current_phase_name: Capability Workspace and Non-Programmer Harness
 ---
 
 # Project State
@@ -26,10 +26,10 @@ See: `.planning/PROJECT.md` (updated 2026-07-15)
 
 ## Current Position
 
-Phase: 9 (Capability Workspace and Non-Programmer Harness) — EXECUTING
-Plan: 1 of 3
-Status: Executing Phase 9
-Last activity: 2026-07-17 — Phase 9 execution started
+Phase: 9 (Capability Workspace and Non-Programmer Harness) — COMPLETE
+Plan: 3 of 3
+Status: Phase 9 complete; local verification passed
+Last activity: 2026-07-17 — Phase 9 marked complete
 
 ## Previous Phase 7 Hosted Baseline (superseded)
 
@@ -49,6 +49,16 @@ Last activity: 2026-07-17 — Phase 9 execution started
 - Ubuntu executed the real Bubblewrap namespace preflight and malicious transitive Cargo canary; strict Rust, release, retrieval, Provider, package, and milestone-flow gates passed.
 - Windows and Linux archives, binaries, environment facts, and performance measurements are bound to the refreshed machine-readable evidence.
 
+## Phase 9 Local Evidence
+
+- Dedicated source-only project, Skill, and MCP catalogs and three typed exact/BM25 indexes are implemented.
+- Candidate-only embedding, outsider rejection, lexical fallback, readiness precedence, strict JSON, rendering parity, and prompt no-action boundaries are covered by Rust tests.
+- Rust candidate workspace tests and doc tests passed; strict workspace Clippy passed with warnings denied.
+- TypeScript check, 440 tests, build, 175-case retrieval evaluation, and Provider conformance evaluation passed.
+- The previous hosted evidence is intentionally stale after product changes. A manual candidate CI run and subsequent strict push are required before release; no local evidence fixture was forged.
+- The current pre-hosted product fingerprint is `f599aa324e135d30db744d86c497d67196d5d170d469aaa03941aed64d0a74f7` across 414 product files.
+- A fallback GNU-LLVM release archive was built, but its installed smoke exited `0xC0000135`; it was not represented as Windows MSVC release evidence.
+
 ## Locked Decisions
 
 - Rust is the default product entry; `minimax-codex-legacy` keeps the explicit TypeScript path for the support window.
@@ -63,14 +73,15 @@ Last activity: 2026-07-17 — Phase 9 execution started
 
 - GitHub reports that `actions/checkout@v4` and `actions/setup-node@v4` still target a deprecated Node 20 action runtime. The hosted runner forced Node 24 for those actions and all gates passed; upgrade the action versions when the upstream replacements are adopted.
 - Installed-package smoke uses a read-only Rust capability command. The complete Provider/Vault/Wiki chain is verified compositionally by Rust integration tests rather than replayed from the extracted package without credentials.
+- Refresh the hosted release record through the documented manual candidate CI flow before merging or releasing this product change.
 
 ## Deferred Items
 
 | Category | Item | Target |
 |----------|------|--------|
 | Platform | macOS support | v2 |
-| Extensions | MCP/plugins/subagents | v2 |
-| Retrieval | Optional separately installed embedding resource distribution | post-v1 |
+| Extensions | Explicitly confirmed installer and sandboxed Skill/MCP runtime | post-v2 |
+| Retrieval | Optional separately installed embedding resource distribution | post-v2 |
 
 ## Authorization Boundaries Preserved
 
@@ -84,6 +95,8 @@ No package publication, tag, PR, merge, live Provider request, credential read, 
 - Approval and sandboxing are independent axes: confirm maps to restricted execution, while process-scoped full access explicitly disables the subprocess sandbox.
 - Confirm-mode process execution fails closed on platforms or installations without a proven backend; no partial Windows imitation is presented as safe.
 - Phase 8 code, docs, CI contracts, adversarial canaries, native release artifacts, and refreshed product-fingerprint evidence all pass. The milestone has no remaining mandatory gate.
+- Phase 9 separates external capability metadata from executable tools, keeps BM25 authoritative, and exposes readiness without granting action authority.
+- Phase 9 local gates pass. Hosted release evidence is a separate pre-release follow-up because this branch changes the deterministic product fingerprint.
 
 ## Decisions
 

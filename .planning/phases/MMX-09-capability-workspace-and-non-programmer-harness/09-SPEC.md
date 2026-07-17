@@ -10,16 +10,16 @@ Provide a dedicated, auditable external capability workspace where non-programme
 
 ## Acceptance Criteria
 
-- [ ] `capabilities/catalogs/{projects,skills,mcp}.v1.json` are strict, fingerprinted, source-only catalogs and `capabilities/README.md` explains the source/runtime boundary.
-- [ ] One `CapabilityCard` contract represents all three kinds while typed project/Skill/MCP documents make cross-kind index construction fail at compile time.
-- [ ] Unknown fields, unsafe URLs, duplicate IDs, invalid fingerprints, executable command strings, control characters, excessive collections, and cross-kind catalog entries are rejected.
-- [ ] Exact or BM25 runs before any embedding request; the request contains at most the lexical candidate union and a returned outsider invalidates semantic output.
-- [ ] Semantic resource or helper failure preserves lexical order and reports the existing stable degraded reason.
-- [ ] An immutable inventory overlay derives exactly three readiness states with installation taking precedence over authorization.
-- [ ] The CLI supports workspace status and search across all kinds or one kind, in text or strict JSONL, with no install/execute flag.
-- [ ] Each result includes kind, readiness, readiness reason, next action, source/license/platform/permission/authorization facts, and deterministic retrieval evidence.
-- [ ] Agent prompt augmentation marks capability evidence read-only and explicitly forbids automatic download, installation, authorization, or execution.
-- [ ] Mixed Chinese/English intent, empty Skill/MCP catalogs, unsafe input, candidate isolation, readiness, rendering, and no-side-effect tests pass offline.
+- [x] `capabilities/catalogs/{projects,skills,mcp}.v1.json` are strict, fingerprinted, source-only catalogs and `capabilities/README.md` explains the source/runtime boundary.
+- [x] One `CapabilityCard` contract represents all three kinds while typed project/Skill/MCP documents make cross-kind index construction fail at compile time.
+- [x] Unknown fields, unsafe URLs, duplicate IDs, invalid fingerprints, executable command strings, control characters, excessive collections, and cross-kind catalog entries are rejected.
+- [x] Exact or BM25 runs before any embedding request; the request contains at most the lexical candidate union and a returned outsider invalidates semantic output.
+- [x] Semantic resource or helper failure preserves lexical order and reports the existing stable degraded reason.
+- [x] An immutable inventory overlay derives exactly three readiness states with installation taking precedence over authorization.
+- [x] The CLI supports workspace status and search across all kinds or one kind, in text or strict JSONL, with no install/execute flag.
+- [x] Each result includes kind, readiness, readiness reason, next action, source/license/platform/permission/authorization facts, and deterministic retrieval evidence.
+- [x] Agent prompt augmentation marks capability evidence read-only and explicitly forbids automatic download, installation, authorization, or execution.
+- [x] Mixed Chinese/English intent, empty Skill/MCP catalogs, unsafe input, candidate isolation, readiness, rendering, and no-side-effect tests pass offline.
 
 ## Must Not
 

@@ -94,14 +94,14 @@
 
 ### Capability Workspace
 
-- [ ] **CAPW-01**: A maintainer can curate project, Skill, and MCP metadata in one dedicated source workspace whose three catalogs are physically separate from internal tool adapters and runtime state.
-- [ ] **CAPW-02**: Every external item uses one strict capability-card contract containing kind, intent, source, platform, license, install, authorization, permission, and maintenance facts without inventing unknown values.
-- [ ] **CAPW-03**: A user can search project, Skill, and MCP catalogs through three schema-isolated exact/BM25 indexes that share the retrieval kernel but cannot accept one another's document types.
-- [ ] **CAPW-04**: An optional verified embedding resource can rerank only the bounded BM25 candidates from the selected catalogs, and every semantic failure preserves useful lexical results with a stable degraded reason.
-- [ ] **CAPW-05**: A non-programmer can search all capability kinds or one kind and see `ready`, `needs_install`, or `needs_authorization` plus a plain-language next action for every result.
-- [ ] **CAPW-06**: Capability status comes from a separate local inventory overlay; source catalogs never contain credentials, mutable install state, or executable process state.
-- [ ] **CAPW-07**: Search, status, prompt augmentation, and catalog loading are read-only and cannot download, install, authorize, or execute a discovered project, Skill, or MCP server.
-- [ ] **CAPW-08**: Deterministic fixtures and evaluations cover kind isolation, mixed Chinese/English intent, candidate-only embedding, readiness precedence, unsafe metadata rejection, and CLI text/JSON parity.
+- [x] **CAPW-01**: A maintainer can curate project, Skill, and MCP metadata in one dedicated source workspace whose three catalogs are physically separate from internal tool adapters and runtime state.
+- [x] **CAPW-02**: Every external item uses one strict capability-card contract containing kind, intent, source, platform, license, install, authorization, permission, and maintenance facts without inventing unknown values.
+- [x] **CAPW-03**: A user can search project, Skill, and MCP catalogs through three schema-isolated exact/BM25 indexes that share the retrieval kernel but cannot accept one another's document types.
+- [x] **CAPW-04**: An optional verified embedding resource can rerank only the bounded BM25 candidates from the selected catalogs, and every semantic failure preserves useful lexical results with a stable degraded reason.
+- [x] **CAPW-05**: A non-programmer can search all capability kinds or one kind and see `ready`, `needs_install`, or `needs_authorization` plus a plain-language next action for every result.
+- [x] **CAPW-06**: Capability status comes from a separate local inventory overlay; source catalogs never contain credentials, mutable install state, or executable process state.
+- [x] **CAPW-07**: Search, status, prompt augmentation, and catalog loading are read-only and cannot download, install, authorize, or execute a discovered project, Skill, or MCP server.
+- [x] **CAPW-08**: Deterministic fixtures and evaluations cover kind isolation, mixed Chinese/English intent, candidate-only embedding, readiness precedence, unsafe metadata rejection, and CLI text/JSON parity.
 
 ## Future Requirements
 
@@ -178,22 +178,22 @@
 | REL-02 | Phase 6 | Complete |
 | REL-03 | Phase 6 | Complete |
 | REL-04 | Phase 6 | Complete |
-| CAPW-01 | Phase 9 | Pending |
-| CAPW-02 | Phase 9 | Pending |
-| CAPW-03 | Phase 9 | Pending |
-| CAPW-04 | Phase 9 | Pending |
-| CAPW-05 | Phase 9 | Pending |
-| CAPW-06 | Phase 9 | Pending |
-| CAPW-07 | Phase 9 | Pending |
-| CAPW-08 | Phase 9 | Pending |
+| CAPW-01 | Phase 9 | Complete |
+| CAPW-02 | Phase 9 | Complete |
+| CAPW-03 | Phase 9 | Complete |
+| CAPW-04 | Phase 9 | Complete |
+| CAPW-05 | Phase 9 | Complete |
+| CAPW-06 | Phase 9 | Complete |
+| CAPW-07 | Phase 9 | Complete |
+| CAPW-08 | Phase 9 | Complete |
 
 **Coverage:**
 
 - v1 requirements: 52 complete
-- v2.0 requirements: 8 active
+- v2.0 requirements: 8 complete
 - Mapped to phases: 60
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-07-15*
-*Last updated: 2026-07-17 after defining the v2.0 Capability Workspace milestone*
+*Last updated: 2026-07-17 after verifying the v2.0 Capability Workspace milestone locally*

@@ -14,7 +14,7 @@ The product proceeds through nine vertical, verifiable boundaries: eight complet
 - [x] **Phase 6: Migration, Release, and Cutover** - Import safely, meet release gates, and switch the default entry only after parity. (completed 2026-07-16)
 - [x] **Phase 7: Close Milestone Integration Gaps** - Wire the product flows, prove the exact final artifacts, and pass the repeated milestone audit. (completed 2026-07-16)
 - [x] **Phase 8: Codex-style subprocess sandbox hardening** - Separate approval from isolation and enforce or fail closed for every confirm-mode process tool. (completed 2026-07-17)
-- [ ] **Phase 9: Capability Workspace and Non-Programmer Harness** - Isolate project/Skill/MCP catalogs, retrieve them BM25-first, and explain safe readiness without automatic execution.
+- [x] **Phase 9: Capability Workspace and Non-Programmer Harness** - Isolate project/Skill/MCP catalogs, retrieve them BM25-first, and explain safe readiness without automatic execution.
 
 ## Phase Details
 
@@ -203,7 +203,7 @@ Plans:
 | 6. Migration, Release, and Cutover | 3/3 | Complete | 2026-07-16 |
 | 7. Close Milestone Integration Gaps | 4/4 | Complete | 2026-07-16 |
 | 8. Codex-style Subprocess Sandbox Hardening | 3/3 | Complete | 2026-07-17 |
-| 9. Capability Workspace and Non-Programmer Harness | 0/3 | In progress | — |
+| 9. Capability Workspace and Non-Programmer Harness | 3/3 | Complete | 2026-07-17 |
 
 ### Phase 7: Close milestone integration gaps
 
@@ -261,10 +261,10 @@ Plans:
   4. Missing, corrupt, unsafe, incompatible, or slow external metadata/resources fail closed or degrade to BM25 without triggering network, credentials, installation, or process launch.
   5. Deterministic catalog, retrieval, readiness, prompt-augmentation, and compatibility tests pass without a Provider call or downloaded model.
 
-**Plans:** 0/3 plans complete
+**Plans:** 3/3 plans complete
 
 Plans:
 
-- [ ] 09-01: Create the dedicated workspace, strict capability-card schema, and three typed retrieval indexes
-- [ ] 09-02: Add inventory-derived readiness, unified CLI search, safe prompt context, and authority guardrails
-- [ ] 09-03: Add evaluation fixtures, non-programmer documentation, compatibility gates, and full verification
+- [x] 09-01: Create the dedicated workspace, strict capability-card schema, and three typed retrieval indexes
+- [x] 09-02: Add inventory-derived readiness, unified CLI search, safe prompt context, and authority guardrails
+- [x] 09-03: Add evaluation fixtures, non-programmer documentation, compatibility gates, and full verification
