@@ -24,6 +24,7 @@ pub enum BaselineError {
     RetrievalEvidence,
     ProviderEvidence,
     CutoverEvidence,
+    HostedEvidenceFingerprintStale,
 }
 
 impl fmt::Display for BaselineError {
@@ -47,6 +48,8 @@ impl fmt::Display for BaselineError {
                 formatter.write_str("Rust Provider profile evidence is incomplete")
             }
             Self::CutoverEvidence => formatter.write_str("Rust cutover evidence is incomplete"),
+            Self::HostedEvidenceFingerprintStale => formatter
+                .write_str("hosted release evidence is stale for the current product fingerprint"),
         }
     }
 }
@@ -377,6 +380,7 @@ struct HostedSecurity {
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct ReleaseThresholds {
     schema_version: u16,
+    target_contract_schema_version: u16,
     cold_start_ms: f64,
     idle_rss_bytes: u64,
     base_compressed_bytes: u64,
@@ -497,12 +501,18 @@ fn validate_command_behavior_evidence(
     Ok(())
 }
 
-fn validate_hosted_release_gate(root: &Path) -> Result<(), BaselineError> {
-    let gate: HostedReleaseGate = serde_json::from_str(
-        &std::fs::read_to_string(root.join("fixtures/compat/release/hosted-gates.v1.json"))
-            .map_err(|_| BaselineError::CutoverEvidence)?,
-    )
-    .map_err(|_| BaselineError::CutoverEvidence)?;
+pub fn validate_hosted_release_gate(root: &Path) -> Result<(), BaselineError> {
+    let source = std::fs::read_to_string(root.join("fixtures/compat/release/hosted-gates.v1.json"))
+        .map_err(|_| BaselineError::CutoverEvidence)?;
+    validate_hosted_release_gate_document(root, &source)
+}
+
+pub fn validate_hosted_release_gate_document(
+    root: &Path,
+    source: &str,
+) -> Result<(), BaselineError> {
+    let gate: HostedReleaseGate =
+        serde_json::from_str(source).map_err(|_| BaselineError::CutoverEvidence)?;
     let thresholds: ReleaseThresholds = serde_json::from_str(
         &std::fs::read_to_string(root.join("fixtures/compat/release/thresholds.v1.json"))
             .map_err(|_| BaselineError::CutoverEvidence)?,
@@ -522,8 +532,6 @@ fn validate_hosted_release_gate(root: &Path) -> Result<(), BaselineError> {
         || !valid_hex(&gate.head_sha, 40)
         || !valid_hex(&gate.tree_sha, 40)
         || !valid_hex(&gate.product_fingerprint, 64)
-        || gate.product_fingerprint != product_fingerprint
-        || gate.product_file_count != product_file_count
         || gate.conclusion != "success"
         || gate.jobs.len() != 2
         || gate.licenses.packages_checked == 0
@@ -537,8 +545,14 @@ fn validate_hosted_release_gate(root: &Path) -> Result<(), BaselineError> {
         || gate.credentials_read != 0
         || gate.model_downloads != 0
         || thresholds.schema_version != 1
+        || thresholds.target_contract_schema_version != 1
     {
         return Err(BaselineError::CutoverEvidence);
+    }
+    if gate.product_fingerprint != product_fingerprint
+        || gate.product_file_count != product_file_count
+    {
+        return Err(BaselineError::HostedEvidenceFingerprintStale);
     }
     let mut platforms = BTreeMap::new();
     for job in &gate.jobs {
@@ -602,7 +616,7 @@ fn validate_hosted_release_gate(root: &Path) -> Result<(), BaselineError> {
     Ok(())
 }
 
-fn compute_product_fingerprint(root: &Path) -> Result<(String, u64), BaselineError> {
+pub fn compute_product_fingerprint(root: &Path) -> Result<(String, u64), BaselineError> {
     let tracked = Command::new("git")
         .arg("-C")
         .arg(root)
@@ -636,8 +650,23 @@ fn compute_product_fingerprint(root: &Path) -> Result<(String, u64), BaselineErr
         {
             return Err(BaselineError::CutoverEvidence);
         }
-        if !excluded_product_path(path) {
-            inputs.insert(path.to_owned(), format!("{}:{}", fields[0], fields[1]));
+        let path = path.replace('\\', "/");
+        if !excluded_product_path(&path) {
+            let absolute = root.join(&path);
+            let metadata =
+                std::fs::symlink_metadata(&absolute).map_err(|_| BaselineError::CutoverEvidence)?;
+            if !metadata.is_file()
+                || metadata.file_type().is_symlink()
+                || inputs.contains_key(&path)
+            {
+                return Err(BaselineError::CutoverEvidence);
+            }
+            let bytes = std::fs::read(absolute).map_err(|_| BaselineError::CutoverEvidence)?;
+            let content = Sha256::digest(bytes)
+                .iter()
+                .map(|byte| format!("{byte:02x}"))
+                .collect::<String>();
+            inputs.insert(path, format!("{}:sha256:{content}", fields[0]));
         }
     }
     for path in untracked
@@ -645,14 +674,16 @@ fn compute_product_fingerprint(root: &Path) -> Result<(String, u64), BaselineErr
         .split(|byte| *byte == 0)
         .filter(|path| !path.is_empty())
     {
-        let path = std::str::from_utf8(path).map_err(|_| BaselineError::CutoverEvidence)?;
-        if excluded_product_path(path) {
+        let path = std::str::from_utf8(path)
+            .map_err(|_| BaselineError::CutoverEvidence)?
+            .replace('\\', "/");
+        if excluded_product_path(&path) {
             continue;
         }
-        let absolute = root.join(path);
+        let absolute = root.join(&path);
         let metadata =
             std::fs::symlink_metadata(&absolute).map_err(|_| BaselineError::CutoverEvidence)?;
-        if !metadata.is_file() || metadata.file_type().is_symlink() || inputs.contains_key(path) {
+        if !metadata.is_file() || metadata.file_type().is_symlink() || inputs.contains_key(&path) {
             return Err(BaselineError::CutoverEvidence);
         }
         let bytes = std::fs::read(absolute).map_err(|_| BaselineError::CutoverEvidence)?;
@@ -660,11 +691,11 @@ fn compute_product_fingerprint(root: &Path) -> Result<(String, u64), BaselineErr
             .iter()
             .map(|byte| format!("{byte:02x}"))
             .collect::<String>();
-        inputs.insert(path.to_owned(), format!("untracked:{content}"));
+        inputs.insert(path, format!("untracked:sha256:{content}"));
     }
 
     let mut fingerprint = Sha256::new();
-    fingerprint.update(b"minimax-codex-product-v2\0");
+    fingerprint.update(b"minimax-codex-product-v3\0");
     for (path, content_identity) in &inputs {
         fingerprint.update(path.as_bytes());
         fingerprint.update([0]);

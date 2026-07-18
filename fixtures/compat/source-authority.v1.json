@@ -119,7 +119,7 @@
     {
       "id": "product-fingerprint",
       "path": "scripts/release/product-fingerprint.mjs",
-      "sha256": "db094bb54773545efd79efd63d4edf147f55c672cbb0c3246a1e560e0844ae17",
+      "sha256": "502b6adf042f1e4ca99f425cb9774e3a4668892b799b302027b1abfed342c29a",
       "purpose": "productFingerprinting",
       "forbiddenCapabilities": [
         "fallback",
@@ -136,7 +136,7 @@
     {
       "id": "milestone-verification",
       "path": "scripts/release/verify-milestone-flow.mjs",
-      "sha256": "9c382f5c040cc417957e8d39dec7208a82774c7f59167544eb3cf906d266624e",
+      "sha256": "6e89de19b087f39aeb9fcf5c3f9ef8ef08e6ac4bc11ce6858e4ce88a333338ac",
       "purpose": "milestoneVerification",
       "forbiddenCapabilities": [
         "fallback",

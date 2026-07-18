@@ -30,7 +30,7 @@ for (const [path, label] of [
 const currentProduct = computeProductFingerprint(root);
 const fingerprint = fingerprintInput(fingerprintFile, currentProduct);
 const targetContract = loadTargetContract();
-const {rustHost, platform} = releasePlatform(targetContract);
+const {rustHost, platform, target} = releasePlatform(targetContract);
 const manifest = artifactManifest(artifacts, targetContract);
 try {
   validateFingerprintArtifactBinding(fingerprint, manifest.product);
@@ -51,7 +51,7 @@ try {
 } catch {
   fail("release evidence is not valid JSON");
 }
-validateCompleteReleaseEvidence(release, manifest, fingerprint, rustHost, platform);
+validateCompleteReleaseEvidence(release, manifest, fingerprint, rustHost, platform, target);
 
 const tests = ["tool_loop", "lifecycle_wiki", "discovery_commands", "migration"];
 const tested = spawnSync(
@@ -68,8 +68,15 @@ const tested = spawnSync(
 if (tested.status !== 0) fail(`cross-phase Rust tests failed with status ${tested.status ?? "unknown"}`);
 
 const report = {
-  schemaVersion: 2,
+  schemaVersion: 3,
   platform,
+  target: {
+    id: manifest.target.id,
+    rustcHost: manifest.target.rustcHost,
+    os: manifest.target.os,
+    arch: manifest.target.arch,
+    supportTier: manifest.target.supportTier
+  },
   productFingerprint: fingerprint.fingerprint,
   productFileCount: fingerprint.fileCount,
   fingerprintFile: fingerprintFile.replaceAll("\\", "/"),
@@ -78,6 +85,20 @@ const report = {
     npmArchiveSha256: manifest.npmPackage.sha256,
     binarySha256: manifest.binary.sha256
   },
+  gates: {
+    rustEvaluations: {
+      provider: "passed-before-milestone",
+      retrieval: "passed-before-milestone"
+    },
+    sourceAuthorityAndCompatibility: "passed-before-milestone",
+    migration: "passed:crates/cli/tests/migration.rs",
+    packageCorruption: "passed-before-build",
+    installedNative: "passed",
+    installedNpm: "passed"
+  },
+  licenses: release.licenses,
+  security: release.security,
+  performance: release.performance,
   flows: {
     promptAndToolCompletion: "tool_loop",
     runtimeFinalizationWikiAndCurrentRetrieval: "lifecycle_wiki",
@@ -129,10 +150,10 @@ function releasePlatform(contract) {
   if (!target || (target.os === "win32" && process.platform !== "win32") || (target.os === "linux" && process.platform !== "linux")) {
     fail(`unsupported milestone-flow Rust host: ${rustHost || "unknown"}`);
   }
-  return {rustHost, platform: target.id};
+  return {rustHost, platform: target.id, target};
 }
 
-function validateCompleteReleaseEvidence(release, manifest, fingerprint, rustHost, platform) {
+function validateCompleteReleaseEvidence(release, manifest, fingerprint, rustHost, platform, target) {
   const nativeIdentity = release.package?.nativeInstalledRustIdentity;
   const npmIdentity = release.package?.npmPackage?.installedRustIdentity;
   const identities = [nativeIdentity, npmIdentity];
@@ -146,9 +167,37 @@ function validateCompleteReleaseEvidence(release, manifest, fingerprint, rustHos
     || identity.providerCalls !== 0
     || identity.credentialsRead !== 0
     || identity.modelDownloads !== 0);
+  const targetInvalid = target.id !== manifest.target.id
+    || target.rustcHost !== manifest.target.rustcHost
+    || target.os !== manifest.target.os
+    || target.arch !== manifest.target.arch
+    || target.supportTier !== manifest.target.supportTier
+    || release.environment?.expectedPlatform !== target.id
+    || release.environment?.expectedSupportTier !== target.supportTier
+    || JSON.stringify(release.environment?.expectedTarget) !== JSON.stringify(target);
+  const licensesInvalid = !release.licenses
+    || !Number.isSafeInteger(release.licenses.packagesChecked)
+    || release.licenses.packagesChecked <= 0
+    || release.licenses.invalid !== 0
+    || release.licenses.policy !== "at_least_one_approved_permissive_choice";
+  const securityInvalid = !release.security
+    || release.security.unsafeFiles !== 0
+    || release.security.unsafeWorkspaceLint !== "forbid"
+    || release.security.databasePackages !== 0
+    || release.security.migrationNetworkOrCredentialPaths !== 0;
+  const performance = release.performance;
+  const performanceInvalid = !performance
+    || ![performance.coldStartMs, performance.idleRssBytes, performance.baseCompressedBytes,
+      performance.wikiBm25P95Ms].every((value) => Number.isFinite(value) && value > 0)
+    || performance.coldStartMs > performance.coldStartLimitMs
+    || performance.idleRssBytes > performance.idleRssLimitBytes
+    || performance.baseCompressedBytes > performance.baseCompressedLimitBytes
+    || performance.wikiBm25P95Ms > performance.wikiBm25P95LimitMs
+    || performance.baseCompressedBytes !== release.package?.compressedBytes;
   if (release.schemaVersion !== 2
       || release.platform !== platform
       || release.environment?.rustcHost !== rustHost
+      || targetInvalid
       || release.productFingerprint !== fingerprint.fingerprint
       || release.productFileCount !== fingerprint.fileCount
       || JSON.stringify(release.package?.manifest) !== JSON.stringify(manifest)
@@ -157,6 +206,9 @@ function validateCompleteReleaseEvidence(release, manifest, fingerprint, rustHos
       || identityInvalid
       || nativeIdentity.installedVersionOutput !== npmIdentity.installedVersionOutput
       || nativeIdentity.packagedBinarySha256 !== npmIdentity.packagedBinarySha256
+      || licensesInvalid
+      || securityInvalid
+      || performanceInvalid
       || release.offline !== true
       || release.providerCalls !== 0
       || release.credentialsRead !== 0

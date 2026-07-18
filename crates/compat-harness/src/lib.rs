@@ -22,8 +22,9 @@ pub use architecture::{
     validate_vault_source_text,
 };
 pub use baseline::{
-    BaselineError, validate_cutover_candidate, validate_cutover_evidence, validate_product_entry,
-    validate_rust_command_surface, validate_rust_provider_profiles,
+    BaselineError, compute_product_fingerprint, validate_cutover_candidate,
+    validate_cutover_evidence, validate_hosted_release_gate, validate_hosted_release_gate_document,
+    validate_product_entry, validate_rust_command_surface, validate_rust_provider_profiles,
     validate_rust_retrieval_evidence, validate_rust_tool_evidence, validate_rust_vault_evidence,
 };
 pub use coverage::{
