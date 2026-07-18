@@ -38,7 +38,7 @@
     {
       "id": "package-contract-tests",
       "path": "scripts/release/package-contract.test.mjs",
-      "sha256": "57be3387c8d36360ba2c3df152569e3aadb51ae5886c38128f93de1b99cfaade",
+      "sha256": "dd8418535a5058c807e07aa9403e3fb9cdb6913940916dfde82ba1d1ef4f0b53",
       "purpose": "packageTestOnly",
       "forbiddenCapabilities": ["fallback", "migration", "provider", "retrieval", "runtimeDownload", "session", "tool", "vault", "wiki"]
     },

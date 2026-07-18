@@ -1,7 +1,16 @@
 import assert from "node:assert/strict";
-import {readFileSync} from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync
+} from "node:fs";
 import test from "node:test";
 import {dirname, resolve} from "node:path";
+import {spawnSync} from "node:child_process";
 import {fileURLToPath} from "node:url";
 
 import {
@@ -95,6 +104,47 @@ test("release manifest rejects schema path duplicate tier hash platform and embe
   }
 });
 
+test("package assembly is byte-identical and emits one strict external manifest", () => {
+  mkdirSync(resolve(root, "target"), {recursive: true});
+  const workspace = mkdtempSync(resolve(root, "target/package-contract-test-"));
+  try {
+    const binary = resolve(workspace, process.platform === "win32" ? "minimax-cli.exe" : "minimax-cli");
+    writeFileSync(binary, Buffer.from("synthetic-rust-binary-v1\n", "utf8"));
+    if (process.platform !== "win32") chmodSync(binary, 0o755);
+    const first = resolve(workspace, "first");
+    const second = resolve(workspace, "second");
+    runPackage(binary, first);
+    runPackage(binary, second);
+
+    const contract = loadTargetContract();
+    const rustc = spawnSync("rustc", ["-vV"], {cwd: root, encoding: "utf8", shell: false, windowsHide: true});
+    assert.equal(rustc.status, 0, rustc.stderr);
+    const host = /^host:\s*(.+)$/mu.exec(rustc.stdout)?.[1]?.trim();
+    const target = contract.targets.find((candidate) => candidate.rustcHost === host);
+    assert.ok(target, `unsupported test rustc host: ${host}`);
+    const base = `minimax-codex-v0.1.0-${target.id}`;
+    const manifestName = `${base}-RELEASE-MANIFEST.json`;
+    const expectedFiles = [
+      `${base}.tar.gz`,
+      `${base}.tar.gz.sha256`,
+      `${base}-npm.tgz`,
+      `${base}-npm.tgz.sha256`,
+      manifestName
+    ].sort();
+    assert.deepEqual(readdirSync(first).sort(), expectedFiles);
+    assert.deepEqual(readdirSync(second).sort(), expectedFiles);
+    for (const name of expectedFiles) {
+      assert.deepEqual(readFileSync(resolve(first, name)), readFileSync(resolve(second, name)), name);
+    }
+    validateReleaseManifest(
+      JSON.parse(readFileSync(resolve(first, manifestName), "utf8")),
+      contract
+    );
+  } finally {
+    rmSync(workspace, {recursive: true, force: true});
+  }
+});
+
 function healthyManifest(contract) {
   const target = contract.targets[0];
   const version = "0.1.0";
@@ -164,4 +214,20 @@ function assertContractError(operation, expectedCode, label) {
     assert.equal(error?.code, expectedCode, `${label}: ${error?.message ?? error}`);
     return true;
   });
+}
+
+function runPackage(binary, output) {
+  const result = spawnSync(
+    process.execPath,
+    [resolve(root, "scripts/release/package-rust.mjs"), "--binary", binary, "--output", output],
+    {
+      cwd: root,
+      encoding: "utf8",
+      env: {...process.env, CARGO_NET_OFFLINE: "true"},
+      shell: false,
+      windowsHide: true,
+      timeout: 30_000
+    }
+  );
+  assert.equal(result.status, 0, result.stderr || result.stdout);
 }
