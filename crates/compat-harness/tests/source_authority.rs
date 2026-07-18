@@ -665,13 +665,17 @@ fn rejects_missing_retained_migration_support_and_evaluation_fixtures() {
         "fixtures/compat/release/targets.v1.json",
         "fixtures/compat/verification/typescript-responsibilities.v1.json",
     ] {
-        assert_validation_rejected(
-            path,
-            |repository| {
-                fs::remove_file(repository.root.join(path))
-                    .expect("retained fixture should be removed for the mutation");
-            },
-            "required retained compatibility fixture missing",
+        let repository = SyntheticRepository::new();
+        let manifest = repository.load();
+        fs::remove_file(repository.root.join(path))
+            .expect("retained fixture should be removed for the mutation");
+        let error = validate_source_authority(&repository.root, &manifest)
+            .expect_err("missing retained fixture must fail source authority");
+        assert!(
+            error
+                .to_string()
+                .contains("required retained compatibility fixture missing"),
+            "{path}: unexpected source authority error: {error:?}"
         );
     }
 }
@@ -756,7 +760,7 @@ fn ci_keeps_rust_authority_ahead_of_packaging_and_fails_closed() {
     );
     assert_ci_rejected(&skipped_contract, "verify:rust-contracts exactly once");
 
-    let package_line = r#"      - run: npm run package:rust -- --binary "target/phase13-ci/cargo/release/minimax-cli${{ runner.os == 'Windows' && '.exe' || '' }}" --output target/phase13-ci/artifacts --fingerprint-file target/phase13-ci/fingerprint.json
+    let package_line = r#"      - run: npm run package:rust -- --binary "target/phase14-ci/cargo/release/minimax-cli${{ runner.os == 'Windows' && '.exe' || '' }}" --output target/phase14-ci/artifacts --fingerprint-file target/phase14-ci/fingerprint.json
 "#;
     let reversed = source.replace(package_line, "").replace(
         "      - run: npm ci\n",
@@ -808,11 +812,11 @@ fn ci_keeps_rust_authority_ahead_of_packaging_and_fails_closed() {
     );
 
     let implicit_fingerprint =
-        source.replace(" --fingerprint-file target/phase13-ci/fingerprint.json", "");
+        source.replace(" --fingerprint-file target/phase14-ci/fingerprint.json", "");
     assert_ci_rejected(&implicit_fingerprint, "package:rust");
 
     let upload = "        uses: actions/upload-artifact@v4\n";
-    let milestone = "      - run: npm run verify:milestone-flow -- --artifacts target/phase13-ci/artifacts --evidence-dir target/phase13-ci/evidence --fingerprint-file target/phase13-ci/fingerprint.json\n";
+    let milestone = "      - run: npm run verify:milestone-flow -- --artifacts target/phase14-ci/artifacts --evidence-dir target/phase14-ci/evidence --fingerprint-file target/phase14-ci/fingerprint.json\n";
     let upload_before_milestone = source
         .replace(upload, "")
         .replace(milestone, &format!("{upload}{milestone}"));

@@ -13,6 +13,17 @@ pub const LEGACY_FIXTURE_PHASE_11_DISPOSITION: &str =
 pub const LEGACY_FIXTURE_PHASE_14_ZERO_CONTRACT: &str =
     "delete-all-entries-and-set-the-class-count-to-zero";
 
+const PACKAGE_LOCK: &str = "package-lock.json";
+const REQUIRED_RETAINED_FIXTURES: [&str; 7] = [
+    "fixtures/compat/evaluations/provider.v1.json",
+    "fixtures/compat/evaluations/retrieval.v1.json",
+    "fixtures/compat/migration/typescript-v1/manifest.v1.json",
+    "fixtures/compat/migration/typescript-v1/support-window.v1.json",
+    "fixtures/compat/public-contract.v1.json",
+    "fixtures/compat/release/targets.v1.json",
+    "fixtures/compat/verification/typescript-responsibilities.v1.json",
+];
+
 const PACKAGE_TOP_LEVEL_KEYS: [&str; 8] = [
     "bin",
     "description",
@@ -497,11 +508,11 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
         "npm run verify:rust-contracts",
         "npm run verify:rust-contracts:candidate",
         "npm run test:package",
-        "mkdir -p target/phase13-ci && node scripts/release/product-fingerprint.mjs > target/phase13-ci/fingerprint.json",
+        "mkdir -p target/phase14-ci && node scripts/release/product-fingerprint.mjs > target/phase14-ci/fingerprint.json",
         "npm run build:rust:release",
-        r#"npm run package:rust -- --binary "target/phase13-ci/cargo/release/minimax-cli${{ runner.os == 'Windows' && '.exe' || '' }}" --output target/phase13-ci/artifacts --fingerprint-file target/phase13-ci/fingerprint.json"#,
-        r#"npm run verify:rust-release -- --binary "target/phase13-ci/cargo/release/minimax-cli${{ runner.os == 'Windows' && '.exe' || '' }}" --artifacts target/phase13-ci/artifacts --evidence-dir target/phase13-ci/evidence"#,
-        "npm run verify:milestone-flow -- --artifacts target/phase13-ci/artifacts --evidence-dir target/phase13-ci/evidence --fingerprint-file target/phase13-ci/fingerprint.json",
+        r#"npm run package:rust -- --binary "target/phase14-ci/cargo/release/minimax-cli${{ runner.os == 'Windows' && '.exe' || '' }}" --output target/phase14-ci/artifacts --fingerprint-file target/phase14-ci/fingerprint.json"#,
+        r#"npm run verify:rust-release -- --binary "target/phase14-ci/cargo/release/minimax-cli${{ runner.os == 'Windows' && '.exe' || '' }}" --artifacts target/phase14-ci/artifacts --evidence-dir target/phase14-ci/evidence"#,
+        "npm run verify:milestone-flow -- --artifacts target/phase14-ci/artifacts --evidence-dir target/phase14-ci/evidence --fingerprint-file target/phase14-ci/fingerprint.json",
     ];
     let mut command_lines = Vec::new();
     for required in required_commands {
@@ -568,6 +579,15 @@ fn validate_executable_links(
     let package: serde_json::Value = serde_json::from_str(&package_contents)
         .map_err(|_| SourceAuthorityError::Violation("package.json is invalid JSON".to_owned()))?;
     validate_package_product_scripts(&package).map_err(SourceAuthorityError::Violation)?;
+    let package_lock_contents = fs::read_to_string(root.join(PACKAGE_LOCK))
+        .map_err(|_| SourceAuthorityError::PathRead(PACKAGE_LOCK.to_owned()))?;
+    let package_lock: serde_json::Value =
+        serde_json::from_str(&package_lock_contents).map_err(|_| {
+            SourceAuthorityError::Violation(
+                "package lock must contain only the dependency-free Rust distribution".to_owned(),
+            )
+        })?;
+    validate_package_lock(&package_lock).map_err(SourceAuthorityError::Violation)?;
     for executable in &manifest.executable_entries {
         let javascript = manifest
             .javascript_allowlist
@@ -678,6 +698,33 @@ pub(crate) fn validate_package_product_scripts(package: &serde_json::Value) -> R
     Ok(())
 }
 
+fn validate_package_lock(package_lock: &serde_json::Value) -> Result<(), String> {
+    let expected = serde_json::json!({
+        "name": "minimax-codex",
+        "version": "0.1.0",
+        "lockfileVersion": 3,
+        "requires": true,
+        "packages": {
+            "": {
+                "name": "minimax-codex",
+                "version": "0.1.0",
+                "bin": {
+                    "minimax-codex": "bin/minimax-codex.cjs"
+                },
+                "engines": {
+                    "node": ">=20"
+                }
+            }
+        }
+    });
+    if package_lock != &expected {
+        return Err(
+            "package lock must contain only the dependency-free Rust distribution".to_owned(),
+        );
+    }
+    Ok(())
+}
+
 fn is_typescript_or_legacy_product_entry(command: &str) -> bool {
     let normalized = command.replace('\\', "/").to_ascii_lowercase();
     if [
@@ -719,6 +766,9 @@ fn collect_present_sources(
         let metadata = fs::symlink_metadata(&path)
             .map_err(|_| SourceAuthorityError::PathRead(relative.clone()))?;
         if metadata.is_dir() {
+            if relative == "dist" {
+                return violation("generated legacy output directory denied: dist");
+            }
             if should_skip_directory(&relative) {
                 continue;
             }
@@ -729,6 +779,11 @@ fn collect_present_sources(
             }
             collect_present_sources(root, &path, typescript, javascript)?;
             continue;
+        }
+        if is_typescript_compiler_configuration(&relative) {
+            return violation(format!(
+                "TypeScript compiler configuration denied: {relative}"
+            ));
         }
         let extension = path
             .extension()
@@ -754,11 +809,20 @@ fn collect_present_sources(
 }
 
 fn should_skip_directory(relative: &str) -> bool {
-    !relative.contains('/')
-        && matches!(
-            relative,
-            ".git" | "dist" | "node_modules" | "target" | "coverage"
-        )
+    !relative.contains('/') && matches!(relative, ".git" | "node_modules" | "target" | "coverage")
+}
+
+fn is_typescript_compiler_configuration(relative: &str) -> bool {
+    if relative.starts_with("fixtures/compat/") {
+        return false;
+    }
+    let file_name = Path::new(relative)
+        .file_name()
+        .and_then(|value| value.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    file_name == "tsconfig.json"
+        || (file_name.starts_with("tsconfig.") && file_name.ends_with(".json"))
 }
 
 fn repository_path(root: &Path, path: &Path) -> String {
@@ -900,6 +964,14 @@ fn validate_manifest(
         require_regular_directory(root, &root_entry.path)?;
     }
     require_regular_file(root, "package.json")?;
+    require_regular_file(root, PACKAGE_LOCK)?;
+    for path in REQUIRED_RETAINED_FIXTURES {
+        if require_regular_file(root, path).is_err() {
+            return invalid(format!(
+                "required retained compatibility fixture missing: {path}"
+            ));
+        }
+    }
     for entry in &manifest.javascript_allowlist {
         validate_hash(root, &entry.path, &entry.sha256)?;
     }
