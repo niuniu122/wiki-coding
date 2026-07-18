@@ -450,7 +450,7 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
         return violation("CI matrix must remain Ubuntu and Windows x64 hosted jobs");
     }
     let reproducible_msvc_link =
-        "RUSTFLAGS: ${{ runner.os == 'Windows' && '-C link-arg=/Brepro' || '' }}";
+        "RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '-C link-arg=/Brepro' || '' }}";
     if normalized.matches(reproducible_msvc_link).count() != 1 {
         return violation("CI Windows MSVC builds must retain reproducible /Brepro linking");
     }

@@ -757,7 +757,9 @@ fn ci_keeps_rust_authority_ahead_of_packaging_and_fails_closed() {
     let source = fs::read_to_string(repository_root().join(CI_WORKFLOW))
         .expect("CI workflow should be readable");
     assert!(
-        source.contains("RUSTFLAGS: ${{ runner.os == 'Windows' && '-C link-arg=/Brepro' || '' }}"),
+        source.contains(
+            "RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '-C link-arg=/Brepro' || '' }}"
+        ),
         "Windows MSVC hosted builds must opt into reproducible linker output"
     );
     validate_ci_workflow_text(&source).expect("committed CI workflow should preserve authority");
@@ -823,7 +825,7 @@ fn ci_keeps_rust_authority_ahead_of_packaging_and_fails_closed() {
     );
 
     let non_reproducible_windows_link = source.replace(
-        "RUSTFLAGS: ${{ runner.os == 'Windows' && '-C link-arg=/Brepro' || '' }}",
+        "RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '-C link-arg=/Brepro' || '' }}",
         "RUSTFLAGS: ''",
     );
     assert_ci_rejected(
