@@ -4,13 +4,15 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
 use minimax_compat_harness::{
-    ArchitectureError, ArchitectureGraph, ArchitecturePackage, ManifestError, ParityStatus,
-    build_report, load_cargo_architecture, load_compat_manifests, report_json, repository_root,
-    validate_architecture, validate_cli_tui_markdown_boundary, validate_core_source_boundary,
+    ArchitectureError, ArchitectureGraph, ArchitecturePackage, BaselineError, ManifestError,
+    ParityStatus, build_report, compute_product_fingerprint, load_cargo_architecture,
+    load_compat_manifests, report_json, repository_root, validate_architecture,
+    validate_cli_tui_markdown_boundary, validate_core_source_boundary,
     validate_core_source_directory, validate_core_source_text, validate_cutover_candidate,
-    validate_cutover_evidence, validate_migration_source_boundary, validate_migration_source_text,
-    validate_product_entry, validate_report, validate_retrieval_source_boundary,
-    validate_retrieval_source_text, validate_rust_command_surface, validate_rust_provider_profiles,
+    validate_cutover_evidence, validate_hosted_release_gate_document,
+    validate_migration_source_boundary, validate_migration_source_text, validate_product_entry,
+    validate_report, validate_retrieval_source_boundary, validate_retrieval_source_text,
+    validate_rust_command_surface, validate_rust_provider_profiles,
     validate_rust_retrieval_evidence, validate_rust_tool_evidence, validate_rust_vault_evidence,
     validate_ui_source_text, validate_vault_source_boundary, validate_vault_source_text,
     verify_fixture_compatibility,
@@ -502,6 +504,97 @@ fn hosted_cutover_evidence_matches_current_product() {
 }
 
 #[test]
+fn stale_hosted_evidence_is_rejected_for_freshness_or_fingerprint() {
+    let root = repository_root();
+    let (_, file_count) =
+        compute_product_fingerprint(&root).expect("current product fingerprint should compute");
+    let mut gate: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(root.join("fixtures/compat/release/hosted-gates.v1.json"))
+            .expect("hosted release gate"),
+    )
+    .expect("hosted release gate JSON");
+    gate["productFingerprint"] = serde_json::json!("0".repeat(64));
+    gate["productFileCount"] = serde_json::json!(file_count);
+    let source = serde_json::to_string(&gate).expect("serialize stale hosted evidence");
+
+    assert_eq!(
+        validate_hosted_release_gate_document(&root, &source),
+        Err(BaselineError::HostedEvidenceFingerprintStale)
+    );
+}
+
+#[test]
+fn gnullvm_development_evidence_cannot_satisfy_hosted_msvc() {
+    let root = repository_root();
+    let (fingerprint, file_count) =
+        compute_product_fingerprint(&root).expect("current product fingerprint should compute");
+    let mut gate: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(root.join("fixtures/compat/release/hosted-gates.v1.json"))
+            .expect("hosted release gate"),
+    )
+    .expect("hosted release gate JSON");
+    gate["productFingerprint"] = serde_json::json!(fingerprint);
+    gate["productFileCount"] = serde_json::json!(file_count);
+    let windows = gate["jobs"]
+        .as_array_mut()
+        .expect("hosted jobs")
+        .iter_mut()
+        .find(|job| job["platform"] == "windows-x86_64-msvc")
+        .expect("Windows MSVC hosted job");
+    windows["environment"]["rustcHost"] = serde_json::json!("x86_64-pc-windows-gnullvm");
+    let source = serde_json::to_string(&gate).expect("serialize tier-confused hosted evidence");
+
+    assert_eq!(
+        validate_hosted_release_gate_document(&root, &source),
+        Err(BaselineError::CutoverEvidence)
+    );
+}
+
+#[test]
+fn product_fingerprint_v3_tracks_working_tree_and_excludes_only_planning_and_hosted_record() {
+    let repository = FingerprintRepository::new();
+    let first = compute_product_fingerprint(&repository.root).expect("first Rust fingerprint");
+    assert_eq!(first.1, 2);
+    assert_eq!(node_product_fingerprint(&repository.root), first);
+
+    fs::write(
+        repository.root.join("product.txt"),
+        "tracked-working-tree-v2\n",
+    )
+    .expect("edit tracked product input");
+    let tracked_edit =
+        compute_product_fingerprint(&repository.root).expect("tracked edit fingerprint");
+    assert_ne!(tracked_edit.0, first.0);
+
+    fs::write(
+        repository.root.join(".planning/note.md"),
+        "excluded-planning-v2\n",
+    )
+    .expect("edit excluded planning input");
+    let planning_edit =
+        compute_product_fingerprint(&repository.root).expect("planning edit fingerprint");
+    assert_eq!(planning_edit, tracked_edit);
+
+    fs::write(
+        repository
+            .root
+            .join("fixtures/compat/release/hosted-gates.v1.json"),
+        "{\"excluded\":2}\n",
+    )
+    .expect("edit excluded hosted evidence input");
+    let evidence_edit =
+        compute_product_fingerprint(&repository.root).expect("evidence edit fingerprint");
+    assert_eq!(evidence_edit, planning_edit);
+
+    fs::write(repository.root.join("untracked.txt"), "untracked-v2\n")
+        .expect("edit untracked product input");
+    let untracked_edit =
+        compute_product_fingerprint(&repository.root).expect("untracked edit fingerprint");
+    assert_ne!(untracked_edit.0, evidence_edit.0);
+    assert_eq!(node_product_fingerprint(&repository.root), untracked_edit);
+}
+
+#[test]
 fn cutover_rejects_a_pending_mandatory_rust_item() {
     let root = repository_root();
     let manifests = load_compat_manifests(&root).expect("strict manifests");
@@ -920,6 +1013,85 @@ struct CompatManifestFixture {
 
 struct HermeticCompatibilityFixture {
     root: PathBuf,
+}
+
+struct FingerprintRepository {
+    root: PathBuf,
+}
+
+impl FingerprintRepository {
+    fn new() -> Self {
+        let unique = format!(
+            "minimax-fingerprint-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .expect("clock after epoch")
+                .as_nanos()
+        );
+        let root = std::env::temp_dir().join(unique);
+        fs::create_dir_all(root.join(".planning")).expect("create planning fixture directory");
+        fs::create_dir_all(root.join("fixtures/compat/release"))
+            .expect("create hosted evidence fixture directory");
+        fs::write(root.join("product.txt"), "tracked-working-tree-v1\n")
+            .expect("write tracked product input");
+        fs::write(root.join("untracked.txt"), "untracked-v1\n")
+            .expect("write untracked product input");
+        fs::write(root.join(".planning/note.md"), "excluded-planning-v1\n")
+            .expect("write excluded planning input");
+        fs::write(
+            root.join("fixtures/compat/release/hosted-gates.v1.json"),
+            "{\"excluded\":1}\n",
+        )
+        .expect("write excluded hosted evidence input");
+        run_git(&root, &["init", "--quiet"]);
+        run_git(
+            &root,
+            &[
+                "add",
+                "--",
+                "product.txt",
+                ".planning/note.md",
+                "fixtures/compat/release/hosted-gates.v1.json",
+            ],
+        );
+        Self { root }
+    }
+}
+
+impl Drop for FingerprintRepository {
+    fn drop(&mut self) {
+        fs::remove_dir_all(&self.root).expect("remove fingerprint repository");
+    }
+}
+
+fn run_git(root: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .args(args)
+        .output()
+        .expect("run Git for fingerprint fixture");
+    assert!(output.status.success(), "{}", stderr(&output));
+}
+
+fn node_product_fingerprint(root: &Path) -> (String, u64) {
+    let output = Command::new("node")
+        .arg(repository_root().join("scripts/release/product-fingerprint.mjs"))
+        .arg("--root")
+        .arg(root)
+        .output()
+        .expect("run Node product fingerprint");
+    assert!(output.status.success(), "{}", stderr(&output));
+    let value: serde_json::Value =
+        serde_json::from_slice(&output.stdout).expect("Node fingerprint JSON");
+    (
+        value["fingerprint"]
+            .as_str()
+            .expect("Node fingerprint")
+            .to_owned(),
+        value["fileCount"].as_u64().expect("Node file count"),
+    )
 }
 
 impl HermeticCompatibilityFixture {
