@@ -26,9 +26,14 @@ fn release_smoke_binds_the_launcher_to_the_exact_packaged_identity() {
             .expect("release verifier source");
 
     for required_contract in [
-        "sourceVersionOutput",
+        "nativeInstalledRustIdentity",
         "installedVersionOutput",
         "packagedBinarySha256",
+        "capabilityStatusOutputSha256",
+        "productFingerprint",
+        "providerCalls: 0",
+        "credentialsRead: 0",
+        "modelDownloads: 0",
         "missingSiblingRejected",
         "unsafeSiblingRejected",
     ] {
@@ -38,8 +43,8 @@ fn release_smoke_binds_the_launcher_to_the_exact_packaged_identity() {
         );
     }
     assert!(
-        source.contains("installedVersionOutput !== sourceVersionOutput"),
-        "release verifier must reject direct/installed version drift"
+        source.contains("native and npm installed Rust identities do not match"),
+        "release verifier must reject native/npm installed identity drift"
     );
 }
 
