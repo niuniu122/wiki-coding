@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import {createHash} from "node:crypto";
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -14,8 +16,10 @@ import {spawnSync} from "node:child_process";
 import {fileURLToPath} from "node:url";
 
 import {
+  createDeterministicTarGzip,
   expectedArchiveEntries,
   loadTargetContract,
+  validateArtifactCandidate,
   validateReleaseManifest,
   validateTargetContract
 } from "./package-contract.mjs";
@@ -145,6 +149,43 @@ test("package assembly is byte-identical and emits one strict external manifest"
   }
 });
 
+test("corrupt package candidates fail closed by stable category before any alternate child", async (t) => {
+  mkdirSync(resolve(root, "target"), {recursive: true});
+  const workspace = mkdtempSync(resolve(root, "target/package-corruption-test-"));
+  const alternateChildMarker = resolve(workspace, "alternate-child.marker");
+  try {
+    const rows = [
+      ["absent binary", (candidate) => removeNativeBinary(candidate), "ARTIFACT_BINARY_MISSING"],
+      ["wrong target", (candidate) => candidate.input.expectedTargetId = "windows-x86_64-msvc", "ARTIFACT_TARGET_MISMATCH"],
+      ["renamed binary", (candidate) => renameNativeBinary(candidate), "ARTIFACT_BINARY_RENAMED"],
+      ["Linux executable bit lost", (candidate) => setNativeBinaryMode(candidate, 0o644), "ARTIFACT_BINARY_NOT_EXECUTABLE"],
+      ["symlink or unsafe entry type", (candidate) => setNativeBinaryType(candidate, "2"), "ARTIFACT_UNSAFE_TYPE"],
+      ["checksum mismatch", (candidate) => mutateNativeReadme(candidate), "ARTIFACT_CHECKSUM_MISMATCH"],
+      ["product fingerprint drift", (candidate) => candidate.input.expectedProduct.fingerprint = "0".repeat(64), "ARTIFACT_PRODUCT_FINGERPRINT_MISMATCH"],
+      ["launcher mismatch", (candidate) => mutateNativeLauncher(candidate), "ARTIFACT_LAUNCHER_MISMATCH"],
+      ["extra executable", (candidate) => addNativeExecutable(candidate), "ARTIFACT_EXTRA_EXECUTABLE"],
+      ["truncated or corrupt archive", (candidate) => truncateNativeArchive(candidate), "ARTIFACT_ARCHIVE_CORRUPT"],
+      ["invalid checksum sidecar", (candidate) => invalidateNativeSidecar(candidate), "ARTIFACT_SIDECAR_INVALID"]
+    ];
+
+    for (const [label, mutate, code] of rows) {
+      await t.test(label, () => {
+        const candidate = healthyArtifactCandidate();
+        mutate(candidate);
+        assertContractError(() => validateArtifactCandidate(candidate.input), code, label);
+        assert.equal(existsSync(alternateChildMarker), false, `${label}: no alternate child may run`);
+      });
+    }
+  } finally {
+    rmSync(workspace, {recursive: true, force: true});
+  }
+});
+
+test("package.json exposes the package-only corruption gate", () => {
+  const packageJson = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
+  assert.equal(packageJson.scripts["test:package"], "node --test scripts/release/package-contract.test.mjs");
+});
+
 function healthyManifest(contract) {
   const target = contract.targets[0];
   const version = "0.1.0";
@@ -207,6 +248,162 @@ function setContentEvidence(entries, path, hash, bytes) {
   assert.ok(entry, `expected canonical entry ${path}`);
   entry.sha256 = hash;
   entry.bytes = bytes;
+}
+
+function healthyArtifactCandidate() {
+  const contract = loadTargetContract();
+  const target = contract.targets[0];
+  const version = "0.1.0";
+  const nativePrefix = `minimax-codex-v${version}-${target.id}/`;
+  const nativeEntries = materializeTestEntries(expectedArchiveEntries(target, version, "native"), nativePrefix);
+  const npmEntries = materializeTestEntries(expectedArchiveEntries(target, version, "npm"), "package/");
+  const nativeBytes = createDeterministicTarGzip(nativeEntries);
+  const npmBytes = createDeterministicTarGzip(npmEntries);
+  const binaryBytes = fixtureBytes(target.binaryName);
+  const launcherBytes = fixtureBytes("bin/minimax-codex.cjs");
+  const nativeName = `minimax-codex-v${version}-${target.id}.tar.gz`;
+  const npmName = `minimax-codex-v${version}-${target.id}-npm.tgz`;
+  const product = {fingerprint: sha256(Buffer.from("current-product", "utf8")), fileCount: 438};
+  const manifest = {
+    schemaVersion: contract.manifestSchemaVersion,
+    name: "minimax-codex",
+    version,
+    target: {
+      id: target.id,
+      rustcHost: target.rustcHost,
+      os: target.os,
+      arch: target.arch,
+      supportTier: target.supportTier
+    },
+    embeddingIncluded: false,
+    product: {...product},
+    binary: {path: target.binaryName, mode: target.binaryMode, bytes: binaryBytes.length, sha256: sha256(binaryBytes)},
+    launcher: {path: "bin/minimax-codex.cjs", mode: 0o755, bytes: launcherBytes.length, sha256: sha256(launcherBytes)},
+    nativeArchive: {
+      name: nativeName,
+      bytes: nativeBytes.length,
+      sha256: sha256(nativeBytes),
+      entries: testEntryEvidence(nativeEntries)
+    },
+    npmPackage: {
+      name: npmName,
+      bytes: npmBytes.length,
+      sha256: sha256(npmBytes),
+      entries: testEntryEvidence(npmEntries)
+    }
+  };
+  validateReleaseManifest(manifest, contract);
+  const artifacts = new Map([
+    [nativeName, {kind: "file", bytes: nativeBytes}],
+    [`${nativeName}.sha256`, {kind: "file", bytes: sidecar(nativeName, nativeBytes)}],
+    [npmName, {kind: "file", bytes: npmBytes}],
+    [`${npmName}.sha256`, {kind: "file", bytes: sidecar(npmName, npmBytes)}]
+  ]);
+  return {
+    input: {
+      manifest,
+      contract,
+      expectedTargetId: target.id,
+      expectedProduct: {...product},
+      artifacts
+    },
+    nativeEntries,
+    npmEntries
+  };
+}
+
+function materializeTestEntries(descriptors, prefix) {
+  return descriptors.map((descriptor) => descriptor.type === "directory"
+    ? {name: descriptor.path, bytes: Buffer.alloc(0), mode: descriptor.mode, type: "5"}
+    : {
+        name: descriptor.path,
+        bytes: fixtureBytes(descriptor.path.slice(prefix.length)),
+        mode: descriptor.mode,
+        type: "0"
+      });
+}
+
+function testEntryEvidence(entries) {
+  return entries.map((entry) => entry.type === "5"
+    ? {path: entry.name, type: "directory", mode: entry.mode}
+    : {path: entry.name, type: "file", mode: entry.mode, bytes: entry.bytes.length, sha256: sha256(entry.bytes)});
+}
+
+function fixtureBytes(relativePath) {
+  return Buffer.from(`fixture:${relativePath}\n`, "utf8");
+}
+
+function sidecar(name, bytes) {
+  return Buffer.from(`${sha256(bytes)}  ${name}\n`, "utf8");
+}
+
+function nativeBinaryEntry(candidate) {
+  const manifest = candidate.input.manifest;
+  const path = `minimax-codex-v${manifest.version}-${manifest.target.id}/${manifest.binary.path}`;
+  return candidate.nativeEntries.find((entry) => entry.name === path);
+}
+
+function nativeEntry(candidate, suffix) {
+  return candidate.nativeEntries.find((entry) => entry.name.endsWith(suffix));
+}
+
+function rebuildNative(candidate) {
+  const bytes = createDeterministicTarGzip(candidate.nativeEntries);
+  const name = candidate.input.manifest.nativeArchive.name;
+  candidate.input.artifacts.set(name, {kind: "file", bytes});
+  candidate.input.artifacts.set(`${name}.sha256`, {kind: "file", bytes: sidecar(name, bytes)});
+}
+
+function removeNativeBinary(candidate) {
+  const entry = nativeBinaryEntry(candidate);
+  candidate.nativeEntries.splice(candidate.nativeEntries.indexOf(entry), 1);
+  rebuildNative(candidate);
+}
+
+function renameNativeBinary(candidate) {
+  nativeBinaryEntry(candidate).name = nativeBinaryEntry(candidate).name.replace(/minimax-codex$/u, "renamed-minimax-codex");
+  rebuildNative(candidate);
+}
+
+function setNativeBinaryMode(candidate, mode) {
+  nativeBinaryEntry(candidate).mode = mode;
+  rebuildNative(candidate);
+}
+
+function setNativeBinaryType(candidate, type) {
+  nativeBinaryEntry(candidate).type = type;
+  rebuildNative(candidate);
+}
+
+function mutateNativeReadme(candidate) {
+  nativeEntry(candidate, "/README.md").bytes = Buffer.from("tampered README\n", "utf8");
+  rebuildNative(candidate);
+}
+
+function mutateNativeLauncher(candidate) {
+  nativeEntry(candidate, "/bin/minimax-codex.cjs").bytes = Buffer.from("tampered launcher\n", "utf8");
+  rebuildNative(candidate);
+}
+
+function addNativeExecutable(candidate) {
+  const rootName = `minimax-codex-v${candidate.input.manifest.version}-${candidate.input.manifest.target.id}`;
+  candidate.nativeEntries.push({name: `${rootName}/bin/alternate-runtime`, bytes: Buffer.from("alternate\n", "utf8"), mode: 0o755, type: "0"});
+  rebuildNative(candidate);
+}
+
+function truncateNativeArchive(candidate) {
+  const name = candidate.input.manifest.nativeArchive.name;
+  const artifact = candidate.input.artifacts.get(name);
+  candidate.input.artifacts.set(name, {...artifact, bytes: artifact.bytes.subarray(0, 12)});
+}
+
+function invalidateNativeSidecar(candidate) {
+  const name = candidate.input.manifest.nativeArchive.name;
+  candidate.input.artifacts.set(`${name}.sha256`, {kind: "file", bytes: Buffer.from("not-a-sidecar\n", "utf8")});
+}
+
+function sha256(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
 }
 
 function assertContractError(operation, expectedCode, label) {
