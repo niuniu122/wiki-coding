@@ -2,14 +2,15 @@ use std::path::{Path, PathBuf};
 
 use clap::Parser as _;
 use minimax_cli::{
-    CapabilityIndexAction, Cli, CliCommand, IndexAction, JsonlWriter, ProjectIndexAction,
-    WikiIndexAction, capability_search, capability_status, project_search, project_status,
-    wiki_search, wiki_status,
+    CapabilityIndexAction, CapabilityKindArg, Cli, CliCommand, IndexAction, JsonlWriter,
+    ProjectIndexAction, WikiIndexAction, WorkspaceIndexAction, capability_search,
+    capability_status, capability_workspace_search, capability_workspace_status, project_search,
+    project_status, wiki_search, wiki_status,
 };
 use minimax_protocol::{
-    ContentHash, EvidenceId, KnowledgePage, KnowledgePageStatus, PageId, ProjectId,
-    RetrievalDegradedReason, RetrievalMode, RetrievalResponse, SchemaVersion, SourceCitation,
-    TopicId,
+    CapabilityKind, CapabilityReadiness, CapabilityWorkspaceResponse, ContentHash, EvidenceId,
+    KnowledgePage, KnowledgePageStatus, PageId, ProjectId, RetrievalDegradedReason, RetrievalMode,
+    RetrievalResponse, SchemaVersion, SourceCitation, TopicId,
 };
 use minimax_tui::EventRenderer;
 use minimax_vault::{ProjectVault, render_wiki_page};
@@ -41,6 +42,16 @@ fn clap_exposes_explicit_read_only_status_and_search_routes() {
         vec![
             "minimax-codex-rust",
             "index",
+            "workspace",
+            "search",
+            "find official API documentation",
+            "--kind",
+            "skill",
+        ],
+        vec!["minimax-codex-rust", "index", "workspace", "status"],
+        vec![
+            "minimax-codex-rust",
+            "index",
             "wiki",
             "search",
             "architecture",
@@ -68,6 +79,20 @@ fn clap_exposes_explicit_read_only_status_and_search_routes() {
         ])
         .is_err()
     );
+    for forbidden in ["--install", "--authorize", "--execute", "--start"] {
+        assert!(
+            Cli::try_parse_from([
+                "minimax-codex-rust",
+                "index",
+                "workspace",
+                "search",
+                "github repository",
+                forbidden,
+            ])
+            .is_err(),
+            "workspace discovery unexpectedly accepted {forbidden}"
+        );
+    }
 
     let parsed = Cli::try_parse_from([
         "minimax-codex-rust",
@@ -84,6 +109,26 @@ fn clap_exposes_explicit_read_only_status_and_search_routes() {
         CliCommand::Index(args)
             if matches!(args.action, IndexAction::Projects {
                 action: ProjectIndexAction::Search { .. }
+            })
+    ));
+    let workspace = Cli::try_parse_from([
+        "minimax-codex-rust",
+        "index",
+        "workspace",
+        "search",
+        "github repository",
+        "--kind",
+        "mcp",
+    ])
+    .expect("workspace search");
+    assert!(matches!(
+        workspace.command,
+        CliCommand::Index(args)
+            if matches!(args.action, IndexAction::Workspace {
+                action: WorkspaceIndexAction::Search {
+                    kind: CapabilityKindArg::Mcp,
+                    ..
+                }
             })
     ));
     assert!(
@@ -117,6 +162,87 @@ fn clap_exposes_explicit_read_only_status_and_search_routes() {
                 action: WikiIndexAction::Status { .. }
             })
     ));
+}
+
+#[tokio::test]
+async fn capability_workspace_is_separate_searchable_and_truthful_about_readiness() {
+    let status = capability_workspace_status(None, None).expect("workspace status");
+    assert_eq!(status.catalogs.len(), 3);
+    assert_eq!(status.catalogs[0].documents, 6);
+    assert_eq!(status.catalogs[1].documents, 1);
+    assert_eq!(status.catalogs[2].documents, 1);
+    assert!(
+        status
+            .catalogs
+            .iter()
+            .all(|catalog| catalog.degraded_reason
+                == Some(RetrievalDegradedReason::EmbeddingMissing))
+    );
+
+    let skill = capability_workspace_search(
+        None,
+        None,
+        None,
+        "我需要查 OpenAI API 官方文档",
+        Some(CapabilityKind::Skill),
+        5,
+    )
+    .await
+    .expect("skill search");
+    assert_eq!(skill.results[0].id, "skill:openai/openai-docs");
+    assert_eq!(
+        skill.results[0].readiness,
+        CapabilityReadiness::NeedsInstall
+    );
+    assert!(
+        skill.results[0]
+            .next_action
+            .contains("confirm installation")
+    );
+
+    let inventory = tempfile::tempdir().expect("inventory");
+    let inventory_path = inventory.path().join("inventory.v1.json");
+    std::fs::write(
+        &inventory_path,
+        serde_json::to_vec(&serde_json::json!({
+            "schemaVersion": 1,
+            "installed": ["mcp:github/github-mcp-server"],
+            "authorized": []
+        }))
+        .expect("inventory JSON"),
+    )
+    .expect("write inventory");
+    let mcp = capability_workspace_search(
+        None,
+        Some(&inventory_path),
+        None,
+        "管理 GitHub 仓库 issue 和 pull request",
+        Some(CapabilityKind::Mcp),
+        5,
+    )
+    .await
+    .expect("MCP search");
+    assert_eq!(mcp.results[0].readiness, CapabilityReadiness::NeedsAccess);
+    assert_eq!(
+        mcp.results[0].authorizations.as_deref(),
+        Some(["github_personal_access_token".to_owned()].as_slice())
+    );
+    let text = EventRenderer::capability_workspace(&mcp);
+    for fact in [
+        "kind=mcp",
+        "status=needs_authorization",
+        "next=Review the requested access",
+        "authorization=github_personal_access_token",
+    ] {
+        assert!(text.contains(fact), "missing {fact:?} in {text:?}");
+    }
+
+    let mut writer = JsonlWriter::new(Vec::new());
+    writer.write_json(&mcp).expect("JSONL");
+    let encoded = String::from_utf8(writer.into_inner()).expect("UTF-8");
+    let decoded: CapabilityWorkspaceResponse =
+        serde_json::from_str(encoded.trim()).expect("strict response");
+    assert_eq!(decoded, mcp);
 }
 
 #[tokio::test]

@@ -1,0 +1,360 @@
+{
+  "schemaVersion": 1,
+  "contractVersion": "v1",
+  "provenanceCommit": "84784f5",
+  "contentFingerprint": "sha256:91d2c5529ecfa978de0c6e27d2161bc9dd725bd7e263cebb75ccff3c65c6cec5",
+  "productEntry": "bin/minimax-codex.cjs",
+  "requiredItemIds": [
+    "contract.command./agent",
+    "contract.command./api",
+    "contract.command./capabilities",
+    "contract.command./chat",
+    "contract.command./compact",
+    "contract.command./continue",
+    "contract.command./exit",
+    "contract.command./interrupt",
+    "contract.command./model",
+    "contract.command./models",
+    "contract.command./new",
+    "contract.command./permissions",
+    "contract.command./provider",
+    "contract.command./quit",
+    "contract.command./resume",
+    "contract.command./retry",
+    "contract.command./threads",
+    "contract.command./trace",
+    "contract.migration",
+    "contract.permission_modes",
+    "contract.product_entry",
+    "contract.provider_profile.custom_openai_compatible",
+    "contract.provider_profile.minimax_hashsight",
+    "contract.provider_profile.minimax_official",
+    "contract.provider_protocol.chat_completions",
+    "contract.provider_protocol.responses",
+    "contract.release_gate",
+    "contract.requirement.TOOL-01",
+    "contract.requirement.TOOL-02",
+    "contract.requirement.TOOL-03",
+    "contract.requirement.TOOL-04",
+    "contract.requirement.TOOL-05",
+    "contract.retrieval",
+    "contract.vault"
+  ],
+  "items": [
+    {
+      "id": "contract.command./agent",
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
+    },
+    {
+      "id": "contract.command./api",
+      "status": "approved_difference",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ],
+      "approvedDifference": "difference.command.api"
+    },
+    {
+      "id": "contract.command./capabilities",
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
+    },
+    {
+      "id": "contract.command./chat",
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
+    },
+    {
+      "id": "contract.command./compact",
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
+    },
+    {
+      "id": "contract.command./continue",
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
+    },
+    {
+      "id": "contract.command./exit",
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
+    },
+    {
+      "id": "contract.command./interrupt",
+      "status": "approved_difference",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ],
+      "approvedDifference": "difference.command.interrupt"
+    },
+    {
+      "id": "contract.command./model",
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
+    },
+    {
+      "id": "contract.command./models",
+      "status": "approved_difference",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ],
+      "approvedDifference": "difference.command.models"
+    },
+    {
+      "id": "contract.command./new",
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
+    },
+    {
+      "id": "contract.command./permissions",
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
+    },
+    {
+      "id": "contract.command./provider",
+      "status": "approved_difference",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ],
+      "approvedDifference": "difference.command.provider"
+    },
+    {
+      "id": "contract.command./quit",
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
+    },
+    {
+      "id": "contract.command./resume",
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
+    },
+    {
+      "id": "contract.command./retry",
+      "status": "approved_difference",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ],
+      "approvedDifference": "difference.command.retry"
+    },
+    {
+      "id": "contract.command./threads",
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
+    },
+    {
+      "id": "contract.command./trace",
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
+    },
+    {
+      "id": "contract.migration",
+      "status": "matched",
+      "evidence": [
+        "crates/cli/src/migration.rs",
+        "crates/cli/tests/migration.rs",
+        "fixtures/compat/migration/typescript-v1/config.json"
+      ]
+    },
+    {
+      "id": "contract.permission_modes",
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
+    },
+    {
+      "id": "contract.product_entry",
+      "status": "matched",
+      "evidence": [
+        "bin/minimax-codex.cjs",
+        "crates/compat-harness/src/baseline.rs",
+        "crates/cli/tests/headless.rs",
+        "fixtures/compat/release/hosted-gates.v1.json",
+        "package.json"
+      ]
+    },
+    {
+      "id": "contract.provider_profile.custom_openai_compatible",
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/provider/tests/config_credentials.rs",
+        "fixtures/compat/providers.v1.json"
+      ]
+    },
+    {
+      "id": "contract.provider_profile.minimax_hashsight",
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/provider/tests/config_credentials.rs",
+        "fixtures/compat/providers.v1.json"
+      ]
+    },
+    {
+      "id": "contract.provider_profile.minimax_official",
+      "status": "matched",
+      "evidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/provider/tests/config_credentials.rs",
+        "fixtures/compat/providers.v1.json"
+      ]
+    },
+    {
+      "id": "contract.provider_protocol.chat_completions",
+      "status": "matched",
+      "evidence": [
+        "crates/provider/tests/provider_fixtures.rs",
+        "fixtures/compat/provider-streams/chat-completions.valid.jsonl",
+        "fixtures/compat/provider-streams/invalid-cases.v1.json"
+      ]
+    },
+    {
+      "id": "contract.provider_protocol.responses",
+      "status": "matched",
+      "evidence": [
+        "crates/provider/tests/provider_fixtures.rs",
+        "fixtures/compat/provider-streams/invalid-cases.v1.json",
+        "fixtures/compat/provider-streams/responses.valid.jsonl"
+      ]
+    },
+    {
+      "id": "contract.release_gate",
+      "status": "matched",
+      "evidence": [
+        ".github/workflows/ci.yml",
+        "fixtures/compat/release/hosted-gates.v1.json",
+        "scripts/release/package-rust.mjs",
+        "scripts/release/verify-rust-release.mjs"
+      ]
+    },
+    {
+      "id": "contract.requirement.TOOL-01",
+      "status": "matched",
+      "evidence": [
+        "crates/cli/tests/tool_loop.rs",
+        "crates/provider/tests/provider_fixtures.rs",
+        "fixtures/compat/tools/e2e.v1.json"
+      ]
+    },
+    {
+      "id": "contract.requirement.TOOL-02",
+      "status": "matched",
+      "evidence": [
+        "crates/cli/tests/tool_loop.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/tools/e2e.v1.json"
+      ]
+    },
+    {
+      "id": "contract.requirement.TOOL-03",
+      "status": "matched",
+      "evidence": [
+        "crates/cli/tests/tool_loop.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ]
+    },
+    {
+      "id": "contract.requirement.TOOL-04",
+      "status": "matched",
+      "evidence": [
+        "crates/tools/tests/process_tools.rs",
+        "crates/tools/tests/workspace_tools.rs",
+        "fixtures/compat/tools/v1-schemas.json"
+      ]
+    },
+    {
+      "id": "contract.requirement.TOOL-05",
+      "status": "matched",
+      "evidence": [
+        "crates/cli/tests/tool_loop.rs",
+        "crates/tools/tests/process_tools.rs",
+        "crates/tools/tests/workspace_tools.rs",
+        "fixtures/compat/tools/denial-matrix.v1.json"
+      ]
+    },
+    {
+      "id": "contract.retrieval",
+      "status": "matched",
+      "evidence": [
+        "crates/retrieval/tests/benchmark.rs",
+        "crates/retrieval/tests/project_discovery.rs",
+        "fixtures/compat/retrieval/explanations.v1.json"
+      ]
+    },
+    {
+      "id": "contract.vault",
+      "status": "matched",
+      "evidence": [
+        "crates/vault/tests/maintenance.rs",
+        "crates/vault/tests/retention.rs",
+        "fixtures/compat/vault/maintenance.v1.json"
+      ]
+    }
+  ]
+}

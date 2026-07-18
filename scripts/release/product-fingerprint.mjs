@@ -15,7 +15,14 @@ export function computeProductFingerprint(root = defaultRoot) {
       throw new Error(`product index contains an unsupported entry: ${record}`);
     }
     const path = match[4].replaceAll("\\", "/");
-    if (!excluded(path)) inputs.set(path, `${match[1]}:${match[2]}`);
+    if (excluded(path)) continue;
+    const absolute = resolve(root, path);
+    const metadata = lstatSync(absolute);
+    if (!metadata.isFile() || metadata.isSymbolicLink() || inputs.has(path)) {
+      throw new Error(`product input is not one unique regular file: ${path}`);
+    }
+    const content = createHash("sha256").update(readFileSync(absolute)).digest("hex");
+    inputs.set(path, `${match[1]}:sha256:${content}`);
   }
   for (const rawPath of git(root, ["ls-files", "-z", "--others", "--exclude-standard"]).toString("utf8").split("\0").filter(Boolean)) {
     const path = rawPath.replaceAll("\\", "/");
@@ -25,11 +32,11 @@ export function computeProductFingerprint(root = defaultRoot) {
     if (!metadata.isFile() || metadata.isSymbolicLink() || inputs.has(path)) {
       throw new Error(`product input is not one unique regular file: ${path}`);
     }
-    inputs.set(path, `untracked:${createHash("sha256").update(readFileSync(absolute)).digest("hex")}`);
+    inputs.set(path, `untracked:sha256:${createHash("sha256").update(readFileSync(absolute)).digest("hex")}`);
   }
   const paths = [...inputs.keys()].sort((left, right) => Buffer.from(left).compare(Buffer.from(right)));
   const fingerprint = createHash("sha256");
-  fingerprint.update("minimax-codex-product-v2\0", "utf8");
+  fingerprint.update("minimax-codex-product-v3\0", "utf8");
   for (const path of paths) {
     fingerprint.update(path, "utf8");
     fingerprint.update(Buffer.from([0]));
@@ -53,7 +60,15 @@ function excluded(path) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   try {
-    process.stdout.write(`${JSON.stringify(computeProductFingerprint())}\n`);
+    const values = process.argv.slice(2);
+    let root = defaultRoot;
+    if (values.length !== 0) {
+      if (values.length !== 2 || values[0] !== "--root") {
+        throw new Error("usage: product-fingerprint.mjs [--root <repository>]");
+      }
+      root = resolve(values[1]);
+    }
+    process.stdout.write(`${JSON.stringify(computeProductFingerprint(root))}\n`);
   } catch (error) {
     process.stderr.write(`product fingerprint failed: ${error instanceof Error ? error.message : String(error)}\n`);
     process.exitCode = 1;

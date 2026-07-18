@@ -1,10 +1,11 @@
 use std::collections::BTreeMap;
 
 use minimax_protocol::{
-    ForgetPlan, GcClass, GcPlan, IndexDomain, IndexStatusRecord, RetrievalDegradedReason,
-    RetrievalMode, RetrievalResponse, RuntimeEvent, RuntimeEventV1, RuntimeTerminalOutcome,
-    SessionRecord, SessionStatus, ToolEffect, ToolInvocation, ToolResult, TraceCode, TraceEntry,
-    VaultLintReport,
+    CapabilityKind, CapabilityReadiness, CapabilityWorkspaceResponse,
+    CapabilityWorkspaceStatusRecord, ForgetPlan, GcClass, GcPlan, IndexDomain, IndexStatusRecord,
+    RetrievalDegradedReason, RetrievalMode, RetrievalResponse, RuntimeEvent, RuntimeEventV1,
+    RuntimeTerminalOutcome, SessionRecord, SessionStatus, ToolEffect, ToolInvocation, ToolResult,
+    TraceCode, TraceEntry, VaultLintReport,
 };
 
 const MAX_RENDER_CHARS: usize = 16_000;
@@ -98,6 +99,72 @@ impl EventRenderer {
                 facts.push(format!("fused_score={score:.6}"));
             }
             lines.push(format!("result | {}", facts.join(" | ")));
+        }
+        sanitize_bounded(&lines.join("\n"))
+    }
+
+    #[must_use]
+    pub fn capability_workspace_status(status: &CapabilityWorkspaceStatusRecord) -> String {
+        let mut lines = vec![format!(
+            "capability workspace | fingerprint={}",
+            status.workspace_fingerprint
+        )];
+        lines.extend(status.catalogs.iter().map(|catalog| {
+            format!(
+                "catalog | kind={} | documents={} | mode={} | degraded={} | source={} | fingerprint={}",
+                domain_name(catalog.domain),
+                catalog.documents,
+                mode_name(catalog.mode),
+                catalog
+                    .degraded_reason
+                    .map_or("none", degraded_reason_name),
+                catalog.source,
+                catalog.fingerprint.as_deref().unwrap_or("none")
+            )
+        }));
+        sanitize_bounded(&lines.join("\n"))
+    }
+
+    #[must_use]
+    pub fn capability_workspace(response: &CapabilityWorkspaceResponse) -> String {
+        let mut lines = vec![format!(
+            "capability workspace search | query={} | kind={} | mode={} | degraded={} | keywords={}",
+            response.query,
+            response.selected_kind.map_or("all", capability_kind_name),
+            mode_name(response.mode),
+            response
+                .degraded_reason
+                .map_or("none", degraded_reason_name),
+            if response.keywords.is_empty() {
+                "none".to_owned()
+            } else {
+                response.keywords.join(",")
+            }
+        )];
+        for hit in &response.results {
+            lines.push(format!(
+                "recommendation | kind={} | title={} | status={} | why={} | next={} | source={} | repository={} | license={} | platforms={} | permissions={} | authorization={} | matched_terms={} | lexical_rank={}{}",
+                capability_kind_name(hit.kind),
+                hit.title,
+                readiness_name(hit.readiness),
+                hit.readiness_reason,
+                hit.next_action,
+                hit.source_url,
+                hit.repository_url.as_deref().unwrap_or("unknown"),
+                hit.license.as_deref().unwrap_or("unknown"),
+                optional_facts(hit.platforms.as_deref()),
+                optional_facts(hit.permissions.as_deref()),
+                optional_facts(hit.authorizations.as_deref()),
+                if hit.explanation.matched_terms.is_empty() {
+                    "none".to_owned()
+                } else {
+                    hit.explanation.matched_terms.join(",")
+                },
+                hit.explanation.lexical_rank,
+                hit.explanation
+                    .semantic_rank
+                    .map_or_else(String::new, |rank| format!(" | semantic_rank={rank}"))
+            ));
         }
         sanitize_bounded(&lines.join("\n"))
     }
@@ -334,8 +401,30 @@ const fn domain_name(domain: IndexDomain) -> &'static str {
     match domain {
         IndexDomain::Capability => "capability",
         IndexDomain::Project => "project",
+        IndexDomain::Skill => "skill",
+        IndexDomain::Mcp => "mcp",
         IndexDomain::Wiki => "wiki",
     }
+}
+
+const fn capability_kind_name(kind: CapabilityKind) -> &'static str {
+    match kind {
+        CapabilityKind::Project => "project",
+        CapabilityKind::Skill => "skill",
+        CapabilityKind::Mcp => "mcp",
+    }
+}
+
+const fn readiness_name(readiness: CapabilityReadiness) -> &'static str {
+    match readiness {
+        CapabilityReadiness::Ready => "ready",
+        CapabilityReadiness::NeedsInstall => "needs_install",
+        CapabilityReadiness::NeedsAccess => "needs_authorization",
+    }
+}
+
+fn optional_facts(values: Option<&[String]>) -> String {
+    values.map_or_else(|| "unknown".to_owned(), |values| values.join(","))
 }
 
 const fn mode_name(mode: RetrievalMode) -> &'static str {

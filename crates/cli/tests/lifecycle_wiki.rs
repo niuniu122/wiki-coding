@@ -168,6 +168,12 @@ async fn terminal_runtime_session_reaches_pinned_wiki_and_current_retrieval() {
         reopened.active_session_id().expect("new active session"),
         finalized_session
     );
+    assert_eq!(wiki_calls.load(Ordering::SeqCst), 1);
+    assert_matrix_responsibility(
+        "test/cli-lifecycle.test.ts",
+        "ts-lifecycle-finalize-before-restart",
+        "terminal_runtime_session_reaches_pinned_wiki_and_current_retrieval",
+    );
 }
 
 #[tokio::test]
@@ -275,4 +281,37 @@ const fn usage() -> Usage {
         output_tokens: Some(5),
         total_tokens: Some(13),
     }
+}
+
+fn assert_matrix_responsibility(source_path: &str, id: &str, test_name: &str) {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("repository root");
+    let matrix: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            root.join("fixtures/compat/verification/typescript-responsibilities.v1.json"),
+        )
+        .expect("coverage matrix"),
+    )
+    .expect("coverage matrix JSON");
+    let source = matrix["sources"]
+        .as_array()
+        .expect("coverage sources")
+        .iter()
+        .find(|source| source["sourcePath"] == source_path)
+        .expect("historical source");
+    assert!(
+        source["responsibilities"]
+            .as_array()
+            .expect("responsibilities")
+            .iter()
+            .any(|responsibility| responsibility["id"] == id
+                && responsibility["evidence"]
+                    .as_array()
+                    .is_some_and(|evidence| evidence
+                        .iter()
+                        .any(|item| item["path"] == "crates/cli/tests/lifecycle_wiki.rs"
+                            && item["test"] == test_name)))
+    );
 }

@@ -1,0 +1,185 @@
+{
+  "schemaVersion": 1,
+  "evaluationId": "retrieval-conformance-v1",
+  "fixtureFingerprint": "e6e656812c49ffd37be36c14275ce936ccdcbe7380a39f740c082f3535c2f63d",
+  "thresholds": {
+    "minimumCases": 150,
+    "recallAt5": 0.95,
+    "top1": 0.85,
+    "mrr": 0.9,
+    "noMatchPrecision": 0.95,
+    "idValidity": 1.0
+  },
+  "corpus": {
+    "id": "capability-retrieval-expanded-v1",
+    "fingerprint": "cb0426f3fc7c111fe06b7a26b0d607eeadc6d165db3faeb85e09f8d898e15a65",
+    "cases": 175,
+    "positiveCases": 135,
+    "noMatchCases": 40,
+    "chineseCases": 74,
+    "latinCases": 110,
+    "exactCases": 15,
+    "bm25Cases": 160,
+    "metrics": {
+      "cases": 175,
+      "recallAt5": 1.0,
+      "top1": 1.0,
+      "mrr": 1.0,
+      "noMatchPrecision": 1.0,
+      "idValidity": 1.0
+    },
+    "exactMetrics": {
+      "cases": 15,
+      "recallAt5": 1.0,
+      "top1": 1.0,
+      "mrr": 1.0,
+      "noMatchPrecision": 1.0,
+      "idValidity": 1.0
+    },
+    "bm25Metrics": {
+      "cases": 160,
+      "recallAt5": 1.0,
+      "top1": 1.0,
+      "mrr": 1.0,
+      "noMatchPrecision": 1.0,
+      "idValidity": 1.0
+    },
+    "passed": true
+  },
+  "projects": {
+    "cases": 4,
+    "passedCases": 4,
+    "exactCases": 1,
+    "bm25Cases": 3,
+    "hybridCases": 3,
+    "baselineTop1": 1.0,
+    "hybridTop1": 1.0,
+    "passed": true
+  },
+  "workspace": {
+    "cases": 15,
+    "passedCases": 15,
+    "exactCases": 3,
+    "bm25Cases": 12,
+    "hybridCases": 10,
+    "kindIsolation": true,
+    "noMatchPreserved": true,
+    "passed": true
+  },
+  "candidateBoundary": {
+    "query": "fast command line file search",
+    "lexicalCandidateIds": [
+      "sharkdp/fd",
+      "burntsushi/ripgrep",
+      "sharkdp/bat",
+      "astral-sh/uv",
+      "openai/codex"
+    ],
+    "observedCandidateIds": [
+      "sharkdp/fd",
+      "burntsushi/ripgrep",
+      "sharkdp/bat",
+      "astral-sh/uv",
+      "openai/codex"
+    ],
+    "semanticCandidateIds": [
+      "sharkdp/fd",
+      "burntsushi/ripgrep",
+      "sharkdp/bat",
+      "astral-sh/uv",
+      "openai/codex"
+    ],
+    "hybridResultIds": [
+      "sharkdp/fd",
+      "burntsushi/ripgrep",
+      "astral-sh/uv",
+      "sharkdp/bat",
+      "openai/codex"
+    ],
+    "outsiderAttemptedId": "outside/bm25",
+    "outsiderResultIds": [
+      "sharkdp/fd",
+      "burntsushi/ripgrep",
+      "sharkdp/bat",
+      "astral-sh/uv",
+      "openai/codex"
+    ],
+    "outsiderRejected": true,
+    "passed": true
+  },
+  "degradations": [
+    {
+      "scenario": "no_resource",
+      "reason": "embedding_missing",
+      "mode": "bm25",
+      "resultIds": [
+        "aider-ai/aider",
+        "astral-sh/uv",
+        "openai/codex"
+      ],
+      "bm25IdsPreserved": true
+    },
+    {
+      "scenario": "damaged_resource",
+      "reason": "invalid_manifest",
+      "mode": "bm25",
+      "resultIds": [
+        "aider-ai/aider",
+        "astral-sh/uv",
+        "openai/codex"
+      ],
+      "bm25IdsPreserved": true
+    },
+    {
+      "scenario": "runner_failure",
+      "reason": "helper_unavailable",
+      "mode": "bm25",
+      "resultIds": [
+        "aider-ai/aider",
+        "astral-sh/uv",
+        "openai/codex"
+      ],
+      "bm25IdsPreserved": true
+    },
+    {
+      "scenario": "malformed_response",
+      "reason": "malformed_vector",
+      "mode": "bm25",
+      "resultIds": [
+        "aider-ai/aider",
+        "astral-sh/uv",
+        "openai/codex"
+      ],
+      "bm25IdsPreserved": true
+    },
+    {
+      "scenario": "timeout",
+      "reason": "helper_timeout",
+      "mode": "bm25",
+      "resultIds": [
+        "aider-ai/aider",
+        "astral-sh/uv",
+        "openai/codex"
+      ],
+      "bm25IdsPreserved": true
+    },
+    {
+      "scenario": "outsider",
+      "reason": "malformed_vector",
+      "mode": "bm25",
+      "resultIds": [
+        "aider-ai/aider",
+        "astral-sh/uv",
+        "openai/codex"
+      ],
+      "bm25IdsPreserved": true
+    }
+  ],
+  "disabledPath": {
+    "networkRequests": 0,
+    "providerRequests": 0,
+    "modelDownloads": 0,
+    "modelLoads": 0
+  },
+  "passed": true
+}

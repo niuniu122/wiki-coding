@@ -4,12 +4,10 @@
   "description": "A Codex-style interactive CLI shell for MiniMax.",
   "type": "module",
   "bin": {
-    "minimax-codex": "bin/minimax-codex.cjs",
-    "minimax-codex-legacy": "dist/cli.js"
+    "minimax-codex": "bin/minimax-codex.cjs"
   },
   "files": [
     "bin/minimax-codex.cjs",
-    "dist",
     "docs/release",
     "LICENSE-APACHE",
     "LICENSE-MIT",
@@ -18,42 +16,24 @@
     "minimax-codex.exe"
   ],
   "scripts": {
-    "dev": "tsx src/cli.tsx",
-    "build": "tsc -p tsconfig.json",
-    "start": "node bin/minimax-codex.cjs",
-    "start:legacy": "node dist/cli.js",
-    "check": "tsc -p tsconfig.json --noEmit",
     "check:rust": "cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked -- -D warnings",
-    "test": "tsx test/run-tests.ts",
-    "test:launcher": "tsx --test test/launcher.test.ts",
     "test:rust": "cargo test --workspace --locked",
-    "test:rust:candidate": "cargo test --workspace --locked -- --skip hosted_cutover_evidence_matches_current_product",
-    "eval:retrieval": "tsx src/eval/capability-retrieval-report.ts",
-    "eval:provider": "tsx src/eval/provider-conformance.ts",
-    "verify:agent": "npm run eval:retrieval && npm run eval:provider",
+    "test:rust:strict-precondition": "cargo test --workspace --locked -- --skip hosted_cutover_evidence_matches_current_product",
+    "test:rust:candidate": "cargo test --workspace --locked -- --skip hosted_cutover_evidence_matches_current_product --skip hosted_candidate_evidence_matches_current_product",
+    "eval:retrieval": "cargo run -p minimax-compat-harness --locked -- retrieval-eval --format json",
+    "eval:provider": "cargo run -p minimax-compat-harness --locked -- provider-eval --format json",
+    "verify:agent": "npm run verify:rust-contracts && npm run eval:provider && npm run eval:retrieval",
     "verify:rust-contracts": "cargo run -p minimax-compat-harness --locked -- verify",
+    "verify:rust-contracts:strict-precondition": "cargo run -p minimax-compat-harness --locked -- verify-strict-precondition",
     "verify:rust-contracts:candidate": "cargo run -p minimax-compat-harness --locked -- verify-candidate",
     "build:rust:release": "cargo build -p minimax-cli --release --locked",
     "package:rust": "node scripts/release/package-rust.mjs",
+    "test:package": "node --test scripts/release/package-contract.test.mjs",
     "verify:rust-release": "node scripts/release/verify-rust-release.mjs",
     "verify:milestone-flow": "node scripts/release/verify-milestone-flow.mjs",
-    "verify:release": "npm run check && npm test && npm run check:rust && npm run test:rust && npm run verify:rust-contracts && npm run build && npm run eval:retrieval && npm run eval:provider && npm run build:rust:release && npm run package:rust && npm run verify:rust-release && npm run verify:milestone-flow",
-    "smoke:provider": "tsx src/smoke/provider-smoke.ts"
-  },
-  "dependencies": {
-    "ink": "^5.2.1",
-    "react": "^18.3.1"
-  },
-  "devDependencies": {
-    "@types/node": "^24.0.15",
-    "@types/react": "^18.3.23",
-    "tsx": "^4.20.3",
-    "typescript": "^5.8.3"
+    "verify:release": "npm run check:rust && npm run test:rust && npm run verify:agent && npm run test:package"
   },
   "engines": {
     "node": ">=20"
-  },
-  "optionalDependencies": {
-    "@napi-rs/keyring": "^1.3.0"
   }
 }

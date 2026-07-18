@@ -1,0 +1,21 @@
+{
+  "schemaVersion": 1,
+  "kind": "skill",
+  "sourceUrl": "https://github.com/openai/skills",
+  "generatedAt": "2026-07-17T00:00:00Z",
+  "fingerprint": "sha256:33e85adf26a16f4e77eacf648dd4d5f70af1c6fb1e3a4f16bc9f118a8765107d",
+  "cards": [
+    {
+      "id": "skill:openai/openai-docs",
+      "kind": "skill",
+      "name": "OpenAI Docs Skill",
+      "aliases": ["openai docs", "documentation skill"],
+      "description": "A Codex Skill for answering OpenAI product and API questions from official documentation sources.",
+      "intents": ["OpenAI documentation", "API documentation", "Codex help", "官方 文档 API"],
+      "sourceUrl": "https://github.com/openai/skills/tree/main/skills/.curated/openai-docs",
+      "repositoryUrl": "https://github.com/openai/skills",
+      "installKind": "external",
+      "installGuidance": "Review the Skill folder and license file, then confirm installation through a compatible Skill installer."
+    }
+  ]
+}

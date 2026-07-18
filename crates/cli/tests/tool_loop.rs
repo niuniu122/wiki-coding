@@ -591,6 +591,11 @@ async fn full_access_skips_prompt_but_still_preflights_persists_and_executes() {
     )
     .expect("restarted driver");
     assert_eq!(restarted.permission_mode(), PermissionMode::Confirm);
+    assert_matrix_responsibility(
+        "test/permission-service.test.ts",
+        "ts-permission-reset-on-restart",
+        "full_access_skips_prompt_but_still_preflights_persists_and_executes",
+    );
 }
 
 #[tokio::test]
@@ -1108,5 +1113,38 @@ async fn fixture_confirm_mode_binds_one_answer_to_each_ordered_call() {
             .iter()
             .map(|call| call.call_id.as_str())
             .collect::<Vec<_>>()
+    );
+}
+
+fn assert_matrix_responsibility(source_path: &str, id: &str, test_name: &str) {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .ancestors()
+        .nth(2)
+        .expect("repository root");
+    let matrix: serde_json::Value = serde_json::from_str(
+        &std::fs::read_to_string(
+            root.join("fixtures/compat/verification/typescript-responsibilities.v1.json"),
+        )
+        .expect("coverage matrix"),
+    )
+    .expect("coverage matrix JSON");
+    let source = matrix["sources"]
+        .as_array()
+        .expect("coverage sources")
+        .iter()
+        .find(|source| source["sourcePath"] == source_path)
+        .expect("historical source");
+    assert!(
+        source["responsibilities"]
+            .as_array()
+            .expect("responsibilities")
+            .iter()
+            .any(|responsibility| responsibility["id"] == id
+                && responsibility["evidence"]
+                    .as_array()
+                    .is_some_and(|evidence| evidence
+                        .iter()
+                        .any(|item| item["path"] == "crates/cli/tests/tool_loop.rs"
+                            && item["test"] == test_name)))
     );
 }

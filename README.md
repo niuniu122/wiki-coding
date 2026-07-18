@@ -1,21 +1,52 @@
 # MiniMax Codex
 
-A local-first, Codex-style command-line agent for MiniMax and compatible
-Providers. The supported product runtime is Rust. It combines a typed agent
-loop, bounded workspace tools, BM25-first open-source project discovery, and an
-Obsidian-compatible per-project Vault. SQLite is not used.
+MiniMax Codex is a local-first, Codex-style command-line agent for MiniMax and
+compatible Providers. Rust is the sole product runtime and owns all product,
+test, compatibility, Provider-evaluation, and retrieval-evaluation behavior.
+The only JavaScript in the distribution is the thin CJS launcher and MJS
+release orchestration. TypeScript-era files under `fixtures/compat/` are static
+migration and compatibility data; they are never built or executed.
+
+The product combines a typed agent loop, bounded workspace tools, BM25-first
+project/Skill/MCP discovery, and an Obsidian-compatible per-project Vault.
+SQLite is not used.
+
+## Supported releases
+
+The supported release targets are exactly:
+
+- Windows x64 MSVC: `windows-x86_64-msvc` / `x86_64-pc-windows-msvc`;
+- Linux x64 GNU: `linux-x86_64-gnu` / `x86_64-unknown-linux-gnu`.
+
+`windows-x86_64-gnullvm-dev` is local development evidence only. It is not a
+supported Windows release and cannot satisfy hosted MSVC verification. macOS
+and other architectures are not supported by this release.
+
+Each platform candidate contains one Rust binary, the shell-free
+`bin/minimax-codex.cjs` launcher, documentation, licenses, and a strict release
+manifest. No package contains a TypeScript runtime, fallback command, embedding
+model, or install-time download.
 
 ## Install and run
 
-Supported release platforms are Windows x64 MSVC and Linux x64 GNU. Verify the
-published SHA-256 sidecar before using either distribution:
+Verify the archive or npm tarball against its matching `.sha256` sidecar before
+installation. Common local installation paths are:
 
-- the versioned base archive contains the launcher, one native Rust binary,
-  release manifest, documentation, and licenses;
-- the platform npm package additionally contains the explicit TypeScript legacy
-  command in the same installable artifact.
+```bash
+# Install the already-downloaded platform npm tarball globally.
+npm install --global --ignore-scripts ./minimax-codex-v0.1.0-<target>-npm.tgz
+minimax-codex --version
 
-After extraction or platform npm installation:
+# Run the already-downloaded platform npm tarball once without a global install.
+npx --offline --yes --package ./minimax-codex-v0.1.0-<target>-npm.tgz minimax-codex doctor
+```
+
+For a native installation, extract the matching base `.tar.gz` into a
+versioned directory, verify `RELEASE-MANIFEST.json`, then run
+`minimax-codex.exe` on Windows or `./minimax-codex` on Linux. Keep the previous
+versioned directory until the new version has passed `doctor` and normal work.
+
+After any installation:
 
 ```bash
 minimax-codex doctor
@@ -23,101 +54,113 @@ minimax-codex run --prompt "inspect this project"
 minimax-codex chat
 ```
 
-Linux confirm-mode process tools require the small system `bubblewrap` package.
-Install it with your distribution package manager before running `doctor`. If a
-real sandbox is missing or unusable, process tools fail before project code
-starts; they never silently fall back to ordinary host execution. Windows keeps
-the CLI, Provider, file tools, retrieval, Vault, and Wiki features, but
-confirm-mode Cargo/Git/npm diagnostics fail closed until a native Windows
-sandbox backend is shipped.
-
-`minimax-codex` always launches the fixed sibling Rust binary without a shell,
-download, `PATH` search, or silent fallback. `minimax-codex-legacy` is the
-operator-selected TypeScript fallback during the documented support window.
+The npm command launches only the fixed sibling Rust binary. It never searches
+`PATH`, reads a binary override, invokes a shell, downloads a runtime, or falls
+back to another implementation. Launcher failures use stable categories:
+`E_UNSUPPORTED_HOST`, `E_BINARY_MISSING`, `E_BINARY_UNSAFE`,
+`E_BINARY_NOT_EXECUTABLE`, `E_START_FAILED`, and `E_SIGNAL_TERMINATION`.
+Reinstall the correct package for a supported target; there is no legacy route.
 
 See [installation, upgrade, and rollback](docs/release/install-upgrade-rollback.md)
-and the [cutover contract](docs/release/cutover.md) before migration or rollout.
+and the [Rust-only cutover contract](docs/release/cutover.md) before rollout or
+migration.
 
-## What happens during a normal run
+## Permission and subprocess boundaries
 
-The Rust runtime validates configuration, acquires one project writer lease,
-and records the session as replayable append-only evidence. Workspace reads are
-bounded by default. Writes and commands follow exactly two permission modes:
+Workspace reads are bounded by default. Writes and commands use exactly two
+permission modes:
 
-- `confirm`: ask before an effect that requires approval;
+- `confirm`: ask before each effect that requires approval;
 - `full-access`: allow effects for the current process only.
 
-Approval and isolation are separate. In `confirm`, process tools also require an
-OS-enforced sandbox: Linux uses Bubblewrap with child networking denied and only
-the project workspace writable. In `full-access`, the prompt and subprocess
-sandbox are explicitly disabled for trusted projects, but schema, path, secret,
-destructive-operation, size, timeout, output, and cancellation gates remain.
-Provider HTTPS is host-owned and is not placed inside the child sandbox.
+Approval and subprocess isolation are separate. In `confirm`, Linux process
+tools require Bubblewrap with child networking denied and only the project
+workspace writable. If the backend is missing or unusable, the process fails
+before project code starts. Windows supports the CLI, Provider, file tools,
+retrieval, Vault, and Wiki, but confirm-mode Cargo/Git/npm diagnostics fail
+closed because this release does not ship a native Windows sandbox backend.
 
-Restart always returns to `confirm`. See the
-[subprocess sandbox and platform boundary](docs/release/subprocess-sandbox.md).
+In `full-access`, approval prompts and subprocess isolation are disabled for a
+project you already trust. Schema, path, secret, destructive-operation, size,
+timeout, output, and cancellation gates remain active. Restart always returns
+to `confirm`; there is no persistent “always allow” setting. Provider HTTPS is
+host-owned and is not placed inside the child sandbox.
 
-There is no persistent global “always allow” switch. Unknown or interrupted
-side effects are not replayed automatically.
+Read the [subprocess sandbox and platform boundary](docs/release/subprocess-sandbox.md)
+before testing an unfamiliar repository.
+
+## Sessions, Vault, and Wiki
+
+The Rust runtime validates configuration, acquires one project writer lease,
+and records each session as replayable append-only evidence. Unknown or
+interrupted side effects are not replayed automatically.
 
 When a durable session is finalized, a separate strict call to the same pinned
 main model may propose Wiki updates. Only the bounded visible transcript,
 durability markers, current pages, and validation context are eligible; tool
 output and private reasoning are excluded. The local validator commits accepted
-Markdown transactionally into the project Vault. Lookup-only sessions are a
-no-op and spend no Wiki-generation call.
+Markdown transactionally. Lookup-only sessions are a no-op and spend no Wiki
+generation call.
 
-The first run creates a stable project-to-Vault binding at
-`.minimax/vault-binding.v1.json`. Unless explicitly chosen before that first
-binding, the Vault is a sibling directory recommended by the runtime. It stays
-plain Markdown and JSON so Obsidian and ordinary file tools can inspect it.
+The first run creates `.minimax/vault-binding.v1.json`. Unless explicitly
+selected before that binding, the Vault is a sibling directory recommended by
+the runtime. It remains plain Markdown and JSON for Obsidian and ordinary file
+tools.
 
-## Open-source project discovery
+## Project, Skill, and MCP discovery
 
-Non-programmers do not need to prepare a catalog flag. Ordinary agent prompts
-that explicitly ask for an open-source project, library, or tool automatically
+External metadata lives under [`capabilities/`](capabilities/README.md), not in
+the fixed executable adapters under `crates/tools`. Ordinary prompts that ask
+for an open-source project, Skill, MCP server, library, or tool automatically
 receive bounded read-only discovery context:
 
-1. BM25 extracts and ranks lexical candidates first.
+1. Typed project, Skill, and MCP indexes run exact/BM25 retrieval first.
 2. An optional, separately installed and hash-verified embedding resource may
-   rerank only those candidates.
-3. Missing, incompatible, or unhealthy embeddings leave the BM25 order intact.
+   rerank only the bounded lexical candidate union.
+3. Missing, incompatible, or unhealthy embeddings preserve BM25 order.
+4. A local inventory reports `ready`, `needs_install`, or
+   `needs_authorization` and prints a safe next action.
 
-Discovery never installs or executes a candidate. The embedded catalog is the
-zero-configuration default; `--catalog` remains a strict expert override.
-
-Read-only inspection is also available directly:
+Discovery never downloads, installs, authorizes, or executes a candidate. The
+base distribution never bundles or downloads model weights. Direct inspection
+is available through:
 
 ```bash
 minimax-codex index capabilities status
-minimax-codex index projects search "本地知识库命令行工具"
+minimax-codex index workspace status
+minimax-codex index workspace search "find a GitHub issue MCP" --kind mcp
+minimax-codex index workspace search "find an API documentation skill" --kind skill
+minimax-codex index projects search "local knowledge-base CLI"
 minimax-codex index wiki search "release decision" --vault <path> --project-id <id>
 ```
 
-The base distribution never bundles or downloads model weights. See the
+See the [capability workspace guide](docs/capability-workspace.md) and the
 [optional embedding package contract](docs/release/embedding-package.md).
 
-## Vault maintenance and migration
+## TypeScript-era data migration
 
-Vault maintenance is report-first and narrow: status/lint are read-only;
-repair and rebuild are allowlisted; garbage collection, purge, and privacy
-forget require action-specific plan-bound confirmations. Referenced raw evidence
-is preserved, trash can be undone before purge, and there is no `--force` path.
-
-TypeScript data migration follows the same rules:
+Migration is explicit, source-preserving, receipt-bound, and narrowly
+reversible:
 
 ```bash
 minimax-codex migrate inventory
 minimax-codex migrate dry-run --json
 minimax-codex migrate apply --plan <plan> --confirmation <printed-value>
 minimax-codex migrate verify --receipt <receipt>
+minimax-codex migrate rollback --receipt <receipt> --confirmation ROLLBACK:<receipt-hash>
 ```
 
 Inventory and dry-run write nothing. Apply stages and verifies allowlisted
-artifacts before commit, preserves every source byte, and writes an immutable
-receipt. Rollback removes only unchanged targets created by that receipt.
+artifacts, preserves every `.mini-codex` source byte, and writes an immutable
+receipt. Rollback removes only unchanged targets marked `created` by that
+receipt. Reused or modified files, the receipt, and source data remain.
 Credentials, private reasoning, caches, locks, databases, and unknown records
-are excluded.
+are excluded. There is no `--force` path.
+
+Static TypeScript-era migration fixtures remain supported until at least two
+distinct, ordered public releases after cutover release `3.0.0` have been
+recorded by the machine-checkable support-window fixture. This is a data
+compatibility window, not an executable legacy runtime.
 
 ## Architecture
 
@@ -125,59 +168,58 @@ The Rust workspace keeps authority behind typed boundaries:
 
 ```text
 CLI/TUI
-  -> core agent and permission policy
+  -> core agent, session, and permission policy
       -> Provider adapter
       -> bounded tools
       -> runtime journal
       -> Vault/Wiki workflow
       -> retrieval kernel (exact/BM25, optional candidate rerank)
+          -> project/Skill/MCP source catalogs
+          -> read-only readiness inventory
 ```
 
 Provider adapters normalize Responses and Chat Completions streams into one
-protocol. Success requires the protocol terminal event; malformed frames,
-premature EOF, duplicate completion, and content after completion fail closed.
-Raw reasoning and `<think>` blocks are removed at the Provider boundary.
+protocol. Malformed frames, premature EOF, duplicate completion, and content
+after completion fail closed. Raw reasoning and `<think>` blocks are removed at
+the Provider boundary.
 
 The Vault crate owns Markdown parsing and transactions but has no Provider,
-HTTP, credential, SQLite, or model-download path. Wiki generation is a narrow
-port supplied by the CLI with the exact session model binding.
+HTTP, credential, SQLite, or model-download path. The compatibility harness
+uses immutable data fixtures and production Rust APIs; it does not build or run
+a second product implementation.
 
-During the legacy support window, the TypeScript reference keeps its own typed
-boundary: `ApplicationKernel` owns command concurrency and
-`StrictProviderGateway` owns protocol and transport validation. Its Ink view
-dispatches typed commands and renders runtime events; it does not own Provider
-or tool authority. These names document the explicit legacy implementation,
-not the Rust default entry.
+## Source development and release verification
 
-## Source development
-
-Rust 1.97.0 and Node.js 20 are pinned for the complete compatibility and release
-gate:
+Rust 1.97.0 and Node.js 20 or newer are required. Node is used only for the npm
+launcher, packaging, and release orchestration:
 
 ```bash
 npm ci
-npm run check
-npm test
 npm run check:rust
-npm run test:rust
-npm run verify:rust-contracts
-npm run build
+npm run test:rust:candidate   # while the checked-in hosted record is stale
+npm run eval:provider
+npm run eval:retrieval
+npm run verify:rust-contracts:candidate
+npm run test:package
+npm run build:rust:release
 ```
 
-`npm run dev` runs the legacy TypeScript reference for development; it is not
-the default product entry. `npm run smoke:provider` is the only live Provider
-smoke command and must be invoked explicitly with separate authorization. CI
-has no Provider credentials and uses fixtures only.
+After candidate evidence is committed with `strictStatus: pending`, ordinary
+push CI uses `npm run test:rust:strict-precondition` and
+`npm run verify:rust-contracts:strict-precondition` to validate that exact
+candidate record without pretending the later strict run already exists. Final
+`npm run test:rust` and `npm run verify:rust-contracts` require the combined
+candidate-plus-strict record to match the current product fingerprint.
+CI has read-only repository permissions, no Provider credentials, and no live
+Provider command. Candidate and strict jobs both run Rust checks, evaluations,
+compatibility, migration, corruption tests, packaging, installed smoke,
+checksums, licenses, security, and performance gates, then upload their exact
+per-target evidence artifacts.
 
-`npm run check` and `npm run build` compile the smoke source but do not execute
-it. Offline tests statically inspect the smoke safety boundary. Automated
-scripts never invoke `npm run smoke:provider`; only the operator can choose the
-live command.
-
-Release verification deterministically packages both distributions, extracts
-and starts the actual packaged Rust default, verifies the legacy mapping, checks
-licenses/security/size/startup/RSS/Wiki search budgets, and records a product
-fingerprint. Any tracked product input change invalidates older hosted evidence.
+Product fingerprint v3 hashes current tracked and untracked product bytes,
+including source, configuration, fixtures, launcher, release scripts, and docs.
+Only `.planning/**` and the hosted evidence record itself are excluded. Any
+product edit invalidates older artifacts and hosted evidence.
 
 ## License
 

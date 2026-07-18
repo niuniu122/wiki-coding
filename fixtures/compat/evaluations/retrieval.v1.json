@@ -1,0 +1,63 @@
+{
+  "schemaVersion": 1,
+  "evaluationId": "retrieval-conformance-v1",
+  "expandedCorpus": {
+    "path": "fixtures/compat/retrieval/capability-cases-expanded.v1.json",
+    "sha256": "3b19aa41dbc7174d50380fef32c4ccfbd94040baf6895391e892b69b5e73fcaa"
+  },
+  "projectCatalog": {
+    "path": "fixtures/compat/retrieval/projects.v1.json",
+    "sha256": "d06493ada734da928458c053b0cb804d51f3feabd1f8a42ac5c0e8182b7bd99c"
+  },
+  "workspaceCases": {
+    "path": "fixtures/compat/retrieval/capability-workspace.v1.json",
+    "sha256": "06a4e123df4699ff0008d9d5a08a33b346c216c3c136f66b46b0b4af32b8e295"
+  },
+  "workspaceCatalogs": [
+    {
+      "path": "capabilities/catalogs/projects.v1.json",
+      "sha256": "9312fcfd4791f636f4a54165c382d54c1ee59072a3fec386b57ecc316eb8c41c"
+    },
+    {
+      "path": "capabilities/catalogs/skills.v1.json",
+      "sha256": "29430bcaa233cd139bbcb0c7d0fda740af342e65fc7789a7230dabbcc65b6485"
+    },
+    {
+      "path": "capabilities/catalogs/mcp.v1.json",
+      "sha256": "ec900286811a4e571c7676279036487e0ad0f6b023e334e3d7b53dad2c4ba89f"
+    }
+  ],
+  "projectCases": [
+    {
+      "id": "project-exact-alias",
+      "query": "rg",
+      "expectedTop": "burntsushi/ripgrep"
+    },
+    {
+      "id": "project-ripgrep-bm25",
+      "query": "fast recursive source code text search",
+      "expectedTop": "burntsushi/ripgrep"
+    },
+    {
+      "id": "project-fd-bm25",
+      "query": "simple fast tool finding files and directories",
+      "expectedTop": "sharkdp/fd"
+    },
+    {
+      "id": "project-aider-bm25",
+      "query": "terminal coding assistant editing software projects",
+      "expectedTop": "aider-ai/aider"
+    }
+  ],
+  "candidateQuery": "fast command line file search",
+  "degradationQuery": "coding assistant terminal project",
+  "candidateLimit": 5,
+  "requiredDegradations": [
+    "no_resource",
+    "damaged_resource",
+    "runner_failure",
+    "malformed_response",
+    "timeout",
+    "outsider"
+  ]
+}

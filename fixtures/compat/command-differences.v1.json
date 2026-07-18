@@ -2,6 +2,7 @@
   "schemaVersion": 1,
   "differences": [
     {
+      "id": "difference.command.interrupt",
       "command": "/interrupt",
       "lockedOutcome": "turn.interrupt",
       "rustBehavior": "Ctrl-C interrupts an active turn; the slash command reports that binding when the input loop is idle.",
@@ -9,6 +10,7 @@
       "safety": "The cancellation token still persists one interrupted terminal receipt."
     },
     {
+      "id": "difference.command.api",
       "command": "/api",
       "lockedOutcome": "config.api_key.request",
       "rustBehavior": "Reports the environment or OS-keyring credential boundary without accepting plaintext into the session.",
@@ -16,6 +18,7 @@
       "safety": "No credential value is printed, persisted, or sent to the model."
     },
     {
+      "id": "difference.command.provider",
       "command": "/provider",
       "lockedOutcome": "provider.list_or_switch",
       "rustBehavior": "Lists the pinned provider; switching requires a validated new process/session binding.",
@@ -23,6 +26,7 @@
       "safety": "Existing sessions retain their exact Provider, model, and protocol binding."
     },
     {
+      "id": "difference.command.models",
       "command": "/models",
       "lockedOutcome": "model.list",
       "rustBehavior": "Lists the configured local model binding only.",
@@ -30,6 +34,7 @@
       "safety": "No Provider request or credential read is needed to inspect the selected model."
     },
     {
+      "id": "difference.command.retry",
       "command": "/retry",
       "lockedOutcome": "runtime.init.retry",
       "rustBehavior": "Retries initialization when unavailable; after healthy startup it retries the latest terminal turn.",

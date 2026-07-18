@@ -1,0 +1,2963 @@
+{
+  "schemaVersion": 2,
+  "sourceAuthority": "fixtures/compat/source-authority.v1.json",
+  "evidenceContracts": [
+    {
+      "id": "retrieval-evaluation-authority",
+      "evidenceClass": "evaluation",
+      "category": "retrieval",
+      "claim": "The Rust retrieval evaluator owns the immutable corpus, deterministic metrics, candidate isolation, degradation report, and golden output.",
+      "evidence": [
+        {
+          "path": "crates/compat-harness/tests/retrieval_eval.rs",
+          "test": "retrieval_evaluation_matches_committed_golden_and_is_repeatable"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-src-eval-capability-retrieval-report-ts",
+        "ts-test-capability-retrieval-eval-test-ts",
+        "ts-test-capability-retrieval-report-test-ts"
+      ]
+    },
+    {
+      "id": "provider-evaluation-authority",
+      "evidenceClass": "evaluation",
+      "category": "provider",
+      "claim": "The Rust Provider evaluator deterministically replays both supported protocols and matches the committed machine-readable golden report.",
+      "evidence": [
+        {
+          "path": "crates/compat-harness/tests/provider_eval.rs",
+          "test": "provider_evaluation_matches_committed_golden_and_is_repeatable"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-src-eval-provider-conformance-ts",
+        "ts-test-provider-conformance-test-ts",
+        "ts-test-support-provider-conformance-suite-ts"
+      ]
+    },
+    {
+      "id": "provider-live-smoke-retirement",
+      "evidenceClass": "reviewed_retirement",
+      "category": "diagnostic",
+      "claim": "The credential-bearing live Provider smoke is excluded from the shipped deterministic verification contract.",
+      "evidence": [
+        {
+          "path": "crates/compat-harness/tests/source_authority.rs",
+          "test": "repository_source_inventory"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-src-smoke-provider-smoke-ts"
+      ],
+      "retirementReview": {
+        "sources": [
+          "src/smoke/provider-smoke.ts"
+        ],
+        "status": "unshipped",
+        "outcome": "A live credential-bearing Provider request is not a supported release-gating outcome.",
+        "reason": "Offline fingerprinted Provider fixtures are authoritative and the milestone forbids credential reads and live Provider calls."
+      }
+    },
+    {
+      "id": "agent-budget-state-machine",
+      "evidenceClass": "state_machine",
+      "category": "runtime",
+      "claim": "Rust enforces provider-round, tool-call, elapsed-time, and tool-result byte ceilings before an extra effect is emitted.",
+      "evidence": [
+        {
+          "path": "crates/core/tests/tool_machine.rs",
+          "test": "registry_and_all_four_budgets_fail_before_an_extra_effect"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-agent-budget-test-ts"
+      ]
+    },
+    {
+      "id": "agent-item-durable-storage",
+      "evidenceClass": "state_machine",
+      "category": "runtime",
+      "claim": "Rust persists ordered tool request, decision, start, and terminal items in the session truth source before finalization.",
+      "evidence": [
+        {
+          "path": "crates/core/tests/session_machine.rs",
+          "test": "tool_records_project_request_decision_start_and_terminal_in_order"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-agent-item-storage-test-ts"
+      ]
+    },
+    {
+      "id": "runtime-restart-durability",
+      "evidenceClass": "state_machine",
+      "category": "runtime",
+      "claim": "Rust reconstructs, lists, resumes, continues, retries, compacts, and replays terminal sessions from one durable journal across process restarts.",
+      "evidence": [
+        {
+          "path": "crates/cli/tests/restart.rs",
+          "test": "conversation_reconstructs_then_lists_resumes_continues_retries_and_compacts"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-agent-local-runtime-integration-test-ts",
+        "ts-test-agent-runtime-compaction-test-ts",
+        "ts-test-agent-runtime-interrupt-test-ts",
+        "ts-test-agent-runtime-recovery-test-ts",
+        "ts-test-context-manager-test-ts",
+        "ts-test-runtime-connection-contract-test-ts",
+        "ts-test-session-service-test-ts",
+        "ts-test-trace-recorder-test-ts",
+        "ts-test-turn-engine-test-ts"
+      ]
+    },
+    {
+      "id": "agent-chat-route-separation",
+      "evidenceClass": "behavior",
+      "category": "runtime",
+      "claim": "The Rust CLI exposes explicit chat and Agent routes as separate typed commands without a feature-flag-driven implicit route switch.",
+      "evidence": [
+        {
+          "path": "crates/cli/tests/headless.rs",
+          "test": "clap_routes_all_phase_two_and_later_maintenance_commands"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-agent-route-cutover-test-ts"
+      ]
+    },
+    {
+      "id": "agent-tool-loop-order-and-budget",
+      "evidenceClass": "behavior",
+      "category": "runtime",
+      "claim": "Rust pauses for complete ordered tool calls, continues only after matching durable results, and terminates on provider-round exhaustion.",
+      "evidence": [
+        {
+          "path": "crates/core/tests/runtime_machine.rs",
+          "test": "agent_continues_only_after_every_matching_result_is_in_native_history"
+        },
+        {
+          "path": "crates/cli/tests/tool_loop.rs",
+          "test": "provider_round_budget_exhaustion_is_one_durable_terminal_failure"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-agent-run-engine-test-ts"
+      ]
+    },
+    {
+      "id": "agent-recovery-fail-closed",
+      "evidenceClass": "state_machine",
+      "category": "runtime",
+      "claim": "Rust recovery marks a started tool effect indeterminate and never re-executes it, while pre-start cancellation remains non-executing.",
+      "evidence": [
+        {
+          "path": "crates/core/tests/tool_machine.rs",
+          "test": "post_start_cancel_or_recovery_is_indeterminate_and_never_reexecutes"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-agent-run-recovery-test-ts"
+      ]
+    },
+    {
+      "id": "provider-fixture-normalization",
+      "evidenceClass": "fixture_contract",
+      "category": "provider",
+      "claim": "Both Provider protocols normalize every valid fixture to the same safe events without exposing private reasoning or provider detail.",
+      "evidence": [
+        {
+          "path": "crates/provider/tests/provider_fixtures.rs",
+          "test": "both_provider_protocols_match_every_valid_compatibility_fixture"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-agent-runtime-provider-trace-test-ts",
+        "ts-test-provider-action-normalization-test-ts",
+        "ts-test-provider-adapter-contract-test-ts",
+        "ts-test-provider-adapter-registry-test-ts",
+        "ts-test-provider-model-adapter-test-ts",
+        "ts-test-reasoning-filter-test-ts"
+      ]
+    },
+    {
+      "id": "safe-command-rendering",
+      "evidenceClass": "parser_rendering",
+      "category": "rendering",
+      "claim": "The Rust renderer consumes shared runtime events, emits stable public terminal text, and strips terminal control sequences.",
+      "evidence": [
+        {
+          "path": "crates/tui/tests/command_render.rs",
+          "test": "renderer_uses_shared_events_and_removes_terminal_control_sequences"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-agent-ui-state-test-ts",
+        "ts-test-ui-state-test-ts",
+        "ts-test-ui-status-test-ts"
+      ]
+    },
+    {
+      "id": "application-kernel-terminal-safety",
+      "evidenceClass": "state_machine",
+      "category": "runtime",
+      "claim": "The Rust runtime rejects concurrent starts, persists exactly one truthful terminal for cancellation or failure, and rejects post-terminal events.",
+      "evidence": [
+        {
+          "path": "crates/core/tests/runtime_machine.rs",
+          "test": "cancellation_and_failures_have_one_truthful_terminal"
+        },
+        {
+          "path": "crates/core/tests/runtime_machine.rs",
+          "test": "terminal_order_errors_and_concurrent_begin_are_exact"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-application-kernel-test-ts"
+      ]
+    },
+    {
+      "id": "capability-exact-bm25-contract",
+      "evidenceClass": "behavior",
+      "category": "retrieval",
+      "claim": "Exact aliases and commands win before deterministic BM25, normalization preserves mixed-language intent, and no-match queries stay empty.",
+      "evidence": [
+        {
+          "path": "crates/retrieval/tests/lexical.rs",
+          "test": "exact_wins_and_bm25_does_not_manufacture_matches"
+        },
+        {
+          "path": "crates/retrieval/tests/lexical.rs",
+          "test": "existing_typescript_175_case_fixture_meets_capability_gates"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-capability-bm25-test-ts",
+        "ts-test-capability-exact-resolution-test-ts",
+        "ts-test-capability-query-normalizer-test-ts"
+      ]
+    },
+    {
+      "id": "capability-catalog-policy-contract",
+      "evidenceClass": "fixture_contract",
+      "category": "retrieval",
+      "claim": "Typed project, Skill, and MCP catalogs reject unsafe or drifted cards, preserve kind isolation, and report install or authorization readiness truthfully.",
+      "evidence": [
+        {
+          "path": "crates/retrieval/tests/capability_workspace.rs",
+          "test": "strict_catalogs_reject_cross_kind_unknown_executable_duplicate_and_drifted_cards"
+        },
+        {
+          "path": "crates/retrieval/tests/capability_workspace.rs",
+          "test": "isolated_kinds_search_offline_and_readiness_precedence_is_truthful"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-capability-catalog-test-ts",
+        "ts-test-capability-facet-index-test-ts",
+        "ts-test-capability-policy-engine-test-ts",
+        "ts-test-capability-source-adapters-test-ts"
+      ]
+    },
+    {
+      "id": "capability-command-dispatch-contract",
+      "evidenceClass": "behavior",
+      "category": "retrieval",
+      "claim": "The Rust CLI exposes read-only capability, project, workspace, and Wiki status/search routes and rejects install, authorize, execute, or start flags.",
+      "evidence": [
+        {
+          "path": "crates/cli/tests/index_commands.rs",
+          "test": "clap_exposes_explicit_read_only_status_and_search_routes"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-capability-commands-test-ts",
+        "ts-test-capability-dispatcher-test-ts"
+      ]
+    },
+    {
+      "id": "capability-hybrid-candidate-contract",
+      "evidenceClass": "behavior",
+      "category": "retrieval",
+      "claim": "BM25 runs first, verified embedding receives only lexical candidates, outsiders are rejected, and every semantic failure preserves BM25 order.",
+      "evidence": [
+        {
+          "path": "crates/retrieval/tests/project_discovery.rs",
+          "test": "bm25_runs_first_and_embedding_receives_only_its_candidates"
+        },
+        {
+          "path": "crates/retrieval/tests/project_discovery.rs",
+          "test": "every_semantic_failure_preserves_the_bm25_order"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-capability-hybrid-retrieval-test-ts",
+        "ts-test-capability-rrf-test-ts",
+        "ts-test-embedding-runtime-test-ts"
+      ]
+    },
+    {
+      "id": "capability-corpus-manifest-contract",
+      "evidenceClass": "fixture_contract",
+      "category": "retrieval",
+      "claim": "The immutable capability corpus rejects schema, identity, duplicate stable ID, expected-ID, fingerprint, and case-count drift.",
+      "evidence": [
+        {
+          "path": "crates/retrieval/tests/lexical.rs",
+          "test": "immutable_corpus_rejects_schema_identity_and_case_drift"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-capability-manifest-test-ts",
+        "ts-test-support-capability-fixtures-ts"
+      ]
+    },
+    {
+      "id": "capability-snapshot-refresh-contract",
+      "evidenceClass": "state_machine",
+      "category": "retrieval",
+      "claim": "Snapshot refresh rejects expected-hash, domain, and document-hash drift while preserving the last published file identity.",
+      "evidence": [
+        {
+          "path": "crates/retrieval/tests/lexical.rs",
+          "test": "snapshots_reject_domain_and_hash_drift_and_keep_last_good_file"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-capability-refresh-test-ts",
+        "ts-test-capability-snapshot-test-ts"
+      ]
+    },
+    {
+      "id": "public-command-parser-contract",
+      "evidenceClass": "parser_rendering",
+      "category": "cli",
+      "claim": "The Rust command parser recognizes every locked public command alias and argument shape while rejecting unknown or unsafe variants.",
+      "evidence": [
+        {
+          "path": "crates/tui/tests/command_render.rs",
+          "test": "parser_covers_every_manifest_command_alias_and_argument_shape"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-chat-input-policy-test-ts",
+        "ts-test-command-arbiter-test-ts",
+        "ts-test-command-dispatcher-test-ts",
+        "ts-test-model-command-routing-test-ts",
+        "ts-test-ui-command-boundary-test-ts"
+      ]
+    },
+    {
+      "id": "retry-continue-durable-outcomes",
+      "evidenceClass": "behavior",
+      "category": "cli",
+      "claim": "Continue creates a normal new terminal turn while retry creates a distinct terminal turn linked to an immutable source, and both survive replay.",
+      "evidence": [
+        {
+          "path": "crates/cli/tests/restart.rs",
+          "test": "retry_and_continue_execute_distinct_durable_outcomes"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-command-retry-continue-outcomes"
+      ]
+    },
+    {
+      "id": "package-ci-flow-smoke",
+      "evidenceClass": "package_smoke",
+      "category": "package",
+      "claim": "Reviewed package orchestration verifies Rust authority ordering and the milestone release flow without implementing product behavior.",
+      "evidence": [
+        {
+          "path": "scripts/release/verify-milestone-flow.mjs"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-ci-contract-test-ts",
+        "ts-test-ci-contract-ts"
+      ]
+    },
+    {
+      "id": "session-lifecycle-wiki-contract",
+      "evidenceClass": "behavior",
+      "category": "lifecycle",
+      "claim": "A terminal Rust session finalizes before restart, resumes deterministically, and reaches exactly one pinned Wiki workflow and current retrieval result.",
+      "evidence": [
+        {
+          "path": "crates/cli/tests/lifecycle_wiki.rs",
+          "test": "terminal_runtime_session_reaches_pinned_wiki_and_current_retrieval"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-cli-lifecycle-test-ts",
+        "ts-lifecycle-finalize-before-restart",
+        "ts-test-shutdown-coordinator-test-ts",
+        "ts-test-thread-navigation-test-ts"
+      ]
+    },
+    {
+      "id": "credential-resolution-contract",
+      "evidenceClass": "behavior",
+      "category": "credential",
+      "claim": "Rust credential resolution exposes typed keyring states, never serializes secret values, and keeps headless operation keyring-free.",
+      "evidence": [
+        {
+          "path": "crates/provider/tests/config_credentials.rs",
+          "test": "interactive_keyring_states_are_typed_and_secret_free"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-config-manager-test-ts",
+        "ts-test-credential-consent-test-ts",
+        "ts-test-keyring-error-taxonomy-test-ts",
+        "ts-test-secret-store-test-ts"
+      ]
+    },
+    {
+      "id": "embedding-resource-verification",
+      "evidenceClass": "fixture_contract",
+      "category": "retrieval",
+      "claim": "Optional embedding resources require exact identity, hash, ABI, CPU, architecture, model, vector, and catalog fingerprint proof before use.",
+      "evidence": [
+        {
+          "path": "crates/retrieval/tests/embedding_resource.rs",
+          "test": "resource_requires_every_identity_hash_abi_cpu_and_fingerprint_proof"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-embedding-resource-test-ts"
+      ]
+    },
+    {
+      "id": "optional-retrieval-fail-closed",
+      "evidenceClass": "behavior",
+      "category": "runtime",
+      "claim": "Missing or unknown embedding-resource metadata fails closed without creating resources, while lexical retrieval remains independently available.",
+      "evidence": [
+        {
+          "path": "crates/retrieval/tests/embedding_resource.rs",
+          "test": "missing_and_unknown_manifest_data_fail_closed_without_creating_resources"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-feature-flags-test-ts"
+      ]
+    },
+    {
+      "id": "state-authority-path-contract",
+      "evidenceClass": "state_machine",
+      "category": "runtime",
+      "claim": "All supported Rust state routes write only normalized descendants of the single project-bound .minimax runtime root.",
+      "evidence": [
+        {
+          "path": "crates/cli/tests/state_authority.rs",
+          "test": "supported_state_paths_write_only_normalized_minimax_descendants"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-file-reliability-test-ts",
+        "ts-test-user-config-root-test-ts",
+        "ts-test-workspace-lease-test-ts"
+      ]
+    },
+    {
+      "id": "legacy-diagnostic-fixture-retirement",
+      "evidenceClass": "reviewed_retirement",
+      "category": "diagnostic",
+      "claim": "The three JavaScript diagnostic executors are TypeScript harness fixtures and are not shipped executable product behavior.",
+      "evidence": [
+        {
+          "path": "crates/compat-harness/tests/source_authority.rs",
+          "test": "rejects_legacy_fixture_smuggling_and_second_writable_root"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-fixtures-executors-diag-large-js",
+        "ts-test-fixtures-executors-diag-ok-js",
+        "ts-test-fixtures-executors-diag-slow-js"
+      ],
+      "retirementReview": {
+        "sources": [
+          "test/fixtures/executors/diag-large.js",
+          "test/fixtures/executors/diag-ok.js",
+          "test/fixtures/executors/diag-slow.js"
+        ],
+        "status": "internal",
+        "outcome": "Legacy diagnostic child-process timing and output fixtures are absent from the shipped Rust command contract.",
+        "reason": "They only support the transitional TypeScript diagnostic executor and remain hash-pinned solely until Phase 14 deletion."
+      }
+    },
+    {
+      "id": "provider-http-stream-contract",
+      "evidenceClass": "behavior",
+      "category": "provider",
+      "claim": "Responses and Chat Completions converge on the same safe ordered stream events with one truthful terminal and bounded public errors.",
+      "evidence": [
+        {
+          "path": "crates/provider/tests/http_stream.rs",
+          "test": "responses_and_chat_completions_converge_on_safe_stream_events"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-http-transport-test-ts",
+        "ts-test-model-adapter-interrupt-test-ts",
+        "ts-test-provider-protocol-test-ts",
+        "ts-test-provider-security-test-ts"
+      ]
+    },
+    {
+      "id": "typescript-test-harness-retirement",
+      "evidenceClass": "reviewed_retirement",
+      "category": "test_harness",
+      "claim": "The TypeScript kernel fixture-construction helper is transitional harness plumbing rather than a shipped public or safety outcome.",
+      "evidence": [
+        {
+          "path": "crates/compat-harness/tests/source_authority.rs",
+          "test": "repository_source_inventory"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-kernel-test-utils-ts"
+      ],
+      "retirementReview": {
+        "sources": [
+          "test/kernel-test-utils.ts"
+        ],
+        "status": "internal",
+        "outcome": "The TypeScript-only kernel fixture-construction helper has no installed command or product-state outcome.",
+        "reason": "Rust tests own kernel verification; this helper remains transitional source evidence until its Phase 14 removal."
+      }
+    },
+    {
+      "id": "typescript-test-graph-authority",
+      "evidenceClass": "fixture_contract",
+      "category": "test_harness",
+      "claim": "The discovered TypeScript test dependency graph is validated before imports and an independent Rust gate fails closed on evaluator reachability or unsafe local resolution.",
+      "evidence": [
+        {
+          "path": "crates/compat-harness/tests/source_authority.rs",
+          "test": "discovered_test_graph_rejects_transitive_typescript_evaluators"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-run-tests-ts",
+        "ts-test-test-discovery-test-ts",
+        "ts-test-test-discovery-ts"
+      ]
+    },
+    {
+      "id": "native-launcher-package-smoke",
+      "evidenceClass": "package_smoke",
+      "category": "package",
+      "claim": "The reviewed npm launcher performs only fixed platform-binary selection and never implements or falls back to product behavior.",
+      "evidence": [
+        {
+          "path": "bin/minimax-codex.cjs"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-launcher-test-ts"
+      ]
+    },
+    {
+      "id": "source-preserving-migration",
+      "evidenceClass": "migration",
+      "category": "migration",
+      "claim": "Rust migration inventory and dry-run are deterministic, write nothing, and preserve the TypeScript-era source before any explicit apply.",
+      "evidence": [
+        {
+          "path": "crates/cli/tests/migration.rs",
+          "test": "inventory_and_dry_run_are_deterministic_and_write_nothing"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-legacy-workspace-migration-test-ts"
+      ]
+    },
+    {
+      "id": "public-model-config-contract",
+      "evidenceClass": "behavior",
+      "category": "runtime",
+      "claim": "Rust model selection uses strict secret-free configuration with CLI, environment, project, user, and default precedence and rejects unsafe values.",
+      "evidence": [
+        {
+          "path": "crates/provider/tests/config_credentials.rs",
+          "test": "configuration_precedence_is_cli_environment_project_user_defaults"
+        },
+        {
+          "path": "crates/provider/tests/config_credentials.rs",
+          "test": "strict_documents_and_unsafe_values_fail_before_provider_work"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-model-profile-registry-test-ts",
+        "ts-test-model-profile-test-ts",
+        "ts-test-model-selection-service-test-ts",
+        "ts-test-model-state-store-test-ts",
+        "ts-test-user-profile-store-test-ts"
+      ]
+    },
+    {
+      "id": "session-model-binding-persistence",
+      "evidenceClass": "state_machine",
+      "category": "runtime",
+      "claim": "The selected provider, model, and protocol are embedded in the session and every turn request and survive exact journal replay.",
+      "evidence": [
+        {
+          "path": "crates/core/tests/session_machine.rs",
+          "test": "session_binding_and_turn_request_model_identity_survive_replay"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-model-selection-persistence-test-ts"
+      ]
+    },
+    {
+      "id": "npm-diagnostic-executor-retirement",
+      "evidenceClass": "reviewed_retirement",
+      "category": "runtime",
+      "claim": "The TypeScript npm diagnostic child-process executor is harness-only and is absent from the supported installed Rust command.",
+      "evidence": [
+        {
+          "path": "crates/compat-harness/tests/source_authority.rs",
+          "test": "repository_source_inventory"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-npm-diagnostic-executor-test-ts"
+      ],
+      "retirementReview": {
+        "sources": [
+          "test/npm-diagnostic-executor.test.ts"
+        ],
+        "status": "internal",
+        "outcome": "Spawning JavaScript diagnostic fixtures with timeout and truncation controls is not an installed Rust product outcome.",
+        "reason": "The behavior exists only to test the retired TypeScript harness and has no documented public command or safety contract."
+      }
+    },
+    {
+      "id": "tool-approval-durability",
+      "evidenceClass": "behavior",
+      "category": "tool",
+      "claim": "Confirm mode preserves Provider order and call IDs and durably records request, decision, start, and terminal state before continuation.",
+      "evidence": [
+        {
+          "path": "crates/cli/tests/tool_loop.rs",
+          "test": "confirm_mode_preserves_order_ids_and_durability_for_both_provider_protocols"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-permission-service-test-ts",
+        "ts-test-workspace-read-executor-test-ts"
+      ]
+    },
+    {
+      "id": "permission-reset-contract",
+      "evidenceClass": "behavior",
+      "category": "tool",
+      "claim": "Process-scoped full access skips only the prompt, still preflights and persists, and resets to confirm after restart.",
+      "evidence": [
+        {
+          "path": "crates/cli/tests/tool_loop.rs",
+          "test": "full_access_skips_prompt_but_still_preflights_persists_and_executes"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-permission-reset-on-restart"
+      ]
+    },
+    {
+      "id": "release-package-orchestration",
+      "evidenceClass": "package_smoke",
+      "category": "package",
+      "claim": "Reviewed JavaScript archive orchestration packages only the fixed launcher and selected Rust binary without owning product behavior.",
+      "evidence": [
+        {
+          "path": "scripts/release/package-rust.mjs"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-release-package-test-ts"
+      ]
+    },
+    {
+      "id": "rust-compatibility-baseline",
+      "evidenceClass": "fixture_contract",
+      "category": "package",
+      "claim": "The compatibility harness executes Rust command, permission, Provider, retrieval, and product baselines against immutable fixtures.",
+      "evidence": [
+        {
+          "path": "crates/compat-harness/tests/compat_report.rs",
+          "test": "rust_command_permission_provider_and_product_baselines_are_executable"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-rust-rewrite-compat-manifest-test-ts"
+      ]
+    },
+    {
+      "id": "session-storage-replay",
+      "evidenceClass": "state_machine",
+      "category": "storage",
+      "claim": "Rust journal replay reconstructs session and turn state exactly, ignores identical duplicate records, and rejects conflicting identities.",
+      "evidence": [
+        {
+          "path": "crates/core/tests/session_machine.rs",
+          "test": "journal_replay_reconstructs_state_and_ignores_duplicate_records"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-storage-index-recovery-test-ts",
+        "ts-test-storage-turns-test-ts",
+        "ts-test-storage-versioning-test-ts"
+      ]
+    },
+    {
+      "id": "structured-summary-redaction",
+      "evidenceClass": "behavior",
+      "category": "runtime",
+      "claim": "Local Rust compaction is byte-stable and structured and excludes secrets, raw reasoning, failed partial output, frames, and tool bodies.",
+      "evidence": [
+        {
+          "path": "crates/core/tests/compaction_trace.rs",
+          "test": "compaction_is_byte_stable_structured_and_excludes_unsafe_history"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-summary-generator-test-ts"
+      ]
+    },
+    {
+      "id": "token-estimator-retirement",
+      "evidenceClass": "reviewed_retirement",
+      "category": "runtime",
+      "claim": "The TypeScript character-class token estimator is not used by the Rust runtime or exposed as a supported public contract.",
+      "evidence": [
+        {
+          "path": "crates/compat-harness/tests/source_authority.rs",
+          "test": "repository_source_inventory"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-token-estimator-test-ts"
+      ],
+      "retirementReview": {
+        "sources": [
+          "test/token-estimator.test.ts"
+        ],
+        "status": "unshipped",
+        "outcome": "Character-class token estimation and its local safety-margin heuristic are absent from the shipped Rust public contract.",
+        "reason": "Rust uses explicit validated output limits and reported Provider usage rather than preserving an undocumented TypeScript heuristic."
+      }
+    },
+    {
+      "id": "runtime-delta-durability",
+      "evidenceClass": "state_machine",
+      "category": "runtime",
+      "claim": "Rust persists every visible delta before publication, preserves partial evidence on cancellation, and finalizes the terminal outcome once.",
+      "evidence": [
+        {
+          "path": "crates/core/tests/runtime_machine.rs",
+          "test": "completed_turn_persists_every_event_before_publish_and_finalizes_once"
+        },
+        {
+          "path": "crates/core/tests/runtime_machine.rs",
+          "test": "cancel_after_partial_delta_preserves_partial_event_and_interrupts"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-turn-delta-buffer-test-ts"
+      ]
+    },
+    {
+      "id": "ink-ui-dispatcher-retirement",
+      "evidenceClass": "reviewed_retirement",
+      "category": "test_harness",
+      "claim": "Ink component dispatcher ownership and React unmount timing are not part of the shipped Rust terminal application architecture.",
+      "evidence": [
+        {
+          "path": "crates/compat-harness/tests/source_authority.rs",
+          "test": "repository_source_inventory"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-test-ui-dispatcher-ownership-test-tsx"
+      ],
+      "retirementReview": {
+        "sources": [
+          "test/ui-dispatcher-ownership.test.tsx"
+        ],
+        "status": "unshipped",
+        "outcome": "React and Ink mount, unmount, and injected-dispatcher ownership semantics do not exist in the Rust TUI.",
+        "reason": "Rust owns terminal lifecycle through native state machines and guards; recreating React component timing would be filename parity only."
+      }
+    },
+    {
+      "id": "cli-terminal-output-contract",
+      "evidenceClass": "behavior",
+      "category": "cli",
+      "claim": "Rust text and schema-v1 JSONL modes expose the same terminal outcomes and public exit classes for completed, interrupted, and failed runs.",
+      "evidence": [
+        {
+          "path": "crates/cli/tests/headless.rs",
+          "test": "text_and_jsonl_terminal_outcomes_match_public_exit_contract"
+        }
+      ],
+      "responsibilityIds": [
+        "ts-cli-terminal-output-parity"
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "sourcePath": "src/eval/capability-retrieval-report.ts",
+      "sourceSha256": "0b86331d98c98f2e871202f8fc371d1f7064ca59794cf15dbe6fd88afc5e4940",
+      "responsibilities": [
+        {
+          "category": "retrieval",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/compat-harness/tests/retrieval_eval.rs",
+              "test": "retrieval_evaluation_matches_committed_golden_and_is_repeatable"
+            }
+          ],
+          "rationale": "The committed Rust retrieval evaluation proves the historical report is reproducible and matches the locked golden metrics.",
+          "id": "ts-src-eval-capability-retrieval-report-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "src/eval/provider-conformance.ts",
+      "sourceSha256": "9fd8c49cbfdcf5fa2868e8ff315752a47dab1f21216c4889a97d155c9504be22",
+      "responsibilities": [
+        {
+          "category": "provider",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/compat-harness/tests/provider_eval.rs",
+              "test": "provider_evaluation_matches_committed_golden_and_is_repeatable"
+            }
+          ],
+          "rationale": "Historical src/eval/provider-conformance.ts authority is replaced by `cargo run -p minimax-compat-harness --locked -- provider-eval --format json`, the exact Rust evaluator test, and fixtures/compat/evaluations/provider-report.expected.json.",
+          "id": "ts-src-eval-provider-conformance-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "src/smoke/provider-smoke.ts",
+      "sourceSha256": "266534f0f0f19b888324c9c6940157fc8c7302a90af4b206907fbb9cb520c934",
+      "responsibilities": [
+        {
+          "category": "diagnostic",
+          "contractRefs": [],
+          "disposition": "retired",
+          "evidence": [
+            {
+              "path": "crates/compat-harness/tests/source_authority.rs",
+              "test": "repository_source_inventory"
+            }
+          ],
+          "rationale": "Unshipped live-Provider smoke src/smoke/provider-smoke.ts is intentionally retired; supported conformance is deterministic and offline.",
+          "id": "ts-src-smoke-provider-smoke-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/agent-budget.test.ts",
+      "sourceSha256": "f88063fd9b27610055aac3493db112f910a6d2e743876ae3d203a057b1e00c2a",
+      "responsibilities": [
+        {
+          "category": "runtime",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/core/tests/tool_machine.rs",
+              "test": "registry_and_all_four_budgets_fail_before_an_extra_effect"
+            }
+          ],
+          "rationale": "Historical Agent budget ceilings are owned by the Rust invocation budget state machine and its fail-before-effect test.",
+          "id": "ts-test-agent-budget-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/agent-item-storage.test.ts",
+      "sourceSha256": "11ee5c108bb921398a042310e7ba4a49257255a60b6774ca67a7e2612cc8ea60",
+      "responsibilities": [
+        {
+          "category": "runtime",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/core/tests/session_machine.rs",
+              "test": "tool_records_project_request_decision_start_and_terminal_in_order"
+            }
+          ],
+          "rationale": "Historical ordered Agent item storage is owned by the Rust session journal projection and its request-to-terminal ordering test.",
+          "id": "ts-test-agent-item-storage-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/agent-local-runtime-integration.test.ts",
+      "sourceSha256": "ae44e2ce6cbbc9989320f05e9619fa7ca8aadeb2ed9248e42d26d04b15d10bea",
+      "responsibilities": [
+        {
+          "category": "runtime",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/cli/tests/restart.rs",
+              "test": "conversation_reconstructs_then_lists_resumes_continues_retries_and_compacts"
+            }
+          ],
+          "rationale": "Historical test/agent-local-runtime-integration.test.ts durable runtime responsibility is owned by Rust recovery/state-authority tests rather than TypeScript internals.",
+          "id": "ts-test-agent-local-runtime-integration-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/agent-route-cutover.test.ts",
+      "sourceSha256": "a69234ca04dacdd74c698c8858923c8bd792caee95176f0473003b02992f8ef7",
+      "responsibilities": [
+        {
+          "category": "runtime",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/cli/tests/headless.rs",
+              "test": "clap_routes_all_phase_two_and_later_maintenance_commands"
+            }
+          ],
+          "rationale": "Historical route-cutover intent is represented by explicit, separate Rust chat and Agent CLI routes instead of a hidden feature-flag switch.",
+          "id": "ts-test-agent-route-cutover-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/agent-run-engine.test.ts",
+      "sourceSha256": "4549b98ced35ffcd3602264e8d899f41c3e84a4043468b78cc26dce3d336a366",
+      "responsibilities": [
+        {
+          "category": "runtime",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/core/tests/runtime_machine.rs",
+              "test": "agent_continues_only_after_every_matching_result_is_in_native_history"
+            },
+            {
+              "path": "crates/cli/tests/tool_loop.rs",
+              "test": "provider_round_budget_exhaustion_is_one_durable_terminal_failure"
+            }
+          ],
+          "rationale": "Historical Agent loop behavior is owned by Rust tool-result ordering and provider-round budget terminal tests.",
+          "id": "ts-test-agent-run-engine-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/agent-run-recovery.test.ts",
+      "sourceSha256": "4863890d69db619e413ec5831f3e0efe85466377488b5b9a063dc7e11a5c1b35",
+      "responsibilities": [
+        {
+          "category": "runtime",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/core/tests/tool_machine.rs",
+              "test": "post_start_cancel_or_recovery_is_indeterminate_and_never_reexecutes"
+            }
+          ],
+          "rationale": "Historical Agent recovery safety is owned by the Rust invocation state machine and its no-reexecution recovery test.",
+          "id": "ts-test-agent-run-recovery-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/agent-runtime-compaction.test.ts",
+      "sourceSha256": "37a9f42f9bb01758766466bc49ecb28c5e08252862ca11cc82fc8f5543bd5613",
+      "responsibilities": [
+        {
+          "category": "runtime",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/cli/tests/restart.rs",
+              "test": "conversation_reconstructs_then_lists_resumes_continues_retries_and_compacts"
+            }
+          ],
+          "rationale": "Historical test/agent-runtime-compaction.test.ts durable runtime responsibility is owned by Rust recovery/state-authority tests rather than TypeScript internals.",
+          "id": "ts-test-agent-runtime-compaction-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/agent-runtime-interrupt.test.ts",
+      "sourceSha256": "b29e8ba85fb38d0636172a2860bba42622a867863b4a8546f70afd456ced4390",
+      "responsibilities": [
+        {
+          "category": "runtime",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/cli/tests/restart.rs",
+              "test": "conversation_reconstructs_then_lists_resumes_continues_retries_and_compacts"
+            }
+          ],
+          "rationale": "Historical test/agent-runtime-interrupt.test.ts durable runtime responsibility is owned by Rust recovery/state-authority tests rather than TypeScript internals.",
+          "id": "ts-test-agent-runtime-interrupt-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/agent-runtime-provider-trace.test.ts",
+      "sourceSha256": "9a68b489958be24075a31525942254f4a956deeb0a87fc20e204bd9632f2449d",
+      "responsibilities": [
+        {
+          "category": "provider",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/provider/tests/provider_fixtures.rs",
+              "test": "both_provider_protocols_match_every_valid_compatibility_fixture"
+            }
+          ],
+          "rationale": "Historical test/agent-runtime-provider-trace.test.ts Provider responsibility is owned by offline Rust protocol fixtures and safe stream normalization tests.",
+          "id": "ts-test-agent-runtime-provider-trace-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/agent-runtime-recovery.test.ts",
+      "sourceSha256": "0a68464e9ac7b38afcf4cd69add20f7873a8339f2d1a3b1ca20633e082ba743b",
+      "responsibilities": [
+        {
+          "category": "runtime",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/cli/tests/restart.rs",
+              "test": "conversation_reconstructs_then_lists_resumes_continues_retries_and_compacts"
+            }
+          ],
+          "rationale": "Historical test/agent-runtime-recovery.test.ts durable runtime responsibility is owned by Rust recovery/state-authority tests rather than TypeScript internals.",
+          "id": "ts-test-agent-runtime-recovery-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/agent-ui-state.test.ts",
+      "sourceSha256": "4e6417fd1872fee184677db21bab9eb963a6c9eff97046f0cccf962b00c22960",
+      "responsibilities": [
+        {
+          "category": "rendering",
+          "contractRefs": [
+            "fixtures/compat/commands.v1.json#commands"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/tui/tests/command_render.rs",
+              "test": "renderer_uses_shared_events_and_removes_terminal_control_sequences"
+            }
+          ],
+          "rationale": "Historical test/agent-ui-state.test.ts public command/rendering responsibility is owned by the locked Rust command parser and safe renderer tests.",
+          "id": "ts-test-agent-ui-state-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/application-kernel.test.ts",
+      "sourceSha256": "22477bfe788f63f2f48650cd8e93bb92c7fda8c771794992cb4afdc3ca7b059a",
+      "responsibilities": [
+        {
+          "category": "runtime",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/core/tests/runtime_machine.rs",
+              "test": "cancellation_and_failures_have_one_truthful_terminal"
+            },
+            {
+              "path": "crates/core/tests/runtime_machine.rs",
+              "test": "terminal_order_errors_and_concurrent_begin_are_exact"
+            }
+          ],
+          "rationale": "Historical kernel ownership and fail-closed lifecycle behavior are owned by Rust runtime terminal and concurrency state-machine tests.",
+          "id": "ts-test-application-kernel-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/capability-bm25.test.ts",
+      "sourceSha256": "ee63e6b9c92db62e958d48d36d5d26c36ad9b04b8123696867b267b45efb514a",
+      "responsibilities": [
+        {
+          "category": "retrieval",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/retrieval/tests/lexical.rs",
+              "test": "exact_wins_and_bm25_does_not_manufacture_matches"
+            },
+            {
+              "path": "crates/retrieval/tests/lexical.rs",
+              "test": "existing_typescript_175_case_fixture_meets_capability_gates"
+            }
+          ],
+          "rationale": "Rust lexical tests prove BM25 ranking cannot override exact matches or manufacture candidates while preserving the locked 175-case corpus gates.",
+          "id": "ts-test-capability-bm25-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/capability-catalog.test.ts",
+      "sourceSha256": "399b30881a5d002b562608c43c90f86c38276d724131b36ab8e219eac870f481",
+      "responsibilities": [
+        {
+          "category": "retrieval",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/retrieval/tests/capability_workspace.rs",
+              "test": "strict_catalogs_reject_cross_kind_unknown_executable_duplicate_and_drifted_cards"
+            },
+            {
+              "path": "crates/retrieval/tests/capability_workspace.rs",
+              "test": "isolated_kinds_search_offline_and_readiness_precedence_is_truthful"
+            }
+          ],
+          "rationale": "Rust capability-workspace tests prove strict catalog validation and isolated kind-aware search with truthful readiness precedence.",
+          "id": "ts-test-capability-catalog-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/capability-commands.test.ts",
+      "sourceSha256": "7ae558093910897764ef6555e7dc3a5591966fe2a03560312294638740366fbe",
+      "responsibilities": [
+        {
+          "category": "retrieval",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/cli/tests/index_commands.rs",
+              "test": "clap_exposes_explicit_read_only_status_and_search_routes"
+            }
+          ],
+          "rationale": "The Rust CLI test proves the capability status and search commands are explicit read-only routes.",
+          "id": "ts-test-capability-commands-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/capability-dispatcher.test.ts",
+      "sourceSha256": "496b083c57a0a6a68c1afeb81def63c83f30a5e097295aa8e9835c8806517f48",
+      "responsibilities": [
+        {
+          "category": "retrieval",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/cli/tests/index_commands.rs",
+              "test": "clap_exposes_explicit_read_only_status_and_search_routes"
+            }
+          ],
+          "rationale": "The Rust CLI test proves capability dispatch uses the explicit status and search routes without mutating catalog state.",
+          "id": "ts-test-capability-dispatcher-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/capability-exact-resolution.test.ts",
+      "sourceSha256": "8f97593c335e9a733e2ab909727c18b889a715e8a1fb4fa149ed0874e56cb74d",
+      "responsibilities": [
+        {
+          "category": "retrieval",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/retrieval/tests/lexical.rs",
+              "test": "exact_wins_and_bm25_does_not_manufacture_matches"
+            },
+            {
+              "path": "crates/retrieval/tests/lexical.rs",
+              "test": "existing_typescript_175_case_fixture_meets_capability_gates"
+            }
+          ],
+          "rationale": "Rust lexical tests prove exact resolution precedence and the locked retrieval corpus acceptance gates.",
+          "id": "ts-test-capability-exact-resolution-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/capability-facet-index.test.ts",
+      "sourceSha256": "10e6fb3fbfe4dddb7e178a980e47839931897c13d7f3453e31199f4ce637c8cd",
+      "responsibilities": [
+        {
+          "category": "retrieval",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/retrieval/tests/capability_workspace.rs",
+              "test": "strict_catalogs_reject_cross_kind_unknown_executable_duplicate_and_drifted_cards"
+            },
+            {
+              "path": "crates/retrieval/tests/capability_workspace.rs",
+              "test": "isolated_kinds_search_offline_and_readiness_precedence_is_truthful"
+            }
+          ],
+          "rationale": "Rust capability-workspace tests prove facets remain isolated by kind and invalid or drifted catalog cards fail closed.",
+          "id": "ts-test-capability-facet-index-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/capability-hybrid-retrieval.test.ts",
+      "sourceSha256": "765759fa7943a25adfd454f2c8dc58a9a16b9d184351ff0b857ea892953328a4",
+      "responsibilities": [
+        {
+          "category": "retrieval",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/retrieval/tests/project_discovery.rs",
+              "test": "bm25_runs_first_and_embedding_receives_only_its_candidates"
+            },
+            {
+              "path": "crates/retrieval/tests/project_discovery.rs",
+              "test": "every_semantic_failure_preserves_the_bm25_order"
+            }
+          ],
+          "rationale": "Rust project-discovery tests prove BM25-first candidate bounding and deterministic order preservation on every semantic failure.",
+          "id": "ts-test-capability-hybrid-retrieval-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/capability-manifest.test.ts",
+      "sourceSha256": "8c4e97c134d6cea46168f9e01444ba6604645d48ea98406d8d5590f9b10499f0",
+      "responsibilities": [
+        {
+          "category": "retrieval",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/retrieval/tests/lexical.rs",
+              "test": "immutable_corpus_rejects_schema_identity_and_case_drift"
+            }
+          ],
+          "rationale": "The Rust lexical corpus test proves manifest schema, identity, and case drift fail closed.",
+          "id": "ts-test-capability-manifest-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/capability-policy-engine.test.ts",
+      "sourceSha256": "fe2887d2d8640002f6c036674676db4283d073ce5aad51de8ccc843e61dae058",
+      "responsibilities": [
+        {
+          "category": "retrieval",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/retrieval/tests/capability_workspace.rs",
+              "test": "strict_catalogs_reject_cross_kind_unknown_executable_duplicate_and_drifted_cards"
+            },
+            {
+              "path": "crates/retrieval/tests/capability_workspace.rs",
+              "test": "isolated_kinds_search_offline_and_readiness_precedence_is_truthful"
+            }
+          ],
+          "rationale": "Rust capability-workspace tests prove executable policy validation fails closed and readiness precedence remains truthful.",
+          "id": "ts-test-capability-policy-engine-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/capability-query-normalizer.test.ts",
+      "sourceSha256": "10508dd5308987911ddf1c8d78597352b44251caea01c9f379e4c58a4d7d758b",
+      "responsibilities": [
+        {
+          "category": "retrieval",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/retrieval/tests/lexical.rs",
+              "test": "exact_wins_and_bm25_does_not_manufacture_matches"
+            },
+            {
+              "path": "crates/retrieval/tests/lexical.rs",
+              "test": "existing_typescript_175_case_fixture_meets_capability_gates"
+            }
+          ],
+          "rationale": "Rust lexical tests prove normalized queries preserve exact-match precedence and the locked corpus gates.",
+          "id": "ts-test-capability-query-normalizer-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/capability-refresh.test.ts",
+      "sourceSha256": "ae2f7d168f1c243e98a7d5ba1697b1e780cd2b02683181b6b8104991cd0c8ccf",
+      "responsibilities": [
+        {
+          "category": "retrieval",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/retrieval/tests/lexical.rs",
+              "test": "snapshots_reject_domain_and_hash_drift_and_keep_last_good_file"
+            }
+          ],
+          "rationale": "The Rust snapshot test proves refresh rejects domain and hash drift while retaining the last known-good artifact.",
+          "id": "ts-test-capability-refresh-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/capability-retrieval-eval.test.ts",
+      "sourceSha256": "dd1e5f1409e1b294604859661d5ee7b7290cde7b438181c91f174b510dc2a513",
+      "responsibilities": [
+        {
+          "category": "retrieval",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/compat-harness/tests/retrieval_eval.rs",
+              "test": "retrieval_evaluation_matches_committed_golden_and_is_repeatable"
+            }
+          ],
+          "rationale": "The Rust retrieval evaluation proves the committed corpus metrics match their golden report and repeat exactly.",
+          "id": "ts-test-capability-retrieval-eval-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/capability-retrieval-report.test.ts",
+      "sourceSha256": "a6199cc46832d3f566150b61af6a31646ea4d049fbb4abf6ccfe116aa955d793",
+      "responsibilities": [
+        {
+          "category": "retrieval",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/compat-harness/tests/retrieval_eval.rs",
+              "test": "retrieval_evaluation_matches_committed_golden_and_is_repeatable"
+            }
+          ],
+          "rationale": "This TypeScript test is static, hash-pinned evidence only; the Rust retrieval evaluator and committed golden report own executable retrieval evaluation.",
+          "id": "ts-test-capability-retrieval-report-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/capability-rrf.test.ts",
+      "sourceSha256": "546ded8f7deb7e64806effa6f5e9c2d412e0530fe4438338562c1f08fef6e4b6",
+      "responsibilities": [
+        {
+          "category": "retrieval",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/retrieval/tests/project_discovery.rs",
+              "test": "bm25_runs_first_and_embedding_receives_only_its_candidates"
+            },
+            {
+              "path": "crates/retrieval/tests/project_discovery.rs",
+              "test": "every_semantic_failure_preserves_the_bm25_order"
+            }
+          ],
+          "rationale": "Rust project-discovery tests prove bounded hybrid fusion and preserve lexical order whenever semantic ranking is unavailable.",
+          "id": "ts-test-capability-rrf-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/capability-snapshot.test.ts",
+      "sourceSha256": "8e5adb23ac96762ef246265c6aafb8fe042b5cde5ef490c9f66747a2735a6d81",
+      "responsibilities": [
+        {
+          "category": "retrieval",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/retrieval/tests/lexical.rs",
+              "test": "snapshots_reject_domain_and_hash_drift_and_keep_last_good_file"
+            }
+          ],
+          "rationale": "The Rust snapshot test proves snapshot identity and hashes are fail-closed and a corrupt refresh cannot replace the last good file.",
+          "id": "ts-test-capability-snapshot-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/capability-source-adapters.test.ts",
+      "sourceSha256": "21ebd767479085a281dea9ce1d6bcb481f338b72de91992c5f0e24a3d77064b9",
+      "responsibilities": [
+        {
+          "category": "retrieval",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/retrieval/tests/capability_workspace.rs",
+              "test": "strict_catalogs_reject_cross_kind_unknown_executable_duplicate_and_drifted_cards"
+            },
+            {
+              "path": "crates/retrieval/tests/capability_workspace.rs",
+              "test": "isolated_kinds_search_offline_and_readiness_precedence_is_truthful"
+            }
+          ],
+          "rationale": "Rust capability-workspace tests prove source adapters cannot cross kinds and reject unknown, duplicate, or drifted cards.",
+          "id": "ts-test-capability-source-adapters-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/chat-input-policy.test.ts",
+      "sourceSha256": "4adecda2375c3ef7880a7f509cda945e1e3147c77bd46e7a6e5d368f5694ac40",
+      "responsibilities": [
+        {
+          "category": "cli",
+          "contractRefs": [
+            "fixtures/compat/commands.v1.json#commands"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/tui/tests/command_render.rs",
+              "test": "parser_covers_every_manifest_command_alias_and_argument_shape"
+            }
+          ],
+          "rationale": "Historical test/chat-input-policy.test.ts public command/rendering responsibility is owned by the locked Rust command parser and safe renderer tests.",
+          "id": "ts-test-chat-input-policy-test-ts"
+        },
+        {
+          "category": "cli",
+          "contractRefs": [
+            "fixtures/compat/commands.v1.json#commands"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/cli/tests/restart.rs",
+              "test": "retry_and_continue_execute_distinct_durable_outcomes"
+            }
+          ],
+          "rationale": "The Rust restart test executes continue and retry as distinct durable outcomes, including immutable source and replay assertions.",
+          "id": "ts-command-retry-continue-outcomes"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/ci-contract.test.ts",
+      "sourceSha256": "225078efe21c8880f2a8292bba38d94fe1e40ac312bfcee6544408f40e19c532",
+      "responsibilities": [
+        {
+          "category": "package",
+          "contractRefs": [
+            ".planning/SPEC.md#2-thin-npm-distribution"
+          ],
+          "disposition": "package_smoke",
+          "evidence": [
+            {
+              "path": "scripts/release/verify-milestone-flow.mjs"
+            }
+          ],
+          "rationale": "Historical test/ci-contract.test.ts owns package-only distribution smoke through reviewed JavaScript orchestration and no product behavior.",
+          "id": "ts-test-ci-contract-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/ci-contract.ts",
+      "sourceSha256": "459eebd703923c831ad452116ad852e4d7603599f88e3f02a8cf056b14860809",
+      "responsibilities": [
+        {
+          "category": "package",
+          "contractRefs": [
+            ".planning/SPEC.md#2-thin-npm-distribution"
+          ],
+          "disposition": "package_smoke",
+          "evidence": [
+            {
+              "path": "scripts/release/verify-milestone-flow.mjs"
+            }
+          ],
+          "rationale": "Historical test/ci-contract.ts owns package-only distribution smoke through reviewed JavaScript orchestration and no product behavior.",
+          "id": "ts-test-ci-contract-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/cli-lifecycle.test.ts",
+      "sourceSha256": "3f35c60f93115937ffdacf48f45abd17c8c76d389099c8dfc1f0c5cda42c7dde",
+      "responsibilities": [
+        {
+          "category": "lifecycle",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/cli/tests/lifecycle_wiki.rs",
+              "test": "terminal_runtime_session_reaches_pinned_wiki_and_current_retrieval"
+            }
+          ],
+          "rationale": "Historical test/cli-lifecycle.test.ts lifecycle responsibility is owned by Rust session finalization, restart, and pinned-Wiki evidence.",
+          "id": "ts-test-cli-lifecycle-test-ts"
+        },
+        {
+          "category": "lifecycle",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/cli/tests/lifecycle_wiki.rs",
+              "test": "terminal_runtime_session_reaches_pinned_wiki_and_current_retrieval"
+            }
+          ],
+          "rationale": "Session finalization before restart and single durable Wiki application are owned by the cited deterministic Rust lifecycle test.",
+          "id": "ts-lifecycle-finalize-before-restart"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/command-arbiter.test.ts",
+      "sourceSha256": "db5b985ebf1811a80bb48ae61a8dce8bca02f30b87e961afc8c9bf5915837853",
+      "responsibilities": [
+        {
+          "category": "cli",
+          "contractRefs": [
+            "fixtures/compat/commands.v1.json#commands"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/tui/tests/command_render.rs",
+              "test": "parser_covers_every_manifest_command_alias_and_argument_shape"
+            }
+          ],
+          "rationale": "Historical test/command-arbiter.test.ts public command/rendering responsibility is owned by the locked Rust command parser and safe renderer tests.",
+          "id": "ts-test-command-arbiter-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/command-dispatcher.test.ts",
+      "sourceSha256": "b33a82d192258cebd59dcdc989bf94dc6277cd8116cec772e74bfe6bbca23f12",
+      "responsibilities": [
+        {
+          "category": "cli",
+          "contractRefs": [
+            "fixtures/compat/commands.v1.json#commands"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/tui/tests/command_render.rs",
+              "test": "parser_covers_every_manifest_command_alias_and_argument_shape"
+            }
+          ],
+          "rationale": "Historical test/command-dispatcher.test.ts public command/rendering responsibility is owned by the locked Rust command parser and safe renderer tests.",
+          "id": "ts-test-command-dispatcher-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/config-manager.test.ts",
+      "sourceSha256": "2255261c3b9d7b6e533fcdd53306352246927d305dd5d3ef4cc094097b597432",
+      "responsibilities": [
+        {
+          "category": "credential",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/provider/tests/config_credentials.rs",
+              "test": "interactive_keyring_states_are_typed_and_secret_free"
+            }
+          ],
+          "rationale": "Historical test/config-manager.test.ts credential responsibility is owned by typed, secret-free Rust configuration tests.",
+          "id": "ts-test-config-manager-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/context-manager.test.ts",
+      "sourceSha256": "5d2e28f6dd31ecc98f3f70381ba2d869a7303e0328f097e814597fbe6ff08470",
+      "responsibilities": [
+        {
+          "category": "runtime",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/cli/tests/restart.rs",
+              "test": "conversation_reconstructs_then_lists_resumes_continues_retries_and_compacts"
+            }
+          ],
+          "rationale": "Historical test/context-manager.test.ts durable runtime responsibility is owned by Rust recovery/state-authority tests rather than TypeScript internals.",
+          "id": "ts-test-context-manager-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/credential-consent.test.ts",
+      "sourceSha256": "c90f935c24a081193cf23559c72d70347e27dddfe068dbf7b3641ad2a6d9d1ce",
+      "responsibilities": [
+        {
+          "category": "credential",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/provider/tests/config_credentials.rs",
+              "test": "interactive_keyring_states_are_typed_and_secret_free"
+            }
+          ],
+          "rationale": "Historical test/credential-consent.test.ts credential responsibility is owned by typed, secret-free Rust configuration tests.",
+          "id": "ts-test-credential-consent-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/embedding-resource.test.ts",
+      "sourceSha256": "b2832b59d44af3b8acd1eec2c3f4b8439d3391f0ae8c058d9f9f936f71b84118",
+      "responsibilities": [
+        {
+          "category": "retrieval",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/retrieval/tests/embedding_resource.rs",
+              "test": "resource_requires_every_identity_hash_abi_cpu_and_fingerprint_proof"
+            }
+          ],
+          "rationale": "The Rust embedding-resource test proves every identity, hash, ABI, CPU, and fingerprint prerequisite before semantic activation.",
+          "id": "ts-test-embedding-resource-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/embedding-runtime.test.ts",
+      "sourceSha256": "82a51c1bf40989f1668ca6abeb7250b2b080aa5ef1eb62cb9ef6f7dfd4e181b5",
+      "responsibilities": [
+        {
+          "category": "retrieval",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/retrieval/tests/project_discovery.rs",
+              "test": "bm25_runs_first_and_embedding_receives_only_its_candidates"
+            },
+            {
+              "path": "crates/retrieval/tests/project_discovery.rs",
+              "test": "every_semantic_failure_preserves_the_bm25_order"
+            }
+          ],
+          "rationale": "Rust project-discovery tests prove embeddings only rerank bounded BM25 candidates and every semantic failure preserves deterministic lexical order.",
+          "id": "ts-test-embedding-runtime-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/feature-flags.test.ts",
+      "sourceSha256": "5d3389d0b76375b1e09d0f7140dc12ff42d99641c2071608b5e28e2f973a722e",
+      "responsibilities": [
+        {
+          "category": "runtime",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/retrieval/tests/embedding_resource.rs",
+              "test": "missing_and_unknown_manifest_data_fail_closed_without_creating_resources"
+            }
+          ],
+          "rationale": "Historical optional-capability fail-closed behavior is owned by Rust embedding-resource validation while lexical retrieval remains independent.",
+          "id": "ts-test-feature-flags-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/file-reliability.test.ts",
+      "sourceSha256": "acbb19fe13655408a03a36f84d82f3c92fa778f5dd257bd831deaa15d46402c8",
+      "responsibilities": [
+        {
+          "category": "runtime",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/cli/tests/state_authority.rs",
+              "test": "supported_state_paths_write_only_normalized_minimax_descendants"
+            }
+          ],
+          "rationale": "Historical test/file-reliability.test.ts durable runtime responsibility is owned by Rust recovery/state-authority tests rather than TypeScript internals.",
+          "id": "ts-test-file-reliability-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/fixtures/executors/diag-large.js",
+      "sourceSha256": "6056e5151fa3792d5818de8a1731a319b4c8a021e7eff930c0bf0aac7aa116ae",
+      "responsibilities": [
+        {
+          "category": "diagnostic",
+          "contractRefs": [],
+          "disposition": "retired",
+          "evidence": [
+            {
+              "path": "crates/compat-harness/tests/source_authority.rs",
+              "test": "rejects_legacy_fixture_smuggling_and_second_writable_root"
+            }
+          ],
+          "rationale": "Dormant executor diagnostic fixture test/fixtures/executors/diag-large.js is internal TypeScript-harness scaffolding and is not a shipped Rust/public contract.",
+          "id": "ts-test-fixtures-executors-diag-large-js"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/fixtures/executors/diag-ok.js",
+      "sourceSha256": "b3191e8bf9fc8b562cb90052ce1667a8433a1ec7fd15d1ad69ecb62c8d545edc",
+      "responsibilities": [
+        {
+          "category": "diagnostic",
+          "contractRefs": [],
+          "disposition": "retired",
+          "evidence": [
+            {
+              "path": "crates/compat-harness/tests/source_authority.rs",
+              "test": "rejects_legacy_fixture_smuggling_and_second_writable_root"
+            }
+          ],
+          "rationale": "Dormant executor diagnostic fixture test/fixtures/executors/diag-ok.js is internal TypeScript-harness scaffolding and is not a shipped Rust/public contract.",
+          "id": "ts-test-fixtures-executors-diag-ok-js"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/fixtures/executors/diag-slow.js",
+      "sourceSha256": "e82c16e9a58ed31cb4d23430d380b864a43b7001e10e0e5e0c6cc7d7bd9478d1",
+      "responsibilities": [
+        {
+          "category": "diagnostic",
+          "contractRefs": [],
+          "disposition": "retired",
+          "evidence": [
+            {
+              "path": "crates/compat-harness/tests/source_authority.rs",
+              "test": "rejects_legacy_fixture_smuggling_and_second_writable_root"
+            }
+          ],
+          "rationale": "Dormant executor diagnostic fixture test/fixtures/executors/diag-slow.js is internal TypeScript-harness scaffolding and is not a shipped Rust/public contract.",
+          "id": "ts-test-fixtures-executors-diag-slow-js"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/http-transport.test.ts",
+      "sourceSha256": "93754505199ac4ae55b66e8acc86691e28806a82fe3164efdec8e2fe6932d11e",
+      "responsibilities": [
+        {
+          "category": "provider",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/provider/tests/http_stream.rs",
+              "test": "responses_and_chat_completions_converge_on_safe_stream_events"
+            }
+          ],
+          "rationale": "Historical test/http-transport.test.ts Provider responsibility is owned by offline Rust protocol fixtures and safe stream normalization tests.",
+          "id": "ts-test-http-transport-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/kernel-test-utils.ts",
+      "sourceSha256": "9912a4a3b0205cb972609480656944978f18e76732ab476e6163f31450cb40dd",
+      "responsibilities": [
+        {
+          "category": "test_harness",
+          "contractRefs": [],
+          "disposition": "retired",
+          "evidence": [
+            {
+              "path": "crates/compat-harness/tests/source_authority.rs",
+              "test": "repository_source_inventory"
+            }
+          ],
+          "rationale": "Dormant TypeScript-only internal responsibility test/kernel-test-utils.ts has no shipped Rust/public outcome; the historical source remains hash-pinned until Phase 14.",
+          "id": "ts-test-kernel-test-utils-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/keyring-error-taxonomy.test.ts",
+      "sourceSha256": "65ab20df810c77750177233ad01ee2dcedf2185873f0931c7fba5a33992ae77e",
+      "responsibilities": [
+        {
+          "category": "credential",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/provider/tests/config_credentials.rs",
+              "test": "interactive_keyring_states_are_typed_and_secret_free"
+            }
+          ],
+          "rationale": "Historical test/keyring-error-taxonomy.test.ts credential responsibility is owned by typed, secret-free Rust configuration tests.",
+          "id": "ts-test-keyring-error-taxonomy-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/launcher.test.ts",
+      "sourceSha256": "ad5bb1940031be161d5c0b720cd4bbb067153be54f0ebec49660bc7d3c8bd4b6",
+      "responsibilities": [
+        {
+          "category": "package",
+          "contractRefs": [
+            ".planning/SPEC.md#2-thin-npm-distribution"
+          ],
+          "disposition": "package_smoke",
+          "evidence": [
+            {
+              "path": "bin/minimax-codex.cjs"
+            }
+          ],
+          "rationale": "Historical test/launcher.test.ts owns package-only distribution smoke through reviewed JavaScript orchestration and no product behavior.",
+          "id": "ts-test-launcher-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/legacy-workspace-migration.test.ts",
+      "sourceSha256": "299df355b3ef4c84f1246087f418f8af1fed9563dfa448a9da587cb4b5018fc5",
+      "responsibilities": [
+        {
+          "category": "migration",
+          "contractRefs": [
+            ".planning/SPEC.md#4-source-preserving-upgrade"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/cli/tests/migration.rs",
+              "test": "inventory_and_dry_run_are_deterministic_and_write_nothing"
+            }
+          ],
+          "rationale": "Historical test/legacy-workspace-migration.test.ts migration responsibility is owned by deterministic, source-preserving Rust migration tests.",
+          "id": "ts-test-legacy-workspace-migration-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/model-adapter-interrupt.test.ts",
+      "sourceSha256": "e1a52feb5eaf7b034504052bf1ec3041d73bac7682d3a3d8f59407291f17be50",
+      "responsibilities": [
+        {
+          "category": "provider",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/provider/tests/http_stream.rs",
+              "test": "responses_and_chat_completions_converge_on_safe_stream_events"
+            }
+          ],
+          "rationale": "Historical test/model-adapter-interrupt.test.ts Provider responsibility is owned by offline Rust protocol fixtures and safe stream normalization tests.",
+          "id": "ts-test-model-adapter-interrupt-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/model-command-routing.test.ts",
+      "sourceSha256": "28de1d5ec60012a67470092f0cbb80b740b6f1a0f492dff126399df3d10d3970",
+      "responsibilities": [
+        {
+          "category": "cli",
+          "contractRefs": [
+            "fixtures/compat/commands.v1.json#commands"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/tui/tests/command_render.rs",
+              "test": "parser_covers_every_manifest_command_alias_and_argument_shape"
+            }
+          ],
+          "rationale": "Historical test/model-command-routing.test.ts public command/rendering responsibility is owned by the locked Rust command parser and safe renderer tests.",
+          "id": "ts-test-model-command-routing-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/model-profile-registry.test.ts",
+      "sourceSha256": "84e8692e5ef52a766447bf893fe5d0c12e4c392600254a1c39aca2959edc9806",
+      "responsibilities": [
+        {
+          "category": "runtime",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/provider/tests/config_credentials.rs",
+              "test": "configuration_precedence_is_cli_environment_project_user_defaults"
+            },
+            {
+              "path": "crates/provider/tests/config_credentials.rs",
+              "test": "strict_documents_and_unsafe_values_fail_before_provider_work"
+            }
+          ],
+          "rationale": "Historical model profile registry behavior is owned by strict Rust model configuration and deterministic precedence without workspace rewrites.",
+          "id": "ts-test-model-profile-registry-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/model-profile.test.ts",
+      "sourceSha256": "a5772d0f92590c54550c55079a3629e1fd266577af06b2076486b8b0fd4ba297",
+      "responsibilities": [
+        {
+          "category": "runtime",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/provider/tests/config_credentials.rs",
+              "test": "configuration_precedence_is_cli_environment_project_user_defaults"
+            },
+            {
+              "path": "crates/provider/tests/config_credentials.rs",
+              "test": "strict_documents_and_unsafe_values_fail_before_provider_work"
+            }
+          ],
+          "rationale": "Historical model profile validation is owned by Rust configuration types that reject unsafe endpoints, limits, and unknown fields before Provider work.",
+          "id": "ts-test-model-profile-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/model-selection-persistence.test.ts",
+      "sourceSha256": "46a27ee4215652ec6c344c4ab834b158e11bf48125ac934fa331defe9fec9855",
+      "responsibilities": [
+        {
+          "category": "runtime",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/core/tests/session_machine.rs",
+              "test": "session_binding_and_turn_request_model_identity_survive_replay"
+            }
+          ],
+          "rationale": "Historical model identity persistence is owned by the Rust session binding and exact journal replay contract.",
+          "id": "ts-test-model-selection-persistence-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/model-selection-service.test.ts",
+      "sourceSha256": "2c030ce150b881f7dabc9c170b3bfec5118f3c9c7c7c1e685a3848a4c88ceaed",
+      "responsibilities": [
+        {
+          "category": "runtime",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/provider/tests/config_credentials.rs",
+              "test": "configuration_precedence_is_cli_environment_project_user_defaults"
+            },
+            {
+              "path": "crates/provider/tests/config_credentials.rs",
+              "test": "strict_documents_and_unsafe_values_fail_before_provider_work"
+            }
+          ],
+          "rationale": "Historical model selection service outcomes are owned by Rust configuration precedence and fail-before-Provider validation.",
+          "id": "ts-test-model-selection-service-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/model-state-store.test.ts",
+      "sourceSha256": "4957068980cc08c68efef1975b59cc28d6b27d590545c787856333d2a099b6b4",
+      "responsibilities": [
+        {
+          "category": "runtime",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/provider/tests/config_credentials.rs",
+              "test": "configuration_precedence_is_cli_environment_project_user_defaults"
+            },
+            {
+              "path": "crates/provider/tests/config_credentials.rs",
+              "test": "strict_documents_and_unsafe_values_fail_before_provider_work"
+            }
+          ],
+          "rationale": "Historical model state constraints are owned by strict, secret-free Rust configuration and its deterministic precedence contract.",
+          "id": "ts-test-model-state-store-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/npm-diagnostic-executor.test.ts",
+      "sourceSha256": "806d6a5ad762b3377792b2905ef1eaf01c8cf3c0862d30a8bdf151cddac2b25d",
+      "responsibilities": [
+        {
+          "category": "runtime",
+          "contractRefs": [],
+          "disposition": "retired",
+          "evidence": [
+            {
+              "path": "crates/compat-harness/tests/source_authority.rs",
+              "test": "repository_source_inventory"
+            }
+          ],
+          "rationale": "Dormant TypeScript-only internal responsibility test/npm-diagnostic-executor.test.ts has no shipped Rust/public outcome; the historical source remains hash-pinned until Phase 14.",
+          "id": "ts-test-npm-diagnostic-executor-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/permission-service.test.ts",
+      "sourceSha256": "c298c1333cbb9f5513128798ca1c02d81544970b44c7474c9d0431f7df04df63",
+      "responsibilities": [
+        {
+          "category": "tool",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/cli/tests/tool_loop.rs",
+              "test": "confirm_mode_preserves_order_ids_and_durability_for_both_provider_protocols"
+            }
+          ],
+          "rationale": "Historical test/permission-service.test.ts tool/approval responsibility is owned by ordered, durable Rust tool-loop evidence.",
+          "id": "ts-test-permission-service-test-ts"
+        },
+        {
+          "category": "tool",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/cli/tests/tool_loop.rs",
+              "test": "full_access_skips_prompt_but_still_preflights_persists_and_executes"
+            }
+          ],
+          "rationale": "Process-scoped full access and its reset to confirm mode after restart are owned by the cited deterministic Rust tool-loop test.",
+          "id": "ts-permission-reset-on-restart"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/provider-action-normalization.test.ts",
+      "sourceSha256": "28b858b4d712e2433ff60c0a2a04aa341fbd425e08c074182080b96b2cadd053",
+      "responsibilities": [
+        {
+          "category": "provider",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/provider/tests/provider_fixtures.rs",
+              "test": "both_provider_protocols_match_every_valid_compatibility_fixture"
+            }
+          ],
+          "rationale": "Historical test/provider-action-normalization.test.ts Provider responsibility is owned by offline Rust protocol fixtures and safe stream normalization tests.",
+          "id": "ts-test-provider-action-normalization-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/provider-adapter-contract.test.ts",
+      "sourceSha256": "6d6f3d0476968c31dbbd3efff89fd573b148ddf4203eb09b6ebfc63d831640bd",
+      "responsibilities": [
+        {
+          "category": "provider",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/provider/tests/provider_fixtures.rs",
+              "test": "both_provider_protocols_match_every_valid_compatibility_fixture"
+            }
+          ],
+          "rationale": "Historical test/provider-adapter-contract.test.ts Provider responsibility is owned by offline Rust protocol fixtures and safe stream normalization tests.",
+          "id": "ts-test-provider-adapter-contract-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/provider-adapter-registry.test.ts",
+      "sourceSha256": "57a8391c8e96f20767274f07f259393134eb122d4624eebc67b9ae387843a35b",
+      "responsibilities": [
+        {
+          "category": "provider",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/provider/tests/provider_fixtures.rs",
+              "test": "both_provider_protocols_match_every_valid_compatibility_fixture"
+            }
+          ],
+          "rationale": "Historical test/provider-adapter-registry.test.ts Provider responsibility is owned by offline Rust protocol fixtures and safe stream normalization tests.",
+          "id": "ts-test-provider-adapter-registry-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/provider-conformance.test.ts",
+      "sourceSha256": "8253d31468ae6a89c05d4614030cd89cb14b42dbfed7b8774725fe3ed83b737a",
+      "responsibilities": [
+        {
+          "category": "provider",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/compat-harness/tests/provider_eval.rs",
+              "test": "provider_evaluation_matches_committed_golden_and_is_repeatable"
+            }
+          ],
+          "rationale": "This TypeScript test is static, hash-pinned evidence only; `provider-eval --format json`, the exact Rust evaluator test, and the committed golden report own executable Provider evaluation.",
+          "id": "ts-test-provider-conformance-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/provider-model-adapter.test.ts",
+      "sourceSha256": "bb74e569243f4d727a9ebbcd4e95fe30b699b490d5dce59df5ca5ff01c371c61",
+      "responsibilities": [
+        {
+          "category": "provider",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/provider/tests/provider_fixtures.rs",
+              "test": "both_provider_protocols_match_every_valid_compatibility_fixture"
+            }
+          ],
+          "rationale": "Historical test/provider-model-adapter.test.ts Provider responsibility is owned by offline Rust protocol fixtures and safe stream normalization tests.",
+          "id": "ts-test-provider-model-adapter-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/provider-protocol.test.ts",
+      "sourceSha256": "27d7923f9bc2f04b899e7b8c67bac713ecb3b88a1a7f558d0f1aeceaec6e6d0c",
+      "responsibilities": [
+        {
+          "category": "provider",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/provider/tests/http_stream.rs",
+              "test": "responses_and_chat_completions_converge_on_safe_stream_events"
+            }
+          ],
+          "rationale": "Historical test/provider-protocol.test.ts Provider responsibility is owned by offline Rust protocol fixtures and safe stream normalization tests.",
+          "id": "ts-test-provider-protocol-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/provider-security.test.ts",
+      "sourceSha256": "83fad890b0757b7cb921375301584bb8a97e94a2ce31ce78a4c4e88ddf5cb38b",
+      "responsibilities": [
+        {
+          "category": "provider",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/provider/tests/http_stream.rs",
+              "test": "responses_and_chat_completions_converge_on_safe_stream_events"
+            }
+          ],
+          "rationale": "Historical test/provider-security.test.ts Provider responsibility is owned by offline Rust protocol fixtures and safe stream normalization tests.",
+          "id": "ts-test-provider-security-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/reasoning-filter.test.ts",
+      "sourceSha256": "23ed07b43845059c30cfd3375b70cb37bb353db281a18d0cbeae20d62112948e",
+      "responsibilities": [
+        {
+          "category": "provider",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/provider/tests/provider_fixtures.rs",
+              "test": "both_provider_protocols_match_every_valid_compatibility_fixture"
+            }
+          ],
+          "rationale": "Historical test/reasoning-filter.test.ts Provider responsibility is owned by offline Rust protocol fixtures and safe stream normalization tests.",
+          "id": "ts-test-reasoning-filter-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/release-package.test.ts",
+      "sourceSha256": "98f9c8fe0fced70127b4b03e481ffa2c645be29db2efa5aea7d477408f040a0e",
+      "responsibilities": [
+        {
+          "category": "package",
+          "contractRefs": [
+            ".planning/SPEC.md#2-thin-npm-distribution"
+          ],
+          "disposition": "package_smoke",
+          "evidence": [
+            {
+              "path": "scripts/release/package-rust.mjs"
+            }
+          ],
+          "rationale": "Historical test/release-package.test.ts owns package-only distribution smoke through reviewed JavaScript orchestration and no product behavior.",
+          "id": "ts-test-release-package-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/run-tests.ts",
+      "sourceSha256": "2c1eecd526d79fc08c48c8e01b6f4d30ca7b556a0d5ec50bfb6ce8ab04e5eaed",
+      "responsibilities": [
+        {
+          "category": "test_harness",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/compat-harness/tests/source_authority.rs",
+              "test": "discovered_test_graph_rejects_transitive_typescript_evaluators"
+            }
+          ],
+          "rationale": "The transitional runner validates the complete discovered dependency graph before import, while the independent Rust authority test fails closed on evaluator reachability and unsafe local resolution.",
+          "id": "ts-test-run-tests-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/runtime-connection-contract.test.ts",
+      "sourceSha256": "4e503fc097ebb4ad505dfb2125ef5e63ca90534d3ebe4f14cdea44adb492e7b1",
+      "responsibilities": [
+        {
+          "category": "runtime",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/cli/tests/restart.rs",
+              "test": "conversation_reconstructs_then_lists_resumes_continues_retries_and_compacts"
+            }
+          ],
+          "rationale": "Historical test/runtime-connection-contract.test.ts durable runtime responsibility is owned by Rust recovery/state-authority tests rather than TypeScript internals.",
+          "id": "ts-test-runtime-connection-contract-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/rust-rewrite-compat-manifest.test.ts",
+      "sourceSha256": "e90f21d83a26566dddab7651953e77df0992ec4ee2f0f0b5872c1b58ec090669",
+      "responsibilities": [
+        {
+          "category": "package",
+          "contractRefs": [
+            ".planning/SPEC.md#3-compatibility-without-a-live-legacy-runtime"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/compat-harness/tests/compat_report.rs",
+              "test": "rust_command_permission_provider_and_product_baselines_are_executable"
+            }
+          ],
+          "rationale": "Historical test/rust-rewrite-compat-manifest.test.ts compatibility responsibility is owned by the executable Rust baseline and immutable fixtures.",
+          "id": "ts-test-rust-rewrite-compat-manifest-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/secret-store.test.ts",
+      "sourceSha256": "9bc82c4892ed8af64cdec8090a3ae00961fd0f3e500e4cdfb6af1d1196da93d9",
+      "responsibilities": [
+        {
+          "category": "credential",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/provider/tests/config_credentials.rs",
+              "test": "interactive_keyring_states_are_typed_and_secret_free"
+            }
+          ],
+          "rationale": "Historical test/secret-store.test.ts credential responsibility is owned by typed, secret-free Rust configuration tests.",
+          "id": "ts-test-secret-store-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/session-service.test.ts",
+      "sourceSha256": "16320e7d66cf709c9862c8759eca2e9bbdbd0f2e185f3805c6f5d722ec237583",
+      "responsibilities": [
+        {
+          "category": "runtime",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/cli/tests/restart.rs",
+              "test": "conversation_reconstructs_then_lists_resumes_continues_retries_and_compacts"
+            }
+          ],
+          "rationale": "Historical test/session-service.test.ts durable runtime responsibility is owned by Rust recovery/state-authority tests rather than TypeScript internals.",
+          "id": "ts-test-session-service-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/shutdown-coordinator.test.ts",
+      "sourceSha256": "477f5f026a86f9bc1a79370cd8c5b2dadbc10a9395a6c1f4f4ad58889818bd32",
+      "responsibilities": [
+        {
+          "category": "lifecycle",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/cli/tests/lifecycle_wiki.rs",
+              "test": "terminal_runtime_session_reaches_pinned_wiki_and_current_retrieval"
+            }
+          ],
+          "rationale": "Historical test/shutdown-coordinator.test.ts lifecycle responsibility is owned by Rust session finalization, restart, and pinned-Wiki evidence.",
+          "id": "ts-test-shutdown-coordinator-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/storage-index-recovery.test.ts",
+      "sourceSha256": "a66b7461a6d6e3d7be102167afbd14b777b59b20b4a43499c7d7dc5ba2e1e3c0",
+      "responsibilities": [
+        {
+          "category": "storage",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/core/tests/session_machine.rs",
+              "test": "journal_replay_reconstructs_state_and_ignores_duplicate_records"
+            }
+          ],
+          "rationale": "The Rust journal replay test proves durable index recovery reconstructs state and ignores duplicate records.",
+          "id": "ts-test-storage-index-recovery-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/storage-turns.test.ts",
+      "sourceSha256": "ea9ff156c9164f2843fdd30ad00e69275b7240ac25f39f1860a7f1c8821516c3",
+      "responsibilities": [
+        {
+          "category": "storage",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/core/tests/session_machine.rs",
+              "test": "journal_replay_reconstructs_state_and_ignores_duplicate_records"
+            }
+          ],
+          "rationale": "The Rust journal replay test proves stored turn state is reconstructed deterministically and deduplicated.",
+          "id": "ts-test-storage-turns-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/storage-versioning.test.ts",
+      "sourceSha256": "efcb84d674b60afef9b7c60f8f0c09f07ad98f16f78ccef663d7aa7470dae0a0",
+      "responsibilities": [
+        {
+          "category": "storage",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/core/tests/session_machine.rs",
+              "test": "journal_replay_reconstructs_state_and_ignores_duplicate_records"
+            }
+          ],
+          "rationale": "The Rust journal replay test proves versioned records replay into one deterministic state without duplicate application.",
+          "id": "ts-test-storage-versioning-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/summary-generator.test.ts",
+      "sourceSha256": "26dc1eee71a00586205298d0cd3904ec806bf9aab27cff78519bb11d9d62ff34",
+      "responsibilities": [
+        {
+          "category": "runtime",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/core/tests/compaction_trace.rs",
+              "test": "compaction_is_byte_stable_structured_and_excludes_unsafe_history"
+            }
+          ],
+          "rationale": "Historical structured summary and redaction outcomes are owned by deterministic local Rust compaction and unsafe-history exclusion tests.",
+          "id": "ts-test-summary-generator-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/support/capability-fixtures.ts",
+      "sourceSha256": "b278eaf38e01309377615fda29aa6c14fa468f9704eea1a77133ab8edd44c4f6",
+      "responsibilities": [
+        {
+          "category": "retrieval",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/retrieval/tests/lexical.rs",
+              "test": "immutable_corpus_rejects_schema_identity_and_case_drift"
+            }
+          ],
+          "rationale": "The Rust immutable-corpus test proves support fixtures cannot drift in schema, identity, or case definitions.",
+          "id": "ts-test-support-capability-fixtures-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/support/provider-conformance-suite.ts",
+      "sourceSha256": "aff24684e38e32eeda5a9ae3c7a406d858186100a6834e1f9889c30bbd5b61ec",
+      "responsibilities": [
+        {
+          "category": "provider",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/compat-harness/tests/provider_eval.rs",
+              "test": "provider_evaluation_matches_committed_golden_and_is_repeatable"
+            }
+          ],
+          "rationale": "Historical test/support/provider-conformance-suite.ts authority is replaced by `provider-eval --format json`, production replay, the exact Rust evaluator test, and fixtures/compat/evaluations/provider-report.expected.json.",
+          "id": "ts-test-support-provider-conformance-suite-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/test-discovery.test.ts",
+      "sourceSha256": "3c4f62c6742895ac00e404760443c99c8e8f345109124d0146aa8e5a65ab3d64",
+      "responsibilities": [
+        {
+          "category": "test_harness",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/compat-harness/tests/source_authority.rs",
+              "test": "discovered_test_graph_rejects_transitive_typescript_evaluators"
+            }
+          ],
+          "rationale": "Static TypeScript fixtures exercise direct, transitive, re-export, dynamic, normalized, cyclic, regex-literal, and fail-closed graph cases; the independent Rust authority test owns the committed gate.",
+          "id": "ts-test-test-discovery-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/test-discovery.ts",
+      "sourceSha256": "e9569eedbe549e337ba11607183d14cb57c8249dab1620646e945358362979b4",
+      "responsibilities": [
+        {
+          "category": "test_harness",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/compat-harness/tests/source_authority.rs",
+              "test": "discovered_test_graph_rejects_transitive_typescript_evaluators"
+            }
+          ],
+          "rationale": "The transitional TypeScript graph validator resolves every discovered test dependency before import, while the independent Rust authority test enforces the same fail-closed boundary.",
+          "id": "ts-test-test-discovery-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/thread-navigation.test.ts",
+      "sourceSha256": "a423cd5be8889debfd670a4fd1c0a68a8e4feb49d38723cfba0ec22c83c22ab9",
+      "responsibilities": [
+        {
+          "category": "lifecycle",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/cli/tests/lifecycle_wiki.rs",
+              "test": "terminal_runtime_session_reaches_pinned_wiki_and_current_retrieval"
+            }
+          ],
+          "rationale": "Historical test/thread-navigation.test.ts lifecycle responsibility is owned by Rust session finalization, restart, and pinned-Wiki evidence.",
+          "id": "ts-test-thread-navigation-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/token-estimator.test.ts",
+      "sourceSha256": "33ac0887b31cac9052d5c7fdba28f69d6264c9d37217aebe6d2efe822da18be4",
+      "responsibilities": [
+        {
+          "category": "runtime",
+          "contractRefs": [],
+          "disposition": "retired",
+          "evidence": [
+            {
+              "path": "crates/compat-harness/tests/source_authority.rs",
+              "test": "repository_source_inventory"
+            }
+          ],
+          "rationale": "Dormant TypeScript-only internal responsibility test/token-estimator.test.ts has no shipped Rust/public outcome; the historical source remains hash-pinned until Phase 14.",
+          "id": "ts-test-token-estimator-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/trace-recorder.test.ts",
+      "sourceSha256": "85e5904ec7713d0476e3b4ff03c91109713811081c4c6de62f12f9e493ef42fe",
+      "responsibilities": [
+        {
+          "category": "runtime",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/cli/tests/restart.rs",
+              "test": "conversation_reconstructs_then_lists_resumes_continues_retries_and_compacts"
+            }
+          ],
+          "rationale": "Historical test/trace-recorder.test.ts durable runtime responsibility is owned by Rust recovery/state-authority tests rather than TypeScript internals.",
+          "id": "ts-test-trace-recorder-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/turn-delta-buffer.test.ts",
+      "sourceSha256": "dbc5d5d074b071adb46a3a61b7e743b44df1faadc39b20ed5241b05cd4551a45",
+      "responsibilities": [
+        {
+          "category": "runtime",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/core/tests/runtime_machine.rs",
+              "test": "completed_turn_persists_every_event_before_publish_and_finalizes_once"
+            },
+            {
+              "path": "crates/core/tests/runtime_machine.rs",
+              "test": "cancel_after_partial_delta_preserves_partial_event_and_interrupts"
+            }
+          ],
+          "rationale": "Historical delta durability is owned by Rust persist-before-publish and partial-cancellation terminal tests rather than a second buffer implementation.",
+          "id": "ts-test-turn-delta-buffer-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/turn-engine.test.ts",
+      "sourceSha256": "ecbe9b9c7c1bedfc230230ff12049abd1105d11ab4ad3e940aecfd8c151f49ca",
+      "responsibilities": [
+        {
+          "category": "runtime",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/cli/tests/restart.rs",
+              "test": "conversation_reconstructs_then_lists_resumes_continues_retries_and_compacts"
+            }
+          ],
+          "rationale": "Historical test/turn-engine.test.ts durable runtime responsibility is owned by Rust recovery/state-authority tests rather than TypeScript internals.",
+          "id": "ts-test-turn-engine-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/ui-command-boundary.test.ts",
+      "sourceSha256": "d0a48d28828950f84a42d8a21626aed1c2df96cafedf27a3e32f51f6786fe066",
+      "responsibilities": [
+        {
+          "category": "cli",
+          "contractRefs": [
+            "fixtures/compat/commands.v1.json#commands"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/tui/tests/command_render.rs",
+              "test": "parser_covers_every_manifest_command_alias_and_argument_shape"
+            }
+          ],
+          "rationale": "Historical test/ui-command-boundary.test.ts public command/rendering responsibility is owned by the locked Rust command parser and safe renderer tests.",
+          "id": "ts-test-ui-command-boundary-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/ui-dispatcher-ownership.test.tsx",
+      "sourceSha256": "c6a279efcfe266278f91e109cc1e0b91501d7cad6191d5ddb1c0e553945a18fd",
+      "responsibilities": [
+        {
+          "category": "test_harness",
+          "contractRefs": [],
+          "disposition": "retired",
+          "evidence": [
+            {
+              "path": "crates/compat-harness/tests/source_authority.rs",
+              "test": "repository_source_inventory"
+            }
+          ],
+          "rationale": "Dormant TypeScript-only internal responsibility test/ui-dispatcher-ownership.test.tsx has no shipped Rust/public outcome; the historical source remains hash-pinned until Phase 14.",
+          "id": "ts-test-ui-dispatcher-ownership-test-tsx"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/ui-state.test.ts",
+      "sourceSha256": "5ed62bc421bd7984dd8439898469e5f79447ce209342f506844f45fc76f47cf4",
+      "responsibilities": [
+        {
+          "category": "rendering",
+          "contractRefs": [
+            "fixtures/compat/commands.v1.json#commands"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/tui/tests/command_render.rs",
+              "test": "renderer_uses_shared_events_and_removes_terminal_control_sequences"
+            }
+          ],
+          "rationale": "Historical test/ui-state.test.ts public command/rendering responsibility is owned by the locked Rust command parser and safe renderer tests.",
+          "id": "ts-test-ui-state-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/ui-status.test.ts",
+      "sourceSha256": "aee576cbf0ee5d6da2da0594c107e5c34ba83c6a5d3fd26b2995fc82e37820a1",
+      "responsibilities": [
+        {
+          "category": "rendering",
+          "contractRefs": [
+            "fixtures/compat/commands.v1.json#commands"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/tui/tests/command_render.rs",
+              "test": "renderer_uses_shared_events_and_removes_terminal_control_sequences"
+            }
+          ],
+          "rationale": "Historical test/ui-status.test.ts public command/rendering responsibility is owned by the locked Rust command parser and safe renderer tests.",
+          "id": "ts-test-ui-status-test-ts"
+        },
+        {
+          "category": "cli",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/cli/tests/headless.rs",
+              "test": "text_and_jsonl_terminal_outcomes_match_public_exit_contract"
+            }
+          ],
+          "rationale": "Historical terminal text, schema-v1 JSONL, and public exit outcomes are owned by the cited deterministic Rust CLI test.",
+          "id": "ts-cli-terminal-output-parity"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/user-config-root.test.ts",
+      "sourceSha256": "4145b2c9bae0d447b56c03d3b066e9b9e31d49a7e113cab92a7c228acb4ff704",
+      "responsibilities": [
+        {
+          "category": "runtime",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/cli/tests/state_authority.rs",
+              "test": "supported_state_paths_write_only_normalized_minimax_descendants"
+            }
+          ],
+          "rationale": "Historical test/user-config-root.test.ts durable runtime responsibility is owned by Rust recovery/state-authority tests rather than TypeScript internals.",
+          "id": "ts-test-user-config-root-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/user-profile-store.test.ts",
+      "sourceSha256": "f309f6cd2609436d7b276cbc08f8528a15cf54fb15c24c809040b7ca575d7e6c",
+      "responsibilities": [
+        {
+          "category": "runtime",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/provider/tests/config_credentials.rs",
+              "test": "configuration_precedence_is_cli_environment_project_user_defaults"
+            },
+            {
+              "path": "crates/provider/tests/config_credentials.rs",
+              "test": "strict_documents_and_unsafe_values_fail_before_provider_work"
+            }
+          ],
+          "rationale": "Historical user profile safety is owned by strict Rust configuration precedence that rejects unsafe or secret-bearing fields.",
+          "id": "ts-test-user-profile-store-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/workspace-lease.test.ts",
+      "sourceSha256": "6a55debe2978ff004d404176ff942577491eff5cdd0591abb7215481992cb5fe",
+      "responsibilities": [
+        {
+          "category": "runtime",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/cli/tests/state_authority.rs",
+              "test": "supported_state_paths_write_only_normalized_minimax_descendants"
+            }
+          ],
+          "rationale": "Historical test/workspace-lease.test.ts durable runtime responsibility is owned by Rust recovery/state-authority tests rather than TypeScript internals.",
+          "id": "ts-test-workspace-lease-test-ts"
+        }
+      ]
+    },
+    {
+      "sourcePath": "test/workspace-read-executor.test.ts",
+      "sourceSha256": "c44324055d2f5be87e6fa0f28d2d61948d997b9062961b887cfe72ef69e2bfde",
+      "responsibilities": [
+        {
+          "category": "tool",
+          "contractRefs": [
+            ".planning/SPEC.md#5-rust-owned-verification"
+          ],
+          "disposition": "rust_covered",
+          "evidence": [
+            {
+              "path": "crates/cli/tests/tool_loop.rs",
+              "test": "confirm_mode_preserves_order_ids_and_durability_for_both_provider_protocols"
+            }
+          ],
+          "rationale": "Historical test/workspace-read-executor.test.ts tool/approval responsibility is owned by ordered, durable Rust tool-loop evidence.",
+          "id": "ts-test-workspace-read-executor-test-ts"
+        }
+      ]
+    }
+  ]
+}

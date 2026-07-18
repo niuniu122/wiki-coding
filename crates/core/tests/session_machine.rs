@@ -203,6 +203,67 @@ fn journal_replay_reconstructs_state_and_ignores_duplicate_records() {
 }
 
 #[test]
+fn session_binding_and_turn_request_model_identity_survive_replay() {
+    let mut machine = SessionMachine::new();
+    let session_id = SessionId::new("session-model-binding").expect("session");
+    let selected = ModelBinding {
+        provider_id: ProviderId::new("provider:selected").expect("provider"),
+        model_id: ModelId::new("model-selected").expect("model"),
+        protocol: ProviderProtocolKind::ChatCompletions,
+    };
+    let mut records = Vec::new();
+
+    let created = machine
+        .apply(SessionCommand::Create {
+            record_id: record_id("record-model-create"),
+            session_id: session_id.clone(),
+            binding: selected.clone(),
+            now_unix_ms: 1,
+        })
+        .expect("create");
+    records.push(persisted(&created));
+    let continued = machine
+        .apply(SessionCommand::Continue {
+            record_id: record_id("record-model-turn"),
+            turn_id: TurnId::new("turn-model").expect("turn"),
+            request_id: RequestId::new("request-model").expect("request"),
+            user_input: "question".to_owned(),
+            max_output_tokens: 128,
+            now_unix_ms: 2,
+        })
+        .expect("continue");
+    records.push(persisted(&continued));
+    let SessionEffect::StartTurn(request) = &continued[1] else {
+        panic!("start turn");
+    };
+    assert_eq!(request.provider_id, selected.provider_id);
+    assert_eq!(request.model_id, selected.model_id);
+    assert_eq!(request.protocol, selected.protocol);
+
+    let finalized = machine
+        .apply(SessionCommand::Finalize {
+            record_id: record_id("record-model-final"),
+            receipt: TurnReceipt {
+                session_id: session_id.clone(),
+                turn_id: TurnId::new("turn-model").expect("turn"),
+                request_id: RequestId::new("request-model").expect("request"),
+                outcome: RuntimeTerminalOutcome::Completed,
+                usage: None,
+            },
+            assistant_content: Some("answer".to_owned()),
+            now_unix_ms: 3,
+        })
+        .expect("finalize");
+    records.push(persisted(&finalized));
+
+    let replayed = SessionMachine::replay(records).expect("replay");
+    let session = replayed.sessions().get(&session_id).expect("session");
+    assert_eq!(session.binding, selected);
+    assert_eq!(session.turns[0].request_id.as_str(), "request-model");
+    assert_eq!(session.turns[0].status, TurnStatus::Completed);
+}
+
+#[test]
 fn retry_uses_new_identity_and_keeps_terminal_source_immutable() {
     let mut machine = SessionMachine::new();
     create(&mut machine, "retry");

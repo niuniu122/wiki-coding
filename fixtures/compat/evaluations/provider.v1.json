@@ -1,0 +1,52 @@
+{
+  "schemaVersion": 1,
+  "evaluationId": "provider-conformance-v1",
+  "providerManifest": {
+    "path": "fixtures/compat/providers.v1.json",
+    "sha256": "2613a7f9bcf9775ebf033b720ed3d8b80511801ed4294b148e66754be42edf49"
+  },
+  "invalidFixture": {
+    "path": "fixtures/compat/provider-streams/invalid-cases.v1.json",
+    "sha256": "5af5c4d020bc61391c0b475b6b9b9b6b70b8c9c5272798afa01cf2d1d3aa20d9"
+  },
+  "protocols": [
+    {
+      "protocol": "responses",
+      "fixture": {
+        "path": "fixtures/compat/provider-streams/responses.valid.jsonl",
+        "sha256": "abed17b26deee2ce628c70bb8ea7f930a02d56ae8d927d7fb4760b1d2f3934bb"
+      },
+      "requiredChecks": [
+        "valid_text",
+        "usage",
+        "terminal_ordering",
+        "native_tool_call_identity",
+        "malformed_rejected",
+        "premature_rejected",
+        "safe_error_codes",
+        "failure_redaction",
+        "unsupported_feature_rejection",
+        "deterministic_repeat"
+      ]
+    },
+    {
+      "protocol": "chat_completions",
+      "fixture": {
+        "path": "fixtures/compat/provider-streams/chat-completions.valid.jsonl",
+        "sha256": "ae2bea30b5755c01397b9a18b8626dcff9500b5212e8f631115ee21a7fb03bcc"
+      },
+      "requiredChecks": [
+        "valid_text",
+        "usage",
+        "terminal_ordering",
+        "native_tool_call_identity",
+        "malformed_rejected",
+        "premature_rejected",
+        "safe_error_codes",
+        "failure_redaction",
+        "unsupported_feature_rejection",
+        "deterministic_repeat"
+      ]
+    }
+  ]
+}

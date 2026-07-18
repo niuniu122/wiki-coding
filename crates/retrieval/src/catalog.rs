@@ -181,7 +181,7 @@ impl ProjectCatalog {
 }
 
 #[must_use]
-pub(crate) fn hash_json<T: Serialize>(value: &T) -> String {
+pub(crate) fn hash_json<T: Serialize + ?Sized>(value: &T) -> String {
     let bytes = serde_json::to_vec(value).unwrap_or_default();
     encode_digest(Sha256::digest(bytes))
 }

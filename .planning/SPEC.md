@@ -1,178 +1,145 @@
-# MiniMax Codex Rust Rewrite — Master Specification
+# MiniMax Codex v3.0 Rust Convergence — Master Specification
 
-**Created:** 2026-07-15
-**Canonical design:** `docs/superpowers/specs/2026-07-15-rust-vault-rewrite-design.md`
-**Baseline:** TypeScript `84784f5`
-**Ambiguity score:** 0.0455 (gate: <= 0.20)
-**Requirements:** 45 locked
+**Created:** 2026-07-17
+**Predecessor:** v2.0 Capability Workspace at `8691999`
+**Ambiguity score:** 0.12 (gate: <= 0.20)
+**Requirements:** 14 locked
 
 ## Goal
 
-Replace the current TypeScript product path with a Windows/Linux Rust CLI/TUI that preserves user-facing behavior, safely operates a bounded tool set, maintains a per-project Obsidian-compatible evidence/Wiki Vault, and preserves BM25-first open-source project discovery with optional verified embedding.
+Make Rust the only executable product, state, compatibility, test, and evaluation authority. Keep npm as a convenient but deliberately thin distribution shell that can only locate and launch a supported Rust binary. Remove the live TypeScript product without losing TypeScript-era user data or weakening Windows/Linux release evidence.
 
 ## Current State
 
-The repository has a working TypeScript + Ink CLI and no Rust source. Exact + BM25 is active for capability retrieval. Embedding interfaces, Granite runtime, vector types, and RRF exist, but no production factory constructs and validates a complete semantic retrieval path. Session, provider, tools, and UI behavior provide the executable compatibility baseline.
+- Rust is already the default `minimax-codex` entry, but `minimax-codex-legacy` still executes `dist/cli.js`.
+- `src/` contains 100 TypeScript/TSX files (about 12,949 lines) and `test/` contains 91 TypeScript test files (about 12,391 lines).
+- TypeScript still owns check/build/test, retrieval evaluation, Provider conformance, and compatibility-baseline duties in CI.
+- Release scripts and the compatibility harness hard-code the legacy path and expect a two-implementation package.
+- Rust already owns source-preserving migration from TypeScript-era data and keeps deterministic fixtures under `fixtures/compat/migration/typescript-v1/`.
+- Supported hosted release targets remain `windows-x86_64-msvc` and `linux-x86_64-gnu`; `windows-x86_64-gnullvm-dev` remains development-only evidence.
 
 ## Locked Product Contracts
 
-### 1. Compatibility
+### 1. One Executable Authority
 
-The Rust product preserves existing slash commands, Responses and Chat Completions behavior, built-in MiniMax official/Hashsight profiles, custom OpenAI-compatible providers, and explicitly migratable user data. Internal TypeScript structure is not preserved.
+Rust owns CLI/TUI behavior, Provider normalization, sessions, tools, Vault/Wiki, retrieval, capability discovery, migration, compatibility reports, and user-visible output. No TypeScript or JavaScript module may provide a second implementation or runtime fallback.
 
-### 2. Permissions
+The parity baseline is the current Rust product plus documented public commands and locked fixtures. Dormant or unshipped TypeScript-only behavior is not automatically ported.
 
-The only public values are:
+### 2. Thin npm Distribution
 
-```text
-confirm      ask before every external tool invocation
-full-access  auto-run allowed tools for this process only
-```
+The npm experience remains supported through `npm install -g minimax-codex` and `npx`. JavaScript/CJS/MJS is allowed only for package metadata, platform-binary selection, archive assembly, checksums, and installed-package smoke orchestration.
 
-Every new process starts in `confirm`. Both modes enforce the same path, schema, secret, destructive-operation, cancellation, and unknown-side-effect hard gates. Rust v1 does not claim an OS sandbox.
+The launcher must fail closed with a stable, actionable error when the binary is missing, incompatible, or not executable. It must never import `src/`, execute `dist/cli.js`, download an unverified binary at runtime, or silently fall back to another implementation.
 
-### 3. Non-Programmer Open-Source Project Discovery
+### 3. Compatibility Without a Live Legacy Runtime
 
-This workflow is a first-class interface and must not be collapsed into generic capability search:
+Compatibility is verified as current Rust behavior against immutable public-contract fixtures, golden records, migration fixtures, and explicitly documented differences. The compatibility harness must not build or execute the TypeScript CLI.
 
-```text
-natural-language need
-  -> normalize locally
-  -> BM25 extracts/recalls keywords and candidate projects
-  -> embedding matches and reranks only the candidate set
-  -> policy filters source/license/maintenance
-  -> explain why each project matches and report actual mode
-```
+`minimax-codex-legacy`, `dist/cli.js`, `src/`, `test/`, TypeScript compiler configuration, and TypeScript-only dependencies are removed only after the Rust replacement gates pass.
 
-Without embedding, the workflow still returns BM25 candidates with an explicit degraded reason. Capability, project, and Wiki documents occupy three isolated indexes over one shared retrieval engine.
+### 4. Source-Preserving Upgrade
 
-### 4. Main-Model Wiki Workflow
+The Rust importer remains the only TypeScript-era data migration path. It continues to inventory, dry-run, apply, verify, and narrowly roll back without modifying source data or importing secrets/private reasoning. Static TypeScript v1 migration fixtures remain for at least two public releases after v3.0 cutover.
 
-Every finalized session receives a deterministic local durability evaluation. A no-value session writes a no-op receipt without a model call. A durable session enters an independent `MainModelWikiWorkflow` that uses the session's pinned main Provider/model and displays separate status/model/usage.
+### 5. Rust-Owned Verification
 
-The model may only propose a structured `KnowledgePatch`. Core validates raw source IDs, bounds, ownership, operations, and expected hashes. Only the Vault adapter writes files through a recoverable manifest transaction. Vault never calls Provider. A retry uses the same pinned model unless the user explicitly rebinds it.
+Rust tests/evaluations become authoritative for:
 
-### 5. Vault Truth Model
+- public CLI and JSONL behavior;
+- Responses and Chat Completions Provider conformance;
+- exact/BM25/hybrid retrieval, candidate isolation, and labeled ranking cases;
+- release packaging, installed-command smoke, migration, and compatibility reporting;
+- the absence of TypeScript business source, dependencies, and runtime fallback.
 
-Each project binds one writable Vault. `inbox/` is human-owned, finalized `raw/` is immutable evidence, `wiki/` is Agent-compiled current knowledge, `log.md` is operational metadata, and `.minimax/indexes/` is disposable derived data. Wiki claims require raw provenance and one current conclusion per topic; superseded conclusions leave normal retrieval but remain auditable.
+Node may run package-level smoke scripts, but a passing Node script cannot substitute for a failing Rust test.
 
-### 6. CLI, Tools, and Context
+### 6. Safe Incremental Cutover
 
-TUI retains all current slash commands. Headless supports one-shot run, JSONL events, doctor, migrate, Vault maintenance, and index maintenance. Rust v1 tools are read/list, patch/write, bounded shell, Git status/diff, and npm diagnostics. MCP, plugins, subagents, daemons, and unrestricted shell are excluded.
-
-Compaction is a deterministic local structured reducer, not a model call. Model context is bounded to a stable short summary, recent turns, relevant Wiki, and capability/project cards. Safe local trace stays folded by default and excludes private raw chain of thought.
-
-### 7. Credentials and Local Protection
-
-Credential precedence is environment variables then OS keyring. A headless environment without keyring accepts environment variables only. No plaintext credential may enter config, Vault, trace, panic output, logs, fixtures, or migration.
-
-Vault Markdown remains readable; the product explains local plaintext risk and recommends OS permissions plus BitLocker/LUKS or equivalent disk encryption.
-
-## Requirements by Delivery Boundary
-
-1. **Contract Foundation (ARCH-01..04, COMP-01..04):** compile the workspace, enforce one-way dependencies, type protocol events, and prove compatibility offline.
-2. **Usable Agent Shell (RUN-01..05, CLI-01..04):** stream/cancel/recover sessions, compact locally, expose TUI/headless surfaces, and resolve safe configuration.
-3. **Safe Tool Completion (TOOL-01..05):** preserve call identity and execute the complete v1 set under exactly two modes.
-4. **Vault and Wiki (VAULT-01..06, WIKI-01..04):** bind a project Vault, preserve evidence, transact Wiki changes, run the pinned main-model workflow, and clean safely.
-5. **Retrieval and Project Discovery (RETR-01..06):** serve three isolated indexes, preserve BM25, complete embedding, and explain project matches.
-6. **Migration and Release (MIGR-01..03, REL-01..04):** dry-run/import idempotently, package Windows/Linux, enforce benchmarks, and cut over safely.
-
-The atomic statements and one-to-one phase mapping are in `.planning/REQUIREMENTS.md`.
+Every phase leaves the Rust CLI buildable and the npm-installed command usable. Responsibilities move first, legacy dependencies are removed second, and source deletion occurs last. Hosted evidence is refreshed only after the final product fingerprint is stable.
 
 ## Boundaries
 
-**In scope:**
+### In Scope
 
-- A full Rust Cargo workspace and default product binary.
-- Existing provider/session/command compatibility with fixture-proven differences.
-- The v1 bounded tool set and two permission modes.
-- Per-project Vault, inbox, raw journal, Wiki, recovery, lint/rebuild, GC, and forget.
-- Three-domain exact/BM25/optional-embedding retrieval including the non-programmer project finder.
-- Explicit TypeScript data migration, Windows/Linux packaging, benchmarks, and cutover.
+- Remove the executable TypeScript CLI, TypeScript source/tests/evaluations, legacy bin, compiler configuration, and TypeScript-only dependencies.
+- Port still-required behavioral and evaluation coverage into Rust.
+- Rebase compatibility reports on immutable fixtures and the current Rust/public contract.
+- Preserve Rust-owned import of TypeScript-era durable data.
+- Keep and simplify npm packaging for Windows x64 and Linux x64 Rust binaries.
+- Update CI, release verification, documentation, and source-boundary checks.
 
-**Out of scope:**
+### Out of Scope
 
-- SQLite or another state database.
-- Bundled embedding weights or mandatory GPU runtime.
-- macOS v1, background services, application-layer Vault encryption, cross-project writable knowledge.
-- MCP, plugins, subagents, unrestricted shell, and automatic destructive migration.
+- Removing npm/Node entirely or building a GUI installer.
+- Adding macOS, ARM, new Providers, new tools, or new capability installation/execution features.
+- Recreating dormant, internal, or unshipped TypeScript-only behavior.
+- Changing the Vault format, permission model, BM25-first contract, embedding authority boundary, or capability-workspace safety model.
+- Deleting real user data, publishing packages, pushing branches, or spending Provider/API quota.
 
-## Non-Functional Gates
+## Milestone Acceptance Criteria
 
-- Cold start <= 500 ms, excluding recovery and embedding model load.
-- Idle RSS <= 150 MB.
-- Compressed base release artifact <= 50 MB.
-- BM25 query p95 <= 100 ms over 10,000 Wiki pages in a recorded benchmark environment.
-- Windows and Linux contract, recovery, path, keyring-fallback, and packaging tests pass.
-- Default tests use deterministic fixtures and consume no real credentials or API quota.
-
-## Master Acceptance Criteria
-
-- [ ] `cargo test --workspace` and architecture checks pass on the supported toolchain.
-- [ ] Every v1 requirement maps to exactly one phase and has an automated or explicit manual verifier.
-- [ ] TypeScript/Rust parity report has no unexplained mandatory difference.
-- [ ] `/permissions` exposes only confirm/full-access and restart resets full-access.
-- [ ] All five v1 tool categories complete a mocked Provider round trip with stable call IDs.
-- [ ] A crash at any journal/Wiki transaction boundary converges on restart without duplicate knowledge.
-- [ ] The pinned main model is observably responsible for durable Wiki synthesis, while Vault remains Provider-free.
-- [ ] Project discovery tests prove BM25 candidate recall occurs before embedding rerank.
-- [ ] Missing embedding yields useful BM25 results and truthful degraded status.
-- [ ] Migration dry-run/apply/second-apply/rollback preserve source data and exclude secrets.
-- [ ] Release performance, security, license, and Windows/Linux packaging gates pass.
-- [ ] Rust is not selected as default before all mandatory gates are green.
+- [ ] The repository has no `.ts` or `.tsx` product/test files and no `typescript`, `tsx`, `tsc`, `ink`, or React runtime/build dependency.
+- [ ] `package.json` exposes `minimax-codex` only; `minimax-codex-legacy`, `dist/cli.js`, and legacy start/build scripts are absent.
+- [ ] Allowed JavaScript is confined to the npm launcher and release/package orchestration and has no imports from product-domain source.
+- [ ] `cargo test --workspace --locked`, doc tests, formatting, and Clippy with warnings denied pass.
+- [ ] Rust-owned Provider and retrieval evaluations cover the existing deterministic fixture cases and publish machine-readable results.
+- [ ] Compatibility reports compare Rust against immutable contract fixtures and contain no live `typescript.*` product rows.
+- [ ] TypeScript-era migration inventory/dry-run/apply/verify/rollback tests remain source-preserving and pass.
+- [ ] Packed npm artifacts install offline in the release job and the installed `minimax-codex` command launches the packaged Rust binary.
+- [ ] Missing or wrong-platform native binaries fail with an actionable non-zero error and never invoke another runtime.
+- [ ] Windows x64 MSVC and Linux x64 GNU release, checksum, install, upgrade, rollback, security, license, and performance gates pass.
+- [ ] CI contains an explicit source-boundary gate preventing reintroduction of TypeScript business logic or a legacy fallback.
+- [ ] Documentation explains npm and native installation, the Rust-only architecture, and the two-release migration-support window.
+- [ ] Hosted evidence is regenerated against the final v3 product fingerprint; stale v2 evidence cannot satisfy the gate.
 
 ## Edge Coverage
 
-**Coverage:** 10/10 applicable edges resolved; 0 unresolved
-
-| Category | Edge | Resolution |
-|----------|------|------------|
-| Provider | premature EOF or duplicate terminal | typed protocol error; never completed |
-| Tool | interrupt after possible side effect | record unknown; never fabricate success |
-| Permission | restart after full-access | reset to confirm |
-| Vault | second writer or project mismatch | fail closed |
-| Vault | crash between raw finalization and evaluation marker | startup creates stable missing job |
-| Wiki | original pinned model unavailable | pending plus explicit rebind; no silent model change |
-| Retrieval | embedding missing/corrupt/stale | BM25 fallback plus degraded reason |
-| Project catalog | missing license/source | filter or visibly mark; never invent metadata |
-| GC | referenced or pending raw | protected from ordinary GC |
-| Migration | target collision or repeat apply | dry-run conflict or idempotent receipt match |
+| ID | Edge | Resolution | Coverage |
+|----|------|------------|----------|
+| EDGE-01 | npm launcher cannot find its native binary | Exit non-zero with platform/path guidance; never fall back | covered |
+| EDGE-02 | npm package contains a binary for the wrong platform | Package verification rejects the artifact before publication | covered |
+| EDGE-03 | old TypeScript data is malformed, oversized, secret-bearing, or collides | Rust migration fails closed before target mutation and preserves source | covered |
+| EDGE-04 | a TypeScript-only test describes undocumented behavior | Classify against the Rust/public contract; port only required behavior and record explicit retirement | covered |
+| EDGE-05 | Rust and historical evaluation results disagree | Block deletion/cutover until fixture intent is reconciled; never weaken thresholds silently | covered |
+| EDGE-06 | deletion removes a still-referenced legacy path | Repository-wide source/package/CI scan and installed-package smoke fail | covered |
+| EDGE-07 | Windows local GNU-LLVM artifact is mistaken for hosted MSVC evidence | Keep development-only tier and require hosted target identity | covered |
+| EDGE-08 | migration support window expires | Removal requires a later explicit milestone decision; v3 only records the earliest eligible release | backstop |
 
 ## Prohibitions
 
-| Must-NOT statement | Verification |
-|--------------------|--------------|
-| MUST NOT add SQLite/SQLx/Diesel/ORM dependencies | dependency/license scan |
-| MUST NOT expose a third public permission tier | CLI schema and snapshot tests |
-| MUST NOT run embedding before BM25 project candidate recall | staged retriever contract test |
-| MUST NOT let Vault call Provider or TUI parse Vault files | dependency checks |
-| MUST NOT write credentials or private raw reasoning | redaction/secret fixtures and review |
-| MUST NOT auto-delete raw evidence or run destructive migration | GC/migration negative tests |
-| MUST NOT report hybrid from configuration alone | health/fingerprint contract tests |
-| MUST NOT push, open a PR, spend API quota, or download model weights under current authorization | execution log and git/network review |
+| Must-NOT statement | Status | Verification |
+|--------------------|--------|--------------|
+| MUST NOT keep two executable product implementations | resolved | package-bin scan, source-boundary test, installed smoke |
+| MUST NOT put Provider, retrieval, session, Vault, tool, or migration behavior in JavaScript | resolved | JS allowlist plus import/content architecture gate |
+| MUST NOT let npm fall back to `dist/cli.js` or download an unverified runtime | resolved | launcher negative tests and packed-artifact inspection |
+| MUST NOT delete TypeScript source before replacement Rust gates pass | resolved | phase dependencies and cutover preflight |
+| MUST NOT modify or delete TypeScript-era source data during migration | resolved | migration collision/idempotency/rollback tests |
+| MUST NOT expand the supported platform or product feature scope in this milestone | resolved | roadmap scope and release-target assertions |
+| MUST NOT treat local GNU-LLVM smoke as hosted Windows MSVC release evidence | resolved | support-tier and host-target validation |
+| MUST NOT push, publish, open a PR, spend API quota, or download model weights without fresh approval | resolved | execution log and git/network review |
 
 ## Ambiguity Report
 
-| Dimension | Score | Minimum | Status | Notes |
-|-----------|-------|---------|--------|-------|
-| Goal Clarity | 0.98 | 0.75 | met | Full replacement and user value fixed |
-| Boundary Clarity | 0.95 | 0.70 | met | v1 tools, platforms, database, and extensions explicit |
-| Constraint Clarity | 0.94 | 0.65 | met | data, permission, model, performance, and authorization gates explicit |
-| Acceptance Criteria | 0.93 | 0.70 | met | 45 atomic requirements plus master checks |
-| **Ambiguity** | **0.0455** | **<= 0.20** | **pass** | Weighted clarity 0.9545 |
+| Dimension | Clarity | Weight | Notes |
+|-----------|---------|--------|-------|
+| Functional clarity | 0.92 | 35% | Rust authority and npm distribution outcome are explicit |
+| Behavioral clarity | 0.84 | 25% | current Rust/public contract is the baseline; dormant TS behavior excluded |
+| Boundary clarity | 0.91 | 25% | npm, migration, platforms, feature scope, and deletion order are fixed |
+| Quality clarity | 0.82 | 15% | deterministic, package, CI, and hosted gates are defined |
+| **Weighted ambiguity** | **0.12** | | **Passes the <= 0.20 specification gate** |
 
 ## Interview Log
 
-| Round | Question summary | Decision locked |
-|-------|------------------|-----------------|
-| Architecture | Database or local knowledge files? | Per-project Obsidian Vault, no SQLite |
-| Retrieval | Preserve current discovery behavior? | BM25 keywords/candidates then embedding project match |
-| Permissions | How many user-facing modes? | Exactly confirm and full-access |
-| Knowledge | Which model summarizes Wiki? | Current pinned main model in a separate workflow |
-| Scope | Which Rust v1 tools and interfaces? | Bounded five-category tool set, slash TUI, headless JSONL/maintenance |
-| Operations | How retain and clean raw data? | Weekly report, reference protection, 7-day trash, separate forget |
-| Release | What constitutes mature CLI? | Compatibility, recovery, packaging, security, and fixed performance gates |
-| Execution | How to implement? | Isolated branch/worktree, vertical slices, local atomic commits, no push/PR |
+| Round | Decision locked |
+|-------|-----------------|
+| Product direction | Rust leads nearly all implementation to reduce drift and bugs |
+| Distribution | Keep npm for convenience, but only as a thin Rust binary shell |
+| Legacy runtime | Remove `minimax-codex-legacy`; do not keep a second executable implementation |
+| Existing users | Preserve source-safe Rust migration for at least two public releases |
+| Compatibility | Current Rust CLI and documented public contract are authoritative |
+| Platforms | Keep Windows x64 and Linux x64; defer macOS/ARM |
+| Delivery | Use a v3.0 milestone and small, independently verified phases |
 
 ---
-*Next: Phase 1 SPEC and executable plans*
+*Next: define v3.0 requirements, roadmap phases, and executable phase plans.*

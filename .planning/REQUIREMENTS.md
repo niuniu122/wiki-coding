@@ -90,12 +90,56 @@
 - [x] **REL-03**: Offline unit, contract, parity, recovery, security, migration, and cross-platform CI pass without real credentials or API spend.
 - [x] **REL-04**: Rust becomes the default entry only after mandatory acceptance gates pass; TypeScript remains usable until cutover and its source data is never deleted automatically.
 
-## v2 Requirements
+## v2.0 Requirements
+
+### Capability Workspace
+
+- [x] **CAPW-01**: A maintainer can curate project, Skill, and MCP metadata in one dedicated source workspace whose three catalogs are physically separate from internal tool adapters and runtime state.
+- [x] **CAPW-02**: Every external item uses one strict capability-card contract containing kind, intent, source, platform, license, install, authorization, permission, and maintenance facts without inventing unknown values.
+- [x] **CAPW-03**: A user can search project, Skill, and MCP catalogs through three schema-isolated exact/BM25 indexes that share the retrieval kernel but cannot accept one another's document types.
+- [x] **CAPW-04**: An optional verified embedding resource can rerank only the bounded BM25 candidates from the selected catalogs, and every semantic failure preserves useful lexical results with a stable degraded reason.
+- [x] **CAPW-05**: A non-programmer can search all capability kinds or one kind and see `ready`, `needs_install`, or `needs_authorization` plus a plain-language next action for every result.
+- [x] **CAPW-06**: Capability status comes from a separate local inventory overlay; source catalogs never contain credentials, mutable install state, or executable process state.
+- [x] **CAPW-07**: Search, status, prompt augmentation, and catalog loading are read-only and cannot download, install, authorize, or execute a discovered project, Skill, or MCP server.
+- [x] **CAPW-08**: Deterministic fixtures and evaluations cover kind isolation, mixed Chinese/English intent, candidate-only embedding, readiness precedence, unsafe metadata rejection, and CLI text/JSON parity.
+
+## v3.0 Requirements
+
+### Rust Authority
+
+- [x] **RUST-01**: Rust is the only executable product implementation for CLI/TUI, Provider, sessions, tools, Vault/Wiki, retrieval, capability discovery, migration, and compatibility behavior.
+- [x] **RUST-02**: JavaScript is confined to an explicit npm launcher/release allowlist and cannot import product-domain source, implement business behavior, download an unverified runtime, or fall back to TypeScript.
+- [x] **RUST-03**: `.minimax` and Rust schemas are the only writable runtime authority; no legacy process can write `.mini-codex` state after cutover.
+
+### Rust Verification Authority
+
+- [x] **RVE-01**: Still-required public CLI, lifecycle, Provider, tool, retrieval, and rendering behaviors covered by TypeScript tests are represented by deterministic Rust tests or an explicit documented retirement decision.
+- [x] **RVE-02**: Provider conformance evaluation is Rust-owned, fixture-only, machine-readable, and covers the supported Responses and Chat Completions profiles without credentials or API spend.
+- [x] **RVE-03**: Retrieval evaluation is Rust-owned and proves exact/BM25 usefulness, labeled mixed-language cases, BM25-before-embedding ordering, candidate-only semantic reranking, and truthful degradation.
+
+### Compatibility and Migration
+
+- [x] **RCMP-01**: The compatibility harness evaluates the current Rust product against immutable public-contract fixtures and explicit differences without building or executing a TypeScript runtime.
+- [x] **RCMP-02**: TypeScript-era migration inventory, dry-run, apply, verify, idempotency, collision, interruption recovery, and narrow rollback remain source-preserving and release-gated for at least two public releases after v3.0.
+
+### npm and Native Release
+
+- [x] **RNPM-01**: `npm install -g minimax-codex` and `npx minimax-codex` launch the packaged Rust binary on supported hosts through one no-fallback command entry.
+- [x] **RNPM-02**: The npm package has no `minimax-codex-legacy`, `dist/cli.js`, TypeScript compiler/runtime, React/Ink runtime, or TypeScript-only production/build dependency.
+- [x] **RNPM-03**: Packed-package verification rejects missing, wrong-platform, renamed, non-executable, or hash-mismatched Rust binaries with actionable errors before release.
+
+### Final Cutover
+
+- [x] **RCUT-01**: The repository contains no TypeScript/TSX product or test source, and CI blocks reintroduction outside static migration data fixtures.
+- [ ] **RCUT-02**: Windows x64 MSVC and Linux x64 GNU pass Rust tests, evaluations, packaging, installed smoke, checksum, upgrade/rollback, security, license, and performance gates against one final product fingerprint.
+- [ ] **RCUT-03**: User and maintainer documentation describes Rust-only architecture, npm/native installation, supported platforms, no-fallback failures, migration/rollback, and the two-release compatibility window.
+
+## Future Requirements
 
 ### Extensions
 
 - **EXT-01**: Add macOS support after its full platform matrix passes.
-- **EXT-02**: Add MCP and plugin extension points without weakening the core/tool boundary.
+- **EXT-02**: Add an explicitly confirmed installer/resolver and sandboxed Skill/MCP runtime without weakening the core/tool boundary.
 - **EXT-03**: Add explicit read-only global knowledge above isolated project Vaults.
 
 ## Out of Scope
@@ -106,7 +150,8 @@
 | Background daemon | v1 is one foreground process and one writer |
 | Application-layer Vault encryption | Obsidian-readable files are protected by OS controls |
 | Bundled embedding model | Base distribution must remain small and functional without it |
-| Unrestricted shell, MCP, plugins, subagents | Outside the v1 safety and compatibility contract |
+| Automatic project/Skill/MCP installation or execution | Discovery does not grant authority; a later milestone must design confirmation, provenance, rollback, and sandboxing |
+| General plugins, subagents, or unrestricted shell | Outside this milestone's read-only capability-workspace contract |
 
 ## Traceability
 
@@ -164,13 +209,37 @@
 | REL-02 | Phase 6 | Complete |
 | REL-03 | Phase 6 | Complete |
 | REL-04 | Phase 6 | Complete |
+| CAPW-01 | Phase 9 | Complete |
+| CAPW-02 | Phase 9 | Complete |
+| CAPW-03 | Phase 9 | Complete |
+| CAPW-04 | Phase 9 | Complete |
+| CAPW-05 | Phase 9 | Complete |
+| CAPW-06 | Phase 9 | Complete |
+| CAPW-07 | Phase 9 | Complete |
+| CAPW-08 | Phase 9 | Complete |
+| RUST-01 | Phase 10 | Complete |
+| RUST-02 | Phase 10 | Complete |
+| RUST-03 | Phase 10 | Complete |
+| RVE-01 | Phase 11 | Complete |
+| RVE-02 | Phase 11 | Complete |
+| RVE-03 | Phase 11 | Complete |
+| RCMP-01 | Phase 12 | Complete |
+| RCMP-02 | Phase 12 | Complete |
+| RNPM-01 | Phase 13 | Complete |
+| RNPM-02 | Phase 13 | Complete |
+| RNPM-03 | Phase 13 | Complete |
+| RCUT-01 | Phase 14 | Complete |
+| RCUT-02 | Phase 14 | Pending |
+| RCUT-03 | Phase 14 | Pending |
 
 **Coverage:**
 
-- v1 requirements: 52 total
-- Mapped to phases: 52
+- v1 requirements: 52 complete
+- v2.0 requirements: 8 complete
+- v3.0 requirements: 14 pending
+- Mapped to phases: 74
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-07-15*
-*Last updated: 2026-07-17 for Phase 8 subprocess sandbox hardening*
+*Last updated: 2026-07-17 when defining the v3.0 Rust Convergence milestone*

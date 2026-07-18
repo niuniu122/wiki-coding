@@ -2,7 +2,7 @@
 
 ## What This Is
 
-MiniMax Codex is a Codex-style local CLI/TUI for MiniMax and OpenAI-compatible providers. This milestone replaces the TypeScript product path with a mature Rust command-line tool while preserving its behavior, adding a per-project Obsidian-compatible knowledge Vault, and retaining the non-programmer workflow that finds suitable open-source projects from a natural-language need.
+MiniMax Codex is a Codex-style local CLI/TUI for MiniMax and OpenAI-compatible providers. The Rust product path preserves a recoverable per-project Obsidian-compatible knowledge Vault and gives non-programmers a plain-language way to find open-source projects, Skills, and MCP servers without treating discovery as permission to install or run them.
 
 ## Core Value
 
@@ -12,31 +12,38 @@ A non-programmer can describe a goal and safely use one local, recoverable CLI t
 
 ### Validated
 
-- The TypeScript baseline at `84784f5` can run interactive MiniMax/OpenAI-compatible sessions.
-- Exact + BM25 capability retrieval is active in production construction.
-- Provider/tool event identity and deterministic evaluation fixtures exist and serve as the compatibility reference.
+- The Rust CLI/TUI is the default product path on Windows and Linux, with the TypeScript path retained explicitly for the support window.
+- Exact + BM25 retrieval is active across schema-isolated command, project, and Wiki indexes; optional embedding can only rerank BM25 project candidates.
+- Provider/tool event identity, the per-project Vault/Wiki workflow, deterministic fixtures, and the confirm-mode subprocess boundary are release-gated and verified.
+- Project, Skill, and MCP source metadata lives in a dedicated `capabilities/` workspace outside internal executable adapters.
+- Three typed exact/BM25 indexes preserve kind isolation; optional verified embedding can rerank only their bounded lexical candidate union.
+- Read-only workspace search reports `ready`, `needs_install`, or `needs_authorization` with source facts and a safe next action.
+- Discovery and prompt augmentation cannot download, install, authorize, start, or execute a discovered capability.
+- Phase 10 establishes Rust as the sole executable product and writable runtime authority: npm `dev`, `start`, and the supported bin resolve only to Rust, `.minimax` is the only writable state root, and reviewed JavaScript is limited to distribution orchestration.
+- Phase 11 establishes Rust as the sole executable verification and evaluation authority: all 101 historical responsibilities have semantic contracts, Provider/retrieval reports are Rust-owned, and `npm test` cannot reach the hash-pinned TypeScript evaluators.
+- Phase 12 establishes fixture-owned Rust compatibility and source-preserving TypeScript-era migration: the complete compatibility module closure is enforced, rollback ownership is durably provenance-bound, and target symlink escapes fail closed.
+- Phase 13 establishes a dependency-free npm/native Rust distribution path: deterministic candidates, explicit current fingerprints, eleven fail-closed corruption categories, separate offline installed smokes, and strict CI ordering are release-gated without fallback or runtime download.
 
 ### Active
 
-- [ ] Replace the main product path with a Windows/Linux Rust binary while preserving public workflows.
-- [ ] Separate protocol, core, providers, tools, retrieval, Vault, TUI, and CLI behind one-way ports.
-- [ ] Provide only `confirm` and session-scoped `full-access` permission modes.
-- [ ] Store recoverable raw evidence and main-model-compiled Wiki knowledge in a per-project Obsidian-compatible Vault without SQLite.
-- [ ] Preserve BM25-first, embedding-second open-source project discovery for non-programmers.
-- [ ] Migrate safely, meet release performance gates, and cut over only after parity is proven.
+- [ ] Make Rust the only product/runtime implementation and remove the live TypeScript CLI, tests, evaluations, and build dependencies.
+- [ ] Refresh hosted Windows/Linux release evidence for the final Rust-converged product fingerprint before release.
 
 ### Out of Scope
 
 - SQLite, SQLx, Diesel, ORM, connection pools, or an external database service — the Vault is ordinary files.
-- MCP, plugins, subagents, daemons, and unrestricted shell in Rust v1 — they would widen the safety and compatibility surface.
+- Automatic installation, authorization, or execution of discovered projects, Skills, or MCP servers — discovery must not grant authority.
+- A general plugin runtime, subagents, daemons, and unrestricted shell in this milestone — they widen the execution surface beyond the capability workspace.
 - Application-layer Vault encryption — transparent Markdown is intentional; OS permissions and disk encryption protect the device.
 - Bundling an embedding model in the base executable — semantic resources are separately installed and verified.
 - macOS v1 support — it follows after keyring, terminal, file replacement, and packaging tests pass.
 - Cross-project writable knowledge — every project has one isolated writable Vault.
+- Removing npm/Node distribution entirely — npm remains a supported convenience channel, but not a product implementation.
+- Adding macOS, ARM, new Providers, new runtime tools, or a capability installer during convergence — this milestone removes duplicate authority rather than expanding features.
 
 ## Context
 
-The existing repository is TypeScript + Ink and contains no Rust source at milestone start. The current capability pipeline constructs exact + BM25 retrieval; embedding abstractions, Granite runtime, vectors, and RRF exist but are not wired through the production factory. The rewrite uses OpenAI Codex's thin surfaces and typed operation/event boundaries, claw-code-style deterministic parity fixtures, and Karpathy Wiki's raw-evidence/compiled-knowledge separation without copying Codex's SQLite layer.
+The v1 Rust rewrite, Phase 8 subprocess hardening, Phase 9 capability workspace, Phase 10 executable/source authority boundary, Phase 11 Rust verification authority, Phase 12 fixture-backed migration, and Phase 13 thin npm/native release are implemented. Rust is now the only product, writable-runtime, executable-evaluation, compatibility, migration, and installed-package authority. The repository still retains hash-pinned TypeScript source, static tests, and build dependencies as transitional compatibility material, but test discovery cannot execute the TypeScript evaluators and packages cannot fall back to them. The remaining convergence work is final TypeScript deletion, Rust-only documentation, and fresh hosted Windows/Linux closure.
 
 ## Constraints
 
@@ -44,10 +51,16 @@ The existing repository is TypeScript + Ink and contains no Rust source at miles
 - **Architecture**: Core depends on ports only; CLI/TUI do not parse Vault Markdown, Vault never calls Provider, and tools never own the agent loop.
 - **Data**: Raw evidence finalizes before Wiki evaluation; every durable Wiki claim has source IDs and a recoverable transaction receipt.
 - **Retrieval**: BM25 remains the no-model baseline; project discovery always recalls with BM25 before embedding rerank.
+- **Capability workspace**: Project, Skill, and MCP source metadata are physically separate and schema-isolated; runtime installs, credentials, and process state never live in the source catalog.
+- **Rust authority**: Product behavior, state ownership, compatibility decisions, tests, and evaluations have one executable authority in Rust.
+- **npm boundary**: JavaScript may locate/package a platform Rust binary but may not implement Provider, retrieval, Vault, session, tool, migration, or fallback behavior.
+- **Cutover order**: A TypeScript responsibility is deleted only after its Rust replacement and deterministic acceptance gate pass on the current branch.
+- **Compatibility support**: TypeScript source data remains importable through Rust for at least two public releases after v3.0; fixtures remain static evidence and are not an executable legacy runtime.
+- **Authority**: Search and recommendation are read-only. A result may describe a next action but may never install, authorize, or execute it.
 - **Permissions**: Public modes are exactly `confirm` and `full-access`; hard safety gates remain in both.
 - **Credentials**: Environment variables override OS keyring; headless systems without keyring accept env only; plaintext persistence is forbidden.
 - **Performance**: Cold start <= 500 ms excluding recovery/model load, idle RSS <= 150 MB, base compressed artifact <= 50 MB, and BM25 p95 <= 100 ms at 10k Wiki pages.
-- **Execution**: Work occurs on `codex/rust-rewrite` from `84784f5`, with an atomic local commit after each verified slice.
+- **Execution**: v3 planning starts from the completed Phase 9 branch; implementation proceeds in small verified slices and does not require a branch switch during planning.
 - **Authorization**: No push/PR, real API spend, embedding model download, or destructive migration without fresh approval.
 
 ## Key Decisions
@@ -62,6 +75,43 @@ The existing repository is TypeScript + Ink and contains no Rust source at miles
 | Three isolated retrieval indexes | Prevent capability, project, and Wiki results from contaminating each other | Locked |
 | BM25 recall before embedding project matching | Preserve the non-programmer discovery behavior and keep a truthful fallback | Locked |
 | Vertical parity slices | Keep TypeScript usable until every Rust boundary is proven | Locked |
+| Dedicated external capability workspace | Keep third-party metadata and future install state out of the fixed internal tool adapters | Locked |
+| Three readiness labels | Translate runtime prerequisites into ready, needs install, or needs authorization for non-programmers | Locked |
+| Discovery never grants execution authority | Prevent a recommendation from silently becoming a download, credential request, or process launch | Locked |
+| Rust is the sole business implementation | Eliminate dual behavior, state, and verification authorities that can drift independently | Locked |
+| npm remains a thin Rust distribution shell | Preserve convenient `npm install -g`/`npx` installation without keeping a second product runtime | Locked |
+| Current Rust/public contract is the parity baseline | Avoid re-porting dormant or unshipped TypeScript-only behavior | Locked |
+| Rust keeps source-preserving legacy-data import | Remove the old executable while protecting existing users and rollback evidence | Locked |
+| Windows x64 and Linux x64 remain the release matrix | Keep convergence focused; platform expansion is a separate milestone | Locked |
+| Semantic evidence contracts own TypeScript responsibility retirement | Keep every historical public/safety outcome reviewable without filename-parity ports or broad boilerplate retirement | Locked |
+| Discovered TypeScript tests are graph-preflighted before import | Retain transitional static checks while preventing direct or transitive execution of `src/eval/**` | Locked |
+
+## Current Milestone: v3.0 Rust Convergence
+
+**Goal:** Make Rust the only executable product and verification authority while retaining npm as a thin, no-fallback distribution shell and preserving safe upgrades from TypeScript-era user data.
+
+**Target features:**
+
+- A source/ownership gate that forbids TypeScript business logic and dual state writers.
+- Rust-native tests and deterministic retrieval/Provider evaluations replacing TypeScript verification authority.
+- A fixture-driven compatibility harness and Rust migration support that no longer execute `dist/cli.js`.
+- An npm package whose only runtime path launches the supported platform Rust binary with clear fail-closed errors.
+- Final removal of `.ts/.tsx`, legacy CLI/build dependencies, and TypeScript CI jobs after all replacement gates pass.
+
+## Evolution
+
+This document evolves at phase transitions and milestone boundaries.
+
+**After each phase transition:**
+1. Move requirements proven by tests to Validated.
+2. Move rejected or deferred work to Out of Scope with a reason.
+3. Record new decisions that constrain later installer or runtime work.
+4. Confirm the product description and authority boundary remain accurate.
+
+**After each milestone:**
+1. Recheck the Core Value and all active requirements.
+2. Audit Out of Scope items before promoting them.
+3. Update context with shipped behavior and evaluation evidence.
 
 ---
-*Last updated: 2026-07-15 after final rewrite decisions and canonical SPEC ingest*
+*Last updated: 2026-07-18 after Phase 13 established fail-closed npm/native Rust packaging and offline installed evidence*

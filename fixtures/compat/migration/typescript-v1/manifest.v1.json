@@ -1,0 +1,76 @@
+{
+  "schemaVersion": 1,
+  "fixtureVersion": "typescript-v1",
+  "provenance": {
+    "sourceProduct": "minimax-codex-typescript-v1",
+    "sourceFormat": "typescript-era-durable-state",
+    "migrationAuthority": "rust",
+    "sourcePreserving": true
+  },
+  "metadataFilesExcludedFromFingerprint": [
+    "manifest.v1.json",
+    "support-window.v1.json"
+  ],
+  "fixtureFingerprint": "a02265896d3c0f856b8a1d5bd089cccc17df5102b212727684475327be885b0d",
+  "files": [
+    {
+      "relativePath": "capability-snapshot.json",
+      "byteLength": 413,
+      "sha256": "30682e9ffcc506d696aae7a708f065a1c92f3f929db239d41d8dfd052bdfbe27",
+      "role": "capability_metadata",
+      "expectedDisposition": "include"
+    },
+    {
+      "relativePath": "config.json",
+      "byteLength": 522,
+      "sha256": "8a746276a485e32f7bdce1f06b73cc4fd93a1fe4a6fee9461ed7f8778f999536",
+      "role": "provider_configuration",
+      "expectedDisposition": "include"
+    },
+    {
+      "relativePath": "indexes/capability.cache",
+      "byteLength": 34,
+      "sha256": "4db8560c006edb8f658a6608803f376262e8745a79baa780b16c96cb84f1e142",
+      "role": "derived_cache",
+      "expectedDisposition": "exclude",
+      "exclusionReason": "derived_data"
+    },
+    {
+      "relativePath": "indexes/threads.json",
+      "byteLength": 286,
+      "sha256": "4b93670650bdab7725fe9505f715626a3d6f6f0a7ed1e2445b9a78ff68282087",
+      "role": "thread_index",
+      "expectedDisposition": "include"
+    },
+    {
+      "relativePath": "secrets.local.json",
+      "byteLength": 44,
+      "sha256": "7a04dd62a8d350c4fca0cc8bcbd0131b49638a042ee76f2edbea68a67c73c668",
+      "role": "secret_store",
+      "expectedDisposition": "exclude",
+      "exclusionReason": "secret_path"
+    },
+    {
+      "relativePath": "sessions/2026/07/15/thread-safe.jsonl",
+      "byteLength": 1433,
+      "sha256": "420042384b6a65d1f96eb59bc05dac225b6526f7e3e0dd21a3c76785b467d192",
+      "role": "session_journal",
+      "expectedDisposition": "include"
+    },
+    {
+      "relativePath": "traces/thread-safe.trace.jsonl",
+      "byteLength": 61,
+      "sha256": "9ce356bff8d9470ae9a251bf22c5793baad322f113d6b3e399cca192bf966cea",
+      "role": "private_reasoning_trace",
+      "expectedDisposition": "exclude",
+      "exclusionReason": "private_trace"
+    },
+    {
+      "relativePath": "turns/thread-safe.turns.jsonl",
+      "byteLength": 593,
+      "sha256": "b5c36e0feba036844619152e324f279b53570887a6e16a4a903efecc5349a447",
+      "role": "turn_journal",
+      "expectedDisposition": "include"
+    }
+  ]
+}

@@ -1,46 +1,158 @@
 # Rust Release Installation, Upgrade, and Rollback
 
-## Supported base artifacts
+Rust is the sole product runtime. The npm package contains one CJS launcher and
+one native Rust binary; it contains no TypeScript product, fallback command,
+runtime dependency, lifecycle hook, model, or automatic downloader.
 
-The v1 release matrix is `windows-x86_64-msvc` and `linux-x86_64-gnu`. Each platform has a versioned base `.tar.gz` and platform npm `.tgz`, each with a `.sha256` sidecar. The base archive contains `RELEASE-MANIFEST.json`, the shell-free `bin/minimax-codex.cjs` launcher, one Rust executable, documentation, and both project licenses. The npm package contains that exact launcher and native binary plus `dist/cli.js` as the explicit `minimax-codex-legacy` fallback. A `*-gnullvm-dev` artifact is local development evidence only and is not a supported Windows release.
+## Supported release artifacts
 
-Before installation, compare the chosen artifact SHA-256 with its sidecar and inspect `RELEASE-MANIFEST.json` from the matching base archive. The manifest must name the expected version/platform, match the executable and npm-package hashes, name `dist/cli.js` as the legacy entry, and say `embeddingIncluded: false`.
+Only these hosted release targets are supported:
+
+| Target ID | Rust host | Binary | Tier |
+|---|---|---|---|
+| `windows-x86_64-msvc` | `x86_64-pc-windows-msvc` | `minimax-codex.exe` | `hosted_release` |
+| `linux-x86_64-gnu` | `x86_64-unknown-linux-gnu` | `minimax-codex` | `hosted_release` |
+
+`windows-x86_64-gnullvm-dev` / `x86_64-pc-windows-gnullvm` is local
+`development_only` evidence. Do not distribute it as Windows MSVC evidence.
+
+Each target has a versioned native `.tar.gz`, a platform npm `.tgz`, and a
+`.sha256` sidecar for each archive. `RELEASE-MANIFEST.json` binds the version,
+target, product fingerprint, Rust binary, launcher, native archive, and npm
+archive. `embeddingIncluded` must be `false`.
+
+Before installation:
+
+1. Obtain the artifact and sidecar from the same release and target.
+2. Compare the artifact SHA-256 with the sidecar.
+3. Inspect the matching `RELEASE-MANIFEST.json` from the native archive.
+4. Require the exact target ID/Rust host, archive names, and hashes you intend
+   to install.
+
+## npm global installation
+
+Node.js 20 or newer is required for the thin launcher. Install the already
+downloaded platform npm tarball without lifecycle scripts:
+
+```bash
+npm install --global --ignore-scripts ./minimax-codex-v0.1.0-<target>-npm.tgz
+minimax-codex --version
+minimax-codex doctor
+```
+
+The installed `minimax-codex` command launches only the fixed sibling
+`minimax-codex.exe` or `minimax-codex`. It performs no shell invocation,
+`PATH` search, override lookup, fallback, or download.
+
+## One-time npx execution
+
+Run the already-downloaded platform tarball without a global install:
+
+```bash
+npx --offline --yes --package ./minimax-codex-v0.1.0-<target>-npm.tgz minimax-codex --version
+npx --offline --yes --package ./minimax-codex-v0.1.0-<target>-npm.tgz minimax-codex doctor
+```
+
+`--offline` prevents registry access. The package still requires its included
+native binary for the current supported host.
+
+## Native archive installation
+
+1. Extract the verified native archive into a new versioned directory such as
+   `minimax-codex/versions/0.1.0`.
+2. Run `minimax-codex.exe --version` on Windows or
+   `./minimax-codex --version` on Linux.
+3. Run the native binary's `doctor` command.
+4. Run `node bin/minimax-codex.cjs doctor` and require the same Rust identity.
+5. Point the stable command or wrapper at the new version only after both paths
+   succeed.
+6. Keep the previous versioned directory until normal work passes.
+
+The archives and launcher never read credentials, download an embedding model,
+or migrate data automatically.
+
+## Actionable no-fallback failures
+
+The launcher exits nonzero with one stable category:
+
+- `E_UNSUPPORTED_HOST`: install a package for Windows x64 or Linux x64;
+- `E_BINARY_MISSING`: reinstall the complete matching platform package;
+- `E_BINARY_UNSAFE`: replace a linked/directory/non-regular sibling with the
+  authentic package;
+- `E_BINARY_NOT_EXECUTABLE`: restore the packaged Linux executable mode or
+  reinstall;
+- `E_START_FAILED`: check target compatibility and reinstall the correct
+  platform artifact;
+- `E_SIGNAL_TERMINATION`: inspect the host/runtime failure and do not treat it
+  as a successful launch.
+
+There is no TypeScript or alternate-runtime fallback. Do not work around these
+errors by adding an unrelated executable to `PATH`.
 
 ## Subprocess sandbox prerequisite
 
-On Linux, install Bubblewrap from the operating-system package manager before using confirm-mode Cargo/Git/npm diagnostics. For example, Debian/Ubuntu use `sudo apt-get install bubblewrap`. A version check proves only that the executable exists; run `minimax-codex doctor` and require the `subprocess_sandbox` check to report an enforced Bubblewrap-plus-seccomp backend. A missing or namespace-blocked backend causes process tools to fail closed before target code starts.
+On Linux, install Bubblewrap through the operating-system package manager before
+using confirm-mode Cargo/Git/npm diagnostics. Run `minimax-codex doctor` and
+require `subprocess_sandbox` to report the enforced Bubblewrap-plus-seccomp
+backend. A missing or namespace-blocked backend fails before project code starts.
 
-Ubuntu 24.04 may block Bubblewrap user namespaces through AppArmor. For a normal workstation or server, prefer an administrator-managed, targeted AppArmor `userns` profile for `/usr/bin/bwrap` instead of disabling the restriction globally. The failure receipt points to this condition. Do not use `full-access` as an installation workaround for an unfamiliar project.
+Ubuntu 24.04 may restrict unprivileged user namespaces through AppArmor. Prefer
+an administrator-managed, targeted `userns` profile for `/usr/bin/bwrap`; do not
+disable host protections or use `full-access` for an unfamiliar project merely
+to bypass the check.
 
-Windows remains a supported CLI/Provider/file-tool/retrieval/Vault/Wiki platform, but this version does not bundle Codex's large restricted-token/ACL/firewall subsystem. Therefore confirm-mode process diagnostics report `sandbox_unavailable`. `full-access` is the explicit process-scoped escape hatch for a project you already trust; it disables subprocess filesystem/network isolation and must not be used for unknown repositories.
+Windows remains a supported product platform, but this release has no native
+restricted-token/WFP subprocess backend. Confirm-mode process diagnostics fail
+closed. `full-access` is a process-scoped escape hatch only for projects you
+already trust and provides ordinary host filesystem/network access.
 
-See [the complete sandbox trust boundary](subprocess-sandbox.md) before asking another person or coding agent to test an untrusted project.
-
-## Fresh install
-
-1. Download the base archive and matching `.sha256` from the same version.
-2. Verify SHA-256 with the operating-system checksum tool.
-3. Extract into a versioned directory such as `minimax-codex/versions/0.1.0`.
-4. On Linux, install/verify Bubblewrap; then run the native executable's `doctor` command and confirm `node bin/minimax-codex.cjs doctor` reaches that same executable.
-5. Point the stable `minimax-codex` command at that version only after both checks succeed.
-6. Keep the prior versioned directory until the new version has passed normal work.
-
-The archives and launcher never download an embedding model, read a credential, or migrate data automatically. Release verification extracts the npm package and starts its actual Rust default before an artifact is accepted.
+See [the complete sandbox trust boundary](subprocess-sandbox.md).
 
 ## Upgrade
 
-Install the new archive beside the current version, verify its checksum/manifest, run `doctor`, then run `migrate inventory` and `migrate dry-run` if TypeScript data must be imported. Save the dry-run JSON outside `.mini-codex`; apply only with the exact printed confirmation. Run `migrate verify` against the resulting receipt before changing the stable launcher.
+Install the new release beside the active version. Verify its sidecars and
+manifest, run `--version` and `doctor`, then evaluate TypeScript-era state before
+changing the stable command:
 
-Never overwrite the existing version directory. This keeps binary rollback independent from data rollback.
+```bash
+minimax-codex migrate inventory
+minimax-codex migrate dry-run --json
+minimax-codex migrate apply --plan <plan> --confirmation <printed-value>
+minimax-codex migrate verify --receipt <receipt>
+```
+
+Save the dry-run JSON outside `.mini-codex`. Review every inclusion, exclusion,
+and collision. Apply only with the exact printed confirmation. Never overwrite
+the active version directory; this keeps binary rollback independent of data
+rollback.
 
 ## Binary rollback
 
-Point the stable launcher back to the previous verified versioned directory. Migration receipts and imported evidence remain untouched. During the v0.1 support window (and for at least 90 days after the first published Rust-default build), `minimax-codex-legacy` runs the TypeScript entry directly. It is never selected automatically.
-
-The detailed entrypoint and removal contract is in `docs/release/cutover.md`.
+Point the stable command back to the previous verified versioned directory.
+Migration receipts, imported files, the Vault, and `.mini-codex` source data are
+not modified by binary rollback.
 
 ## Data rollback
 
-Run `migrate verify --receipt <receipt>` first. If every receipt-owned target is unchanged, run `migrate rollback --receipt <receipt> --confirmation ROLLBACK:<receipt-hash>`. Rollback removes only unchanged files marked `created`; it never removes reused files, modified targets, the immutable apply receipt, or anything in `.mini-codex`.
+Verify the receipt first. If every receipt-owned target is still unchanged, run:
 
-There is no `--force` path. Resolve a collision or changed target manually and preserve the receipt as audit evidence.
+```bash
+minimax-codex migrate rollback --receipt <receipt> --confirmation ROLLBACK:<receipt-hash>
+```
+
+Rollback removes only unchanged targets marked `created` by that receipt. It
+never removes reused files, modified targets, the immutable apply receipt, or
+anything in `.mini-codex`. There is no `--force` path; resolve collisions or
+changed targets manually and preserve the receipt as audit evidence.
+
+## Migration fixture support window
+
+Static TypeScript-era migration fixtures are retained by a machine-checkable
+release-count rule, not a day count. Cutover release `3.0.0` must be followed by
+at least two distinct, ordered public releases recorded in
+`fixtures/compat/migration/typescript-v1/support-window.v1.json` before fixture
+removal can become eligible. The current source data remains immutable during
+inventory, dry-run, apply, verify, rollback, and the entire support window.
+
+The detailed authority and hosted-evidence contract is in
+[the Rust-only cutover guide](cutover.md).

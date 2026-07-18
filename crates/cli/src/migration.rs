@@ -108,6 +108,15 @@ pub struct MigrationTarget {
     pub kind: String,
     pub bytes: u64,
     pub sha256: String,
+    pub pre_write_disposition: MigrationTargetDisposition,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum MigrationTargetDisposition {
+    Absent,
+    ByteIdenticalExisting,
+    Collision,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -296,7 +305,7 @@ impl MigrationReceipt {
         {
             return Err(MigrationError::Receipt);
         }
-        Ok(())
+        validate_receipt_ownership(self)
     }
 }
 
@@ -357,12 +366,48 @@ struct BuiltMigration {
     artifacts: BTreeMap<String, Vec<u8>>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct OperationManifestBody {
+    schema_version: u16,
+    migration_id: String,
+    plan_hash: String,
+    created: Vec<MigrationReceiptTarget>,
+    reused: Vec<MigrationReceiptTarget>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct OperationManifest {
     schema_version: u16,
+    migration_id: String,
     plan_hash: String,
-    candidates: Vec<MigrationReceiptTarget>,
+    created: Vec<MigrationReceiptTarget>,
+    reused: Vec<MigrationReceiptTarget>,
+    operation_hash: String,
+}
+
+impl OperationManifest {
+    fn body(&self) -> OperationManifestBody {
+        OperationManifestBody {
+            schema_version: self.schema_version,
+            migration_id: self.migration_id.clone(),
+            plan_hash: self.plan_hash.clone(),
+            created: self.created.clone(),
+            reused: self.reused.clone(),
+        }
+    }
+
+    fn validate(&self) -> Result<(), MigrationError> {
+        if self.schema_version != SCHEMA_VERSION
+            || !valid_migration_id(&self.migration_id)
+            || !is_sha256(&self.plan_hash)
+            || hash_serializable(&self.body())? != self.operation_hash
+        {
+            return Err(MigrationError::Recovery);
+        }
+        validate_operation_ownership(self)
+    }
 }
 
 pub fn inventory_migration(
@@ -403,60 +448,45 @@ pub fn apply_migration(
         return Err(MigrationError::Collision);
     }
     let target_root = canonical_directory(Path::new(&plan.target_root), MigrationError::Target)?;
+    validate_target_surface(&target_root, &plan)?;
     let _lock = MigrationLock::acquire(&target_root)?;
-    let receipt_path = receipt_path(&target_root, &plan.migration_id)?;
-    if receipt_path.is_file() {
-        let receipt = read_receipt(&receipt_path)?;
-        if receipt.plan_hash != plan.plan_hash {
+    let receipt_relative = receipt_relative(&plan.migration_id)?;
+    if target_file_exists(&target_root, &receipt_relative)? {
+        let receipt = read_target_receipt(&target_root, &receipt_relative)?;
+        let (durable_plan, operation) = load_durable_ownership(&target_root, &plan.migration_id)?;
+        if durable_plan != plan {
             return Err(MigrationError::Receipt);
         }
-        verify_receipt_targets(&receipt)?;
+        validate_receipt_chain(&receipt, &durable_plan, &operation)?;
+        verify_targets(&target_root, receipt.created.iter().chain(&receipt.reused))?;
         return Ok(receipt);
     }
-    recover_interrupted(&target_root, &plan.migration_id)?;
+    recover_interrupted(&target_root, &plan)?;
     let rebuilt = build_migration(Path::new(&plan.source_root), &target_root)?;
     if rebuilt.plan.body() != plan.body() || rebuilt.plan.plan_hash != plan.plan_hash {
         return Err(MigrationError::Drift);
     }
+    let operation = ensure_durable_ownership(&target_root, &plan)?;
 
-    let operation_dir = operation_directory(&target_root, &plan.migration_id)?;
-    let staging = operation_dir.join("staging");
-    std::fs::create_dir_all(&staging).map_err(|_| MigrationError::Write)?;
+    let staging_relative = staging_relative(&plan.migration_id)?;
+    ensure_target_directory(&target_root, &staging_relative)?;
     for (relative, bytes) in &rebuilt.artifacts {
-        let staged = safe_join(&staging, relative)?;
-        write_new_file(&staged, bytes)?;
+        let staged = child_relative(&staging_relative, relative)?;
+        write_target_file_new(&target_root, &staged, bytes)?;
     }
-
-    let mut candidates = Vec::new();
-    let mut reused = Vec::new();
-    for target in &plan.targets {
-        let destination = safe_join(&target_root, &target.relative_path)?;
-        if destination.is_file() {
-            if hash_file(&destination)? != target.sha256 {
-                return Err(MigrationError::Collision);
-            }
-            reused.push(receipt_target(target));
-        } else {
-            candidates.push(receipt_target(target));
-        }
-    }
-    let manifest = OperationManifest {
-        schema_version: SCHEMA_VERSION,
-        plan_hash: plan.plan_hash.clone(),
-        candidates: candidates.clone(),
-    };
-    write_json_new(&operation_dir.join("operation.json"), &manifest)?;
 
     let mut created = Vec::new();
     let publish = (|| {
-        for candidate in &candidates {
-            let staged = safe_join(&staging, &candidate.relative_path)?;
-            let bytes = std::fs::read(&staged).map_err(|_| MigrationError::Read)?;
-            let destination = safe_join(&target_root, &candidate.relative_path)?;
-            write_new_file(&destination, &bytes)?;
+        for candidate in &operation.created {
+            let staged = child_relative(&staging_relative, &candidate.relative_path)?;
+            let bytes = read_target_file(&target_root, &staged)?;
+            write_target_file_new(&target_root, &candidate.relative_path, &bytes)?;
             created.push(candidate.clone());
         }
-        verify_targets(&target_root, created.iter().chain(&reused))?;
+        verify_targets(
+            &target_root,
+            operation.created.iter().chain(&operation.reused),
+        )?;
         let body = MigrationReceiptBody {
             schema_version: SCHEMA_VERSION,
             migration_id: plan.migration_id.clone(),
@@ -464,8 +494,8 @@ pub fn apply_migration(
             source_root: plan.source_root.clone(),
             target_root: plan.target_root.clone(),
             source_fingerprint: plan.source_fingerprint.clone(),
-            created: created.clone(),
-            reused: reused.clone(),
+            created: operation.created.clone(),
+            reused: operation.reused.clone(),
         };
         let receipt = MigrationReceipt {
             schema_version: body.schema_version,
@@ -478,17 +508,17 @@ pub fn apply_migration(
             reused: body.reused.clone(),
             receipt_hash: hash_serializable(&body)?,
         };
-        write_json_new(&receipt_path, &receipt)?;
+        write_json_target_new(&target_root, &receipt_relative, &receipt)?;
         Ok(receipt)
     })();
     match publish {
         Ok(receipt) => {
-            remove_operation_files(&operation_dir)?;
+            remove_target_tree(&target_root, &staging_relative)?;
             Ok(receipt)
         }
         Err(error) => {
             rollback_created(&target_root, &created)?;
-            let _ = remove_operation_files(&operation_dir);
+            let _ = remove_target_tree(&target_root, &staging_relative);
             Err(error)
         }
     }
@@ -497,8 +527,11 @@ pub fn apply_migration(
 pub fn verify_migration(receipt_path: &Path) -> Result<MigrationVerifyReport, MigrationError> {
     let receipt = read_receipt(receipt_path)?;
     let target_root = canonical_directory(Path::new(&receipt.target_root), MigrationError::Target)?;
-    let rollback_path = rollback_receipt_path(&target_root, &receipt.migration_id)?;
-    if rollback_path.is_file() {
+    validate_receipt_target_surface(&target_root, &receipt)?;
+    let (plan, operation) = load_durable_ownership(&target_root, &receipt.migration_id)?;
+    validate_receipt_chain(&receipt, &plan, &operation)?;
+    let rollback_relative = rollback_relative(&receipt.migration_id)?;
+    if target_file_exists(&target_root, &rollback_relative)? {
         return Ok(MigrationVerifyReport {
             schema_version: SCHEMA_VERSION,
             migration_id: receipt.migration_id,
@@ -509,7 +542,7 @@ pub fn verify_migration(receipt_path: &Path) -> Result<MigrationVerifyReport, Mi
             rolled_back: true,
         });
     }
-    verify_receipt_targets(&receipt)?;
+    verify_targets(&target_root, receipt.created.iter().chain(&receipt.reused))?;
     Ok(MigrationVerifyReport {
         schema_version: SCHEMA_VERSION,
         migration_id: receipt.migration_id,
@@ -530,13 +563,21 @@ pub fn rollback_migration(
         return Err(MigrationError::Confirmation);
     }
     let target_root = canonical_directory(Path::new(&receipt.target_root), MigrationError::Target)?;
+    validate_receipt_target_surface(&target_root, &receipt)?;
     let _lock = MigrationLock::acquire(&target_root)?;
-    let rollback_path = rollback_receipt_path(&target_root, &receipt.migration_id)?;
-    if rollback_path.is_file() {
-        return read_json_bounded(&rollback_path, MAX_PLAN_BYTES, MigrationError::Receipt);
+    let (plan, operation) = load_durable_ownership(&target_root, &receipt.migration_id)?;
+    validate_receipt_chain(&receipt, &plan, &operation)?;
+    let rollback_relative = rollback_relative(&receipt.migration_id)?;
+    if target_file_exists(&target_root, &rollback_relative)? {
+        return read_target_json_bounded(
+            &target_root,
+            &rollback_relative,
+            MAX_PLAN_BYTES,
+            MigrationError::Receipt,
+        );
     }
-    verify_receipt_targets(&receipt)?;
-    rollback_created(&target_root, &receipt.created)?;
+    verify_targets(&target_root, receipt.created.iter().chain(&receipt.reused))?;
+    rollback_created(&target_root, &operation.created)?;
     let report = MigrationVerifyReport {
         schema_version: SCHEMA_VERSION,
         migration_id: receipt.migration_id,
@@ -546,7 +587,7 @@ pub fn rollback_migration(
         targets_verified: receipt.reused.len(),
         rolled_back: true,
     };
-    write_json_new(&rollback_path, &report)?;
+    write_json_target_new(&target_root, &rollback_relative, &report)?;
     Ok(report)
 }
 
@@ -595,16 +636,17 @@ fn build_migration(
             capabilities,
         );
     }
-    let targets = artifacts
+    let mut targets = artifacts
         .iter()
         .map(|(relative_path, bytes)| MigrationTarget {
             relative_path: relative_path.clone(),
             kind: target_kind(relative_path).to_owned(),
             bytes: bytes.len() as u64,
             sha256: sha256(bytes),
+            pre_write_disposition: MigrationTargetDisposition::Absent,
         })
         .collect::<Vec<_>>();
-    let collisions = find_collisions(&target_root, &targets)?;
+    let collisions = classify_target_dispositions(&target_root, &mut targets)?;
     let body = MigrationPlanBody {
         schema_version: SCHEMA_VERSION,
         migration_id,
@@ -662,6 +704,9 @@ fn normalize_source(
 
 fn normalize_config(bytes: &[u8]) -> Result<Vec<u8>, MigrationError> {
     let value: Value = serde_json::from_slice(bytes).map_err(|_| MigrationError::Malformed)?;
+    if contains_private_reasoning(&value) {
+        return Err(MigrationError::Secret);
+    }
     let object = value.as_object().ok_or(MigrationError::Malformed)?;
     if object.get("schemaVersion").and_then(Value::as_u64) != Some(1) {
         return Err(MigrationError::Malformed);
@@ -751,6 +796,9 @@ fn normalize_sessions(
     };
     let index: Value =
         serde_json::from_slice(&thread_file.bytes).map_err(|_| MigrationError::Malformed)?;
+    if contains_private_reasoning(&index) {
+        return Err(MigrationError::Secret);
+    }
     let threads = index
         .get("threads")
         .and_then(Value::as_array)
@@ -761,6 +809,9 @@ fn normalize_sessions(
     for file in files.iter().filter(|file| file.kind == SourceKind::Session) {
         for value in parse_jsonl(&file.bytes)? {
             let payload = envelope_payload(value, "thread.item")?;
+            if contains_private_reasoning(&payload) {
+                return Err(MigrationError::Secret);
+            }
             let thread_id = payload
                 .get("threadId")
                 .and_then(Value::as_str)
@@ -774,6 +825,9 @@ fn normalize_sessions(
     for file in files.iter().filter(|file| file.kind == SourceKind::Turn) {
         for value in parse_jsonl(&file.bytes)? {
             let (kind, payload) = envelope_or_legacy_turn(value)?;
+            if contains_private_reasoning(&payload) {
+                return Err(MigrationError::Secret);
+            }
             if kind == "turn.snapshot" {
                 let thread_id = payload
                     .get("threadId")
@@ -1094,6 +1148,9 @@ fn normalize_capabilities(
     {
         let value: Value =
             serde_json::from_slice(&file.bytes).map_err(|_| MigrationError::Malformed)?;
+        if contains_private_reasoning(&value) {
+            return Err(MigrationError::Secret);
+        }
         if contains_secret(&value) {
             excluded.push(MigrationExclusion {
                 relative_path: file.relative_path.clone(),
@@ -1161,11 +1218,7 @@ fn walk_source(
         let relative = relative_string(source_root, &path)?;
         let metadata = std::fs::symlink_metadata(&path).map_err(|_| MigrationError::Read)?;
         if metadata.file_type().is_symlink() {
-            exclusions.push(MigrationExclusion {
-                relative_path: relative,
-                reason: "symlink".to_owned(),
-            });
-            continue;
+            return Err(MigrationError::Symlink);
         }
         if metadata.is_dir() {
             walk_source(source_root, &path, files, exclusions)?;
@@ -1233,26 +1286,29 @@ fn source_fingerprint(source_root: &Path) -> Result<String, MigrationError> {
     scan_source(&source_root).map(|(_, _, fingerprint)| fingerprint)
 }
 
-fn find_collisions(
+fn classify_target_dispositions(
     target_root: &Path,
-    targets: &[MigrationTarget],
+    targets: &mut [MigrationTarget],
 ) -> Result<Vec<MigrationCollision>, MigrationError> {
     let mut collisions = Vec::new();
     for target in targets {
-        let path = safe_join(target_root, &target.relative_path)?;
-        if path.exists() {
-            let metadata = std::fs::symlink_metadata(&path).map_err(|_| MigrationError::Read)?;
-            if metadata.file_type().is_symlink() || !metadata.is_file() {
+        if let Some(metadata) = target_metadata(target_root, &target.relative_path)? {
+            if metadata_is_link(&metadata) || !metadata.is_file() {
                 return Err(MigrationError::Collision);
             }
-            let actual = hash_file(&path)?;
-            if actual != target.sha256 {
+            let actual = hash_target_file(target_root, &target.relative_path)?;
+            if metadata.len() == target.bytes && actual == target.sha256 {
+                target.pre_write_disposition = MigrationTargetDisposition::ByteIdenticalExisting;
+            } else {
+                target.pre_write_disposition = MigrationTargetDisposition::Collision;
                 collisions.push(MigrationCollision {
                     relative_path: target.relative_path.clone(),
                     expected_sha256: target.sha256.clone(),
                     actual_sha256: actual,
                 });
             }
+        } else {
+            target.pre_write_disposition = MigrationTargetDisposition::Absent;
         }
     }
     Ok(collisions)
@@ -1269,10 +1325,110 @@ fn validate_unique_targets(targets: &[MigrationTarget]) -> Result<(), MigrationE
     Ok(())
 }
 
-fn verify_receipt_targets(receipt: &MigrationReceipt) -> Result<(), MigrationError> {
+fn validate_operation_ownership(operation: &OperationManifest) -> Result<(), MigrationError> {
+    let allowed = migration_target_allowlist(&operation.migration_id);
+    let mut seen = BTreeSet::new();
+    for target in operation.created.iter().chain(&operation.reused) {
+        if validate_relative_path(&target.relative_path).is_err()
+            || !allowed.contains(&target.relative_path)
+            || !seen.insert(target.relative_path.as_str())
+            || !is_sha256(&target.sha256)
+        {
+            return Err(MigrationError::Recovery);
+        }
+    }
+    Ok(())
+}
+
+fn migration_target_allowlist(migration_id: &str) -> BTreeSet<String> {
+    BTreeSet::from([
+        ".minimax/config.json".to_owned(),
+        ".minimax/runtime/v1/sessions.jsonl".to_owned(),
+        format!(".minimax/migrations/v1/{migration_id}/capability-metadata.json"),
+    ])
+}
+
+fn validate_receipt_ownership(receipt: &MigrationReceipt) -> Result<(), MigrationError> {
+    if !valid_migration_id(&receipt.migration_id)
+        || !is_sha256(&receipt.plan_hash)
+        || !is_sha256(&receipt.source_fingerprint)
+        || !is_sha256(&receipt.receipt_hash)
+    {
+        return Err(MigrationError::Receipt);
+    }
+    let allowed = migration_target_allowlist(&receipt.migration_id);
+    let mut seen = BTreeSet::new();
+    for target in receipt.created.iter().chain(&receipt.reused) {
+        if validate_relative_path(&target.relative_path).is_err()
+            || !allowed.contains(&target.relative_path)
+            || !seen.insert(target.relative_path.as_str())
+            || !is_sha256(&target.sha256)
+        {
+            return Err(MigrationError::Receipt);
+        }
+    }
+    Ok(())
+}
+
+fn operation_for_plan(plan: &MigrationPlan) -> Result<OperationManifest, MigrationError> {
+    let mut created = Vec::new();
+    let mut reused = Vec::new();
+    for target in &plan.targets {
+        match target.pre_write_disposition {
+            MigrationTargetDisposition::Absent => created.push(receipt_target(target)),
+            MigrationTargetDisposition::ByteIdenticalExisting => {
+                reused.push(receipt_target(target));
+            }
+            MigrationTargetDisposition::Collision => return Err(MigrationError::Collision),
+        }
+    }
+    let body = OperationManifestBody {
+        schema_version: SCHEMA_VERSION,
+        migration_id: plan.migration_id.clone(),
+        plan_hash: plan.plan_hash.clone(),
+        created,
+        reused,
+    };
+    Ok(OperationManifest {
+        schema_version: body.schema_version,
+        migration_id: body.migration_id.clone(),
+        plan_hash: body.plan_hash.clone(),
+        created: body.created.clone(),
+        reused: body.reused.clone(),
+        operation_hash: hash_serializable(&body)?,
+    })
+}
+
+fn validate_operation_against_plan(
+    operation: &OperationManifest,
+    plan: &MigrationPlan,
+) -> Result<(), MigrationError> {
+    operation.validate()?;
+    if operation != &operation_for_plan(plan).map_err(|_| MigrationError::Recovery)? {
+        return Err(MigrationError::Recovery);
+    }
+    Ok(())
+}
+
+fn validate_receipt_chain(
+    receipt: &MigrationReceipt,
+    plan: &MigrationPlan,
+    operation: &OperationManifest,
+) -> Result<(), MigrationError> {
     receipt.validate()?;
-    let root = canonical_directory(Path::new(&receipt.target_root), MigrationError::Target)?;
-    verify_targets(&root, receipt.created.iter().chain(&receipt.reused))
+    plan.validate().map_err(|_| MigrationError::Receipt)?;
+    validate_operation_against_plan(operation, plan).map_err(|_| MigrationError::Receipt)?;
+    if receipt.migration_id != plan.migration_id
+        || receipt.plan_hash != plan.plan_hash
+        || receipt.source_root != plan.source_root
+        || receipt.target_root != plan.target_root
+        || receipt.source_fingerprint != plan.source_fingerprint
+        || receipt.created != operation.created
+        || receipt.reused != operation.reused
+    {
+        return Err(MigrationError::Receipt);
+    }
+    Ok(())
 }
 
 fn verify_targets<'a>(
@@ -1280,13 +1436,12 @@ fn verify_targets<'a>(
     targets: impl IntoIterator<Item = &'a MigrationReceiptTarget>,
 ) -> Result<(), MigrationError> {
     for target in targets {
-        let path = safe_join(root, &target.relative_path)?;
         let metadata =
-            std::fs::symlink_metadata(&path).map_err(|_| MigrationError::TargetChanged)?;
-        if metadata.file_type().is_symlink()
+            target_metadata(root, &target.relative_path)?.ok_or(MigrationError::TargetChanged)?;
+        if metadata_is_link(&metadata)
             || !metadata.is_file()
             || metadata.len() != target.bytes
-            || hash_file(&path)? != target.sha256
+            || hash_target_file(root, &target.relative_path)? != target.sha256
         {
             return Err(MigrationError::TargetChanged);
         }
@@ -1307,70 +1462,153 @@ fn rollback_created(
     targets: &[MigrationReceiptTarget],
 ) -> Result<(), MigrationError> {
     for target in targets.iter().rev() {
-        let path = safe_join(target_root, &target.relative_path)?;
-        if !path.exists() {
+        let Some(metadata) = target_metadata(target_root, &target.relative_path)? else {
             continue;
-        }
-        let metadata = std::fs::symlink_metadata(&path).map_err(|_| MigrationError::Read)?;
-        if metadata.file_type().is_symlink()
+        };
+        if metadata_is_link(&metadata)
             || !metadata.is_file()
             || metadata.len() != target.bytes
-            || hash_file(&path)? != target.sha256
+            || hash_target_file(target_root, &target.relative_path)? != target.sha256
         {
             return Err(MigrationError::TargetChanged);
         }
-        std::fs::remove_file(path).map_err(|_| MigrationError::Write)?;
+        remove_target_file(target_root, &target.relative_path)?;
     }
     Ok(())
 }
 
-fn recover_interrupted(target_root: &Path, migration_id: &str) -> Result<(), MigrationError> {
-    let directory = operation_directory(target_root, migration_id)?;
-    let manifest_path = directory.join("operation.json");
-    if !manifest_path.is_file() {
-        if directory.exists() {
-            remove_operation_files(&directory)?;
-        }
+fn recover_interrupted(
+    target_root: &Path,
+    expected_plan: &MigrationPlan,
+) -> Result<(), MigrationError> {
+    let plan_relative = durable_plan_relative(&expected_plan.migration_id)?;
+    let operation_relative = operation_relative(&expected_plan.migration_id)?;
+    let staging_relative = staging_relative(&expected_plan.migration_id)?;
+    let plan_exists = target_file_exists(target_root, &plan_relative)?;
+    let operation_exists = target_file_exists(target_root, &operation_relative)?;
+    if !plan_exists && !operation_exists {
+        remove_target_tree(target_root, &staging_relative)?;
         return Ok(());
     }
-    let manifest: OperationManifest =
-        read_json_bounded(&manifest_path, MAX_PLAN_BYTES, MigrationError::Recovery)?;
-    if manifest.schema_version != SCHEMA_VERSION {
+    if !plan_exists {
         return Err(MigrationError::Recovery);
     }
-    rollback_created(target_root, &manifest.candidates)?;
-    remove_operation_files(&directory)
-}
-
-fn remove_operation_files(directory: &Path) -> Result<(), MigrationError> {
-    if directory.exists() {
-        std::fs::remove_dir_all(directory).map_err(|_| MigrationError::Write)?;
-    }
-    Ok(())
-}
-
-fn receipt_path(target_root: &Path, migration_id: &str) -> Result<PathBuf, MigrationError> {
-    safe_join(
+    let durable_plan: MigrationPlan = read_target_json_bounded(
         target_root,
-        &format!(".minimax/migrations/v1/{migration_id}/receipt.json"),
-    )
+        &plan_relative,
+        MAX_PLAN_BYTES,
+        MigrationError::Recovery,
+    )?;
+    durable_plan
+        .validate()
+        .map_err(|_| MigrationError::Recovery)?;
+    if &durable_plan != expected_plan {
+        return Err(MigrationError::Recovery);
+    }
+    if operation_exists {
+        let operation: OperationManifest = read_target_json_bounded(
+            target_root,
+            &operation_relative,
+            MAX_PLAN_BYTES,
+            MigrationError::Recovery,
+        )?;
+        validate_operation_against_plan(&operation, &durable_plan)?;
+        rollback_created(target_root, &operation.created)?;
+    }
+    remove_target_tree(target_root, &staging_relative)
 }
 
-fn rollback_receipt_path(
+fn ensure_durable_ownership(
+    target_root: &Path,
+    plan: &MigrationPlan,
+) -> Result<OperationManifest, MigrationError> {
+    let plan_relative = durable_plan_relative(&plan.migration_id)?;
+    let operation_relative = operation_relative(&plan.migration_id)?;
+    if target_file_exists(target_root, &plan_relative)? {
+        let existing: MigrationPlan = read_target_json_bounded(
+            target_root,
+            &plan_relative,
+            MAX_PLAN_BYTES,
+            MigrationError::Recovery,
+        )?;
+        if existing != *plan {
+            return Err(MigrationError::Recovery);
+        }
+    } else {
+        write_json_target_new(target_root, &plan_relative, plan)?;
+    }
+    let expected = operation_for_plan(plan).map_err(|_| MigrationError::Recovery)?;
+    if target_file_exists(target_root, &operation_relative)? {
+        let existing: OperationManifest = read_target_json_bounded(
+            target_root,
+            &operation_relative,
+            MAX_PLAN_BYTES,
+            MigrationError::Recovery,
+        )?;
+        validate_operation_against_plan(&existing, plan)?;
+        Ok(existing)
+    } else {
+        write_json_target_new(target_root, &operation_relative, &expected)?;
+        Ok(expected)
+    }
+}
+
+fn load_durable_ownership(
     target_root: &Path,
     migration_id: &str,
-) -> Result<PathBuf, MigrationError> {
-    safe_join(
+) -> Result<(MigrationPlan, OperationManifest), MigrationError> {
+    let plan: MigrationPlan = read_target_json_bounded(
         target_root,
-        &format!(".minimax/migrations/v1/{migration_id}/rollback.json"),
-    )
+        &durable_plan_relative(migration_id)?,
+        MAX_PLAN_BYTES,
+        MigrationError::Receipt,
+    )?;
+    plan.validate().map_err(|_| MigrationError::Receipt)?;
+    let operation: OperationManifest = read_target_json_bounded(
+        target_root,
+        &operation_relative(migration_id)?,
+        MAX_PLAN_BYTES,
+        MigrationError::Receipt,
+    )?;
+    validate_operation_against_plan(&operation, &plan).map_err(|_| MigrationError::Receipt)?;
+    Ok((plan, operation))
 }
 
-fn operation_directory(target_root: &Path, migration_id: &str) -> Result<PathBuf, MigrationError> {
-    safe_join(
-        target_root,
-        &format!(".minimax/migrations/v1/{migration_id}/operation"),
-    )
+fn durable_plan_relative(migration_id: &str) -> Result<String, MigrationError> {
+    migration_record_relative(migration_id, "plan.json")
+}
+
+fn operation_relative(migration_id: &str) -> Result<String, MigrationError> {
+    migration_record_relative(migration_id, "operation.json")
+}
+
+fn staging_relative(migration_id: &str) -> Result<String, MigrationError> {
+    migration_record_relative(migration_id, "staging")
+}
+
+fn receipt_relative(migration_id: &str) -> Result<String, MigrationError> {
+    migration_record_relative(migration_id, "receipt.json")
+}
+
+fn rollback_relative(migration_id: &str) -> Result<String, MigrationError> {
+    migration_record_relative(migration_id, "rollback.json")
+}
+
+fn migration_record_relative(migration_id: &str, record: &str) -> Result<String, MigrationError> {
+    if !valid_migration_id(migration_id) {
+        return Err(MigrationError::Target);
+    }
+    let relative = format!(".minimax/migrations/v1/{migration_id}/{record}");
+    validate_relative_path(&relative)?;
+    Ok(relative)
+}
+
+fn child_relative(parent: &str, child: &str) -> Result<String, MigrationError> {
+    validate_relative_path(parent)?;
+    validate_relative_path(child)?;
+    let relative = format!("{parent}/{child}");
+    validate_relative_path(&relative)?;
+    Ok(relative)
 }
 
 fn read_receipt(path: &Path) -> Result<MigrationReceipt, MigrationError> {
@@ -1380,15 +1618,70 @@ fn read_receipt(path: &Path) -> Result<MigrationReceipt, MigrationError> {
     Ok(receipt)
 }
 
+fn read_target_receipt(
+    target_root: &Path,
+    relative: &str,
+) -> Result<MigrationReceipt, MigrationError> {
+    let receipt: MigrationReceipt = read_target_json_bounded(
+        target_root,
+        relative,
+        MAX_PLAN_BYTES,
+        MigrationError::Receipt,
+    )?;
+    receipt.validate()?;
+    Ok(receipt)
+}
+
+fn validate_target_surface(target_root: &Path, plan: &MigrationPlan) -> Result<(), MigrationError> {
+    for relative in [
+        ".minimax/migrations/v1/writer.lock".to_owned(),
+        durable_plan_relative(&plan.migration_id)?,
+        operation_relative(&plan.migration_id)?,
+        staging_relative(&plan.migration_id)?,
+        receipt_relative(&plan.migration_id)?,
+        rollback_relative(&plan.migration_id)?,
+    ] {
+        checked_target_path(target_root, &relative)?;
+    }
+    for target in &plan.targets {
+        checked_target_path(target_root, &target.relative_path)?;
+    }
+    Ok(())
+}
+
+fn validate_receipt_target_surface(
+    target_root: &Path,
+    receipt: &MigrationReceipt,
+) -> Result<(), MigrationError> {
+    for relative in [
+        ".minimax/migrations/v1/writer.lock".to_owned(),
+        durable_plan_relative(&receipt.migration_id)?,
+        operation_relative(&receipt.migration_id)?,
+        staging_relative(&receipt.migration_id)?,
+        receipt_relative(&receipt.migration_id)?,
+        rollback_relative(&receipt.migration_id)?,
+    ] {
+        checked_target_path(target_root, &relative)?;
+    }
+    for target in receipt.created.iter().chain(&receipt.reused) {
+        checked_target_path(target_root, &target.relative_path)?;
+    }
+    Ok(())
+}
+
 struct MigrationLock {
     file: File,
 }
 
 impl MigrationLock {
     fn acquire(target_root: &Path) -> Result<Self, MigrationError> {
-        let path = safe_join(target_root, ".minimax/migrations/v1/writer.lock")?;
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).map_err(|_| MigrationError::Write)?;
+        let relative = ".minimax/migrations/v1/writer.lock";
+        ensure_target_parent_directories(target_root, relative)?;
+        let path = checked_target_path(target_root, relative)?;
+        if let Some(metadata) = target_metadata(target_root, relative)?
+            && (metadata_is_link(&metadata) || !metadata.is_file())
+        {
+            return Err(MigrationError::Symlink);
         }
         let file = OpenOptions::new()
             .read(true)
@@ -1409,6 +1702,10 @@ impl Drop for MigrationLock {
 }
 
 fn canonical_directory(path: &Path, error: MigrationError) -> Result<PathBuf, MigrationError> {
+    let metadata = std::fs::symlink_metadata(path).map_err(|_| error.clone())?;
+    if metadata_is_link(&metadata) || !metadata.is_dir() {
+        return Err(error);
+    }
     let canonical = path.canonicalize().map_err(|_| error.clone())?;
     if !canonical.is_dir() {
         return Err(error);
@@ -1416,15 +1713,191 @@ fn canonical_directory(path: &Path, error: MigrationError) -> Result<PathBuf, Mi
     Ok(canonical)
 }
 
-fn safe_join(root: &Path, relative: &str) -> Result<PathBuf, MigrationError> {
+fn checked_target_path(root: &Path, relative: &str) -> Result<PathBuf, MigrationError> {
     validate_relative_path(relative)?;
-    let joined = relative
-        .split('/')
-        .fold(root.to_path_buf(), |path, segment| path.join(segment));
-    if !joined.starts_with(root) {
+    let canonical_root = root.canonicalize().map_err(|_| MigrationError::Target)?;
+    if canonical_root != root {
         return Err(MigrationError::Target);
     }
-    Ok(joined)
+    let mut resolved = canonical_root.clone();
+    for segment in relative.split('/') {
+        let next = resolved.join(segment);
+        match std::fs::symlink_metadata(&next) {
+            Ok(metadata) => {
+                if metadata_is_link(&metadata) {
+                    return Err(MigrationError::Symlink);
+                }
+                resolved = next.canonicalize().map_err(|_| MigrationError::Target)?;
+                if !resolved.starts_with(&canonical_root) {
+                    return Err(MigrationError::Target);
+                }
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                resolved = next;
+            }
+            Err(_) => return Err(MigrationError::Target),
+        }
+    }
+    if !resolved.starts_with(&canonical_root) {
+        return Err(MigrationError::Target);
+    }
+    Ok(resolved)
+}
+
+fn metadata_is_link(metadata: &std::fs::Metadata) -> bool {
+    if metadata.file_type().is_symlink() {
+        return true;
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::MetadataExt as _;
+        const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x0400;
+        if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return true;
+        }
+    }
+    false
+}
+
+fn target_metadata(
+    root: &Path,
+    relative: &str,
+) -> Result<Option<std::fs::Metadata>, MigrationError> {
+    let path = checked_target_path(root, relative)?;
+    match std::fs::symlink_metadata(path) {
+        Ok(metadata) => {
+            if metadata_is_link(&metadata) {
+                return Err(MigrationError::Symlink);
+            }
+            Ok(Some(metadata))
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(_) => Err(MigrationError::Read),
+    }
+}
+
+fn ensure_target_parent_directories(root: &Path, relative: &str) -> Result<(), MigrationError> {
+    validate_relative_path(relative)?;
+    let segments = relative.split('/').collect::<Vec<_>>();
+    let mut current_relative = String::new();
+    for segment in segments.iter().take(segments.len().saturating_sub(1)) {
+        if !current_relative.is_empty() {
+            current_relative.push('/');
+        }
+        current_relative.push_str(segment);
+        match target_metadata(root, &current_relative)? {
+            Some(metadata) if metadata.is_dir() => {}
+            Some(_) => return Err(MigrationError::Target),
+            None => {
+                let path = checked_target_path(root, &current_relative)?;
+                std::fs::create_dir(&path).map_err(|_| MigrationError::Write)?;
+                let metadata =
+                    target_metadata(root, &current_relative)?.ok_or(MigrationError::Write)?;
+                if !metadata.is_dir() {
+                    return Err(MigrationError::Target);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn ensure_target_directory(root: &Path, relative: &str) -> Result<(), MigrationError> {
+    let marker = child_relative(relative, ".directory-marker")?;
+    ensure_target_parent_directories(root, &marker)?;
+    match target_metadata(root, relative)? {
+        Some(metadata) if metadata.is_dir() => Ok(()),
+        Some(_) => Err(MigrationError::Target),
+        None => {
+            let path = checked_target_path(root, relative)?;
+            std::fs::create_dir(path).map_err(|_| MigrationError::Write)?;
+            let metadata = target_metadata(root, relative)?.ok_or(MigrationError::Write)?;
+            if metadata.is_dir() {
+                Ok(())
+            } else {
+                Err(MigrationError::Target)
+            }
+        }
+    }
+}
+
+fn target_file_exists(root: &Path, relative: &str) -> Result<bool, MigrationError> {
+    match target_metadata(root, relative)? {
+        Some(metadata) if metadata.is_file() => Ok(true),
+        Some(_) => Err(MigrationError::Target),
+        None => Ok(false),
+    }
+}
+
+fn read_target_file(root: &Path, relative: &str) -> Result<Vec<u8>, MigrationError> {
+    let metadata = target_metadata(root, relative)?.ok_or(MigrationError::Read)?;
+    if !metadata.is_file() {
+        return Err(MigrationError::Read);
+    }
+    let path = checked_target_path(root, relative)?;
+    std::fs::read(path).map_err(|_| MigrationError::Read)
+}
+
+fn hash_target_file(root: &Path, relative: &str) -> Result<String, MigrationError> {
+    let metadata = target_metadata(root, relative)?.ok_or(MigrationError::Read)?;
+    if !metadata.is_file() {
+        return Err(MigrationError::Read);
+    }
+    let path = checked_target_path(root, relative)?;
+    hash_file(&path)
+}
+
+fn remove_target_file(root: &Path, relative: &str) -> Result<(), MigrationError> {
+    let metadata = target_metadata(root, relative)?.ok_or(MigrationError::Read)?;
+    if !metadata.is_file() {
+        return Err(MigrationError::TargetChanged);
+    }
+    let path = checked_target_path(root, relative)?;
+    std::fs::remove_file(path).map_err(|_| MigrationError::Write)
+}
+
+fn remove_target_tree(root: &Path, relative: &str) -> Result<(), MigrationError> {
+    let Some(metadata) = target_metadata(root, relative)? else {
+        return Ok(());
+    };
+    if !metadata.is_dir() {
+        return Err(MigrationError::Target);
+    }
+    let path = checked_target_path(root, relative)?;
+    remove_checked_tree(root, &path)
+}
+
+fn remove_checked_tree(root: &Path, directory: &Path) -> Result<(), MigrationError> {
+    let canonical = directory
+        .canonicalize()
+        .map_err(|_| MigrationError::Target)?;
+    if canonical == root || !canonical.starts_with(root) {
+        return Err(MigrationError::Target);
+    }
+    let mut entries = std::fs::read_dir(&canonical)
+        .map_err(|_| MigrationError::Read)?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|_| MigrationError::Read)?;
+    entries.sort_by_key(std::fs::DirEntry::file_name);
+    for entry in entries {
+        let path = entry.path();
+        let metadata = std::fs::symlink_metadata(&path).map_err(|_| MigrationError::Read)?;
+        if metadata_is_link(&metadata) {
+            return Err(MigrationError::Symlink);
+        }
+        let child = path.canonicalize().map_err(|_| MigrationError::Target)?;
+        if !child.starts_with(root) {
+            return Err(MigrationError::Target);
+        }
+        if metadata.is_dir() {
+            remove_checked_tree(root, &child)?;
+        } else if metadata.is_file() {
+            std::fs::remove_file(child).map_err(|_| MigrationError::Write)?;
+        } else {
+            return Err(MigrationError::Target);
+        }
+    }
+    std::fs::remove_dir(canonical).map_err(|_| MigrationError::Write)
 }
 
 fn validate_relative_path(relative: &str) -> Result<(), MigrationError> {
@@ -1462,9 +1935,11 @@ fn path_string(path: &Path) -> String {
         .to_owned()
 }
 
-fn write_new_file(path: &Path, bytes: &[u8]) -> Result<(), MigrationError> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|_| MigrationError::Write)?;
+fn write_target_file_new(root: &Path, relative: &str, bytes: &[u8]) -> Result<(), MigrationError> {
+    ensure_target_parent_directories(root, relative)?;
+    let path = checked_target_path(root, relative)?;
+    if target_metadata(root, relative)?.is_some() {
+        return Err(MigrationError::Collision);
     }
     let mut file = OpenOptions::new()
         .write(true)
@@ -1483,10 +1958,28 @@ fn write_new_file(path: &Path, bytes: &[u8]) -> Result<(), MigrationError> {
         .map_err(|_| MigrationError::Write)
 }
 
-fn write_json_new<T: Serialize>(path: &Path, value: &T) -> Result<(), MigrationError> {
+fn write_json_target_new<T: Serialize>(
+    root: &Path,
+    relative: &str,
+    value: &T,
+) -> Result<(), MigrationError> {
     let mut bytes = serde_json::to_vec_pretty(value).map_err(|_| MigrationError::Serialization)?;
     bytes.push(b'\n');
-    write_new_file(path, &bytes)
+    write_target_file_new(root, relative, &bytes)
+}
+
+fn read_target_json_bounded<T: for<'de> Deserialize<'de>>(
+    root: &Path,
+    relative: &str,
+    max_bytes: u64,
+    error: MigrationError,
+) -> Result<T, MigrationError> {
+    let metadata = target_metadata(root, relative)?.ok_or_else(|| error.clone())?;
+    if !metadata.is_file() || metadata.len() > max_bytes {
+        return Err(error);
+    }
+    let bytes = read_target_file(root, relative)?;
+    serde_json::from_slice(&bytes).map_err(|_| error)
 }
 
 fn read_json_bounded<T: for<'de> Deserialize<'de>>(
@@ -1618,6 +2111,23 @@ fn contains_secret(value: &Value) -> bool {
     }
 }
 
+fn contains_private_reasoning(value: &Value) -> bool {
+    match value {
+        Value::Object(object) => object.iter().any(|(key, value)| {
+            let normalized = key
+                .bytes()
+                .filter(u8::is_ascii_alphanumeric)
+                .map(|byte| byte.to_ascii_lowercase())
+                .collect::<Vec<_>>();
+            let normalized = String::from_utf8_lossy(&normalized);
+            matches!(normalized.as_ref(), "privatereasoning" | "reasoningcontent")
+                || contains_private_reasoning(value)
+        }),
+        Value::Array(values) => values.iter().any(contains_private_reasoning),
+        _ => false,
+    }
+}
+
 fn secret_key(key: &str) -> bool {
     let normalized = key
         .bytes()
@@ -1660,6 +2170,21 @@ fn looks_like_secret_token(value: &str) -> bool {
                     .bytes()
                     .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_'))
         })
+}
+
+fn is_sha256(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn valid_migration_id(value: &str) -> bool {
+    value.len() == 19
+        && value.starts_with("ts-")
+        && value[3..]
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
 fn imported_id(kind: &str, original: &str) -> String {

@@ -4,9 +4,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 const SUPPORTED_SCHEMA_VERSION: u16 = 1;
-const BASELINE_COMMIT: &str = "84784f5";
+const CONTRACT_VERSION: &str = "v1";
+const PROVENANCE_COMMIT: &str = "84784f5";
 const PRODUCT_ENTRY: &str = "bin/minimax-codex.cjs";
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
@@ -62,10 +64,13 @@ pub struct ProviderFeatureMatrix {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
-pub struct BaselineStatus {
+pub struct PublicContractManifest {
     pub schema_version: u16,
-    pub baseline_commit: String,
+    pub contract_version: String,
+    pub provenance_commit: String,
+    pub content_fingerprint: String,
     pub product_entry: String,
+    pub required_item_ids: Vec<String>,
     pub items: Vec<StatusItem>,
 }
 
@@ -78,21 +83,21 @@ pub enum ParityStatus {
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
 pub struct StatusItem {
     pub id: String,
     pub status: ParityStatus,
     #[serde(default)]
     pub evidence: Vec<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub difference: Option<String>,
+    pub approved_difference: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CompatManifests {
     pub commands: CommandManifest,
     pub providers: ProviderManifest,
-    pub baseline: BaselineStatus,
+    pub public_contract: PublicContractManifest,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -126,13 +131,13 @@ pub fn repository_root() -> PathBuf {
 pub fn load_compat_manifests(root: &Path) -> Result<CompatManifests, ManifestError> {
     let commands = read_json(root, "fixtures/compat/commands.v1.json")?;
     let providers = read_json(root, "fixtures/compat/providers.v1.json")?;
-    let baseline = read_json(root, "fixtures/compat/baseline-status.v1.json")?;
+    let public_contract = read_json(root, "fixtures/compat/public-contract.v1.json")?;
     let manifests = CompatManifests {
         commands,
         providers,
-        baseline,
+        public_contract,
     };
-    validate_manifests(&manifests)?;
+    validate_manifests(root, &manifests)?;
     Ok(manifests)
 }
 
@@ -148,11 +153,11 @@ fn read_json<T: for<'de> Deserialize<'de>>(
     })
 }
 
-fn validate_manifests(manifests: &CompatManifests) -> Result<(), ManifestError> {
+fn validate_manifests(root: &Path, manifests: &CompatManifests) -> Result<(), ManifestError> {
     for (name, version) in [
         ("commands", manifests.commands.schema_version),
         ("providers", manifests.providers.schema_version),
-        ("baseline", manifests.baseline.schema_version),
+        ("public contract", manifests.public_contract.schema_version),
     ] {
         if version != SUPPORTED_SCHEMA_VERSION {
             return Err(ManifestError::Validation(format!(
@@ -160,14 +165,19 @@ fn validate_manifests(manifests: &CompatManifests) -> Result<(), ManifestError> 
             )));
         }
     }
-    if manifests.baseline.baseline_commit != BASELINE_COMMIT {
+    if manifests.public_contract.contract_version != CONTRACT_VERSION {
         return Err(ManifestError::Validation(
-            "compatibility baseline commit must remain 84784f5".to_owned(),
+            "public contract version must remain v1".to_owned(),
         ));
     }
-    if manifests.baseline.product_entry != PRODUCT_ENTRY {
+    if manifests.public_contract.provenance_commit != PROVENANCE_COMMIT {
         return Err(ManifestError::Validation(
-            "compatibility product entry must be the evidence-gated Rust launcher".to_owned(),
+            "public contract provenance commit must remain 84784f5".to_owned(),
+        ));
+    }
+    if manifests.public_contract.product_entry != PRODUCT_ENTRY {
+        return Err(ManifestError::Validation(
+            "public contract product entry must be the evidence-gated Rust launcher".to_owned(),
         ));
     }
     ensure_unique(
@@ -189,10 +199,171 @@ fn validate_manifests(manifests: &CompatManifests) -> Result<(), ManifestError> 
         "provider protocol",
     )?;
     ensure_unique(
-        manifests.baseline.items.iter().map(|item| item.id.as_str()),
-        "compatibility item",
+        manifests
+            .public_contract
+            .required_item_ids
+            .iter()
+            .map(String::as_str),
+        "required public contract item",
     )?;
+    ensure_unique(
+        manifests
+            .public_contract
+            .items
+            .iter()
+            .map(|item| item.id.as_str()),
+        "public contract item",
+    )?;
+
+    let expected_ids = expected_contract_ids(manifests);
+    let required_ids = manifests
+        .public_contract
+        .required_item_ids
+        .iter()
+        .cloned()
+        .collect::<BTreeSet<_>>();
+    let item_ids = manifests
+        .public_contract
+        .items
+        .iter()
+        .map(|item| item.id.clone())
+        .collect::<BTreeSet<_>>();
+    if manifests
+        .public_contract
+        .required_item_ids
+        .windows(2)
+        .any(|pair| pair[0] >= pair[1])
+        || required_ids != expected_ids
+        || item_ids != required_ids
+        || manifests.public_contract.items.len() != required_ids.len()
+    {
+        return Err(ManifestError::Validation(
+            "public contract items must exactly cover the sorted required contract IDs".to_owned(),
+        ));
+    }
+
+    for item in &manifests.public_contract.items {
+        if !item.id.starts_with("contract.")
+            || item.id.contains("typescript")
+            || item.id.starts_with("rust.")
+        {
+            return Err(ManifestError::Validation(format!(
+                "public contract item has an invalid stable ID: {}",
+                item.id
+            )));
+        }
+        if item.status == ParityStatus::Pending || item.evidence.is_empty() {
+            return Err(ManifestError::Validation(format!(
+                "public contract item requires current Rust evidence: {}",
+                item.id
+            )));
+        }
+        for evidence in &item.evidence {
+            if evidence.trim().is_empty() || !root.join(evidence).is_file() {
+                return Err(ManifestError::Validation(format!(
+                    "public contract item references missing evidence: {} -> {}",
+                    item.id, evidence
+                )));
+            }
+        }
+        match item.status {
+            ParityStatus::Matched if item.approved_difference.is_some() => {
+                return Err(ManifestError::Validation(format!(
+                    "matched public contract item cannot approve a difference: {}",
+                    item.id
+                )));
+            }
+            ParityStatus::ApprovedDifference
+                if item
+                    .approved_difference
+                    .as_deref()
+                    .is_none_or(|id| !id.starts_with("difference.command.")) =>
+            {
+                return Err(ManifestError::Validation(format!(
+                    "approved public contract difference requires a stable ID: {}",
+                    item.id
+                )));
+            }
+            ParityStatus::Pending | ParityStatus::Matched | ParityStatus::ApprovedDifference => {}
+        }
+    }
+
+    let actual_fingerprint = contract_fingerprint(&manifests.public_contract)?;
+    if manifests.public_contract.content_fingerprint != actual_fingerprint {
+        return Err(ManifestError::Validation(
+            "public contract content fingerprint mismatch".to_owned(),
+        ));
+    }
     Ok(())
+}
+
+fn expected_contract_ids(manifests: &CompatManifests) -> BTreeSet<String> {
+    let mut ids = BTreeSet::from([
+        "contract.migration".to_owned(),
+        "contract.permission_modes".to_owned(),
+        "contract.product_entry".to_owned(),
+        "contract.release_gate".to_owned(),
+        "contract.requirement.TOOL-01".to_owned(),
+        "contract.requirement.TOOL-02".to_owned(),
+        "contract.requirement.TOOL-03".to_owned(),
+        "contract.requirement.TOOL-04".to_owned(),
+        "contract.requirement.TOOL-05".to_owned(),
+        "contract.retrieval".to_owned(),
+        "contract.vault".to_owned(),
+    ]);
+    for command in &manifests.commands.commands {
+        ids.insert(format!("contract.command.{}", command.name));
+        ids.extend(
+            command
+                .aliases
+                .iter()
+                .map(|alias| format!("contract.command.{alias}")),
+        );
+    }
+    ids.extend(
+        manifests
+            .providers
+            .profile_classes
+            .iter()
+            .map(|profile| format!("contract.provider_profile.{}", profile.id)),
+    );
+    ids.extend(
+        manifests
+            .providers
+            .protocols
+            .iter()
+            .map(|protocol| format!("contract.provider_protocol.{protocol}")),
+    );
+    ids
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ContractFingerprintInput<'a> {
+    schema_version: u16,
+    contract_version: &'a str,
+    provenance_commit: &'a str,
+    product_entry: &'a str,
+    required_item_ids: &'a [String],
+    items: &'a [StatusItem],
+}
+
+fn contract_fingerprint(manifest: &PublicContractManifest) -> Result<String, ManifestError> {
+    let input = ContractFingerprintInput {
+        schema_version: manifest.schema_version,
+        contract_version: &manifest.contract_version,
+        provenance_commit: &manifest.provenance_commit,
+        product_entry: &manifest.product_entry,
+        required_item_ids: &manifest.required_item_ids,
+        items: &manifest.items,
+    };
+    let bytes = serde_json::to_vec(&input)
+        .map_err(|_| ManifestError::Validation("cannot fingerprint public contract".to_owned()))?;
+    let digest = Sha256::digest(bytes)
+        .iter()
+        .map(|byte| format!("{byte:02x}"))
+        .collect::<String>();
+    Ok(format!("sha256:{digest}"))
 }
 
 fn ensure_unique<'a>(

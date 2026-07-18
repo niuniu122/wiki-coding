@@ -1,250 +1,288 @@
 {
   "schemaVersion": 1,
-  "baselineCommit": "84784f5",
+  "contractVersion": "v1",
+  "contractFingerprint": "sha256:91d2c5529ecfa978de0c6e27d2161bc9dd725bd7e263cebb75ccff3c65c6cec5",
   "entries": [
     {
-      "id": "rust.command./agent",
-      "status": "matched",
-      "evidence": [
+      "id": "contract.command./agent",
+      "rustStatus": "matched",
+      "rustEvidence": [
         "crates/compat-harness/src/baseline.rs",
         "crates/tui/tests/command_render.rs",
         "fixtures/compat/commands.v1.json"
       ]
     },
     {
-      "id": "rust.command./api",
-      "status": "matched",
-      "evidence": [
+      "id": "contract.command./api",
+      "rustStatus": "approved_difference",
+      "rustEvidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ],
+      "approvedDifference": {
+        "id": "difference.command.api",
+        "command": "/api",
+        "lockedOutcome": "config.api_key.request",
+        "rustBehavior": "Reports the environment or OS-keyring credential boundary without accepting plaintext into the session.",
+        "reason": "The Rust credential contract forbids plaintext configuration and headless keyring access.",
+        "safety": "No credential value is printed, persisted, or sent to the model."
+      }
+    },
+    {
+      "id": "contract.command./capabilities",
+      "rustStatus": "matched",
+      "rustEvidence": [
         "crates/compat-harness/src/baseline.rs",
         "crates/tui/tests/command_render.rs",
         "fixtures/compat/commands.v1.json"
       ]
     },
     {
-      "id": "rust.command./capabilities",
-      "status": "matched",
-      "evidence": [
+      "id": "contract.command./chat",
+      "rustStatus": "matched",
+      "rustEvidence": [
         "crates/compat-harness/src/baseline.rs",
         "crates/tui/tests/command_render.rs",
         "fixtures/compat/commands.v1.json"
       ]
     },
     {
-      "id": "rust.command./chat",
-      "status": "matched",
-      "evidence": [
+      "id": "contract.command./compact",
+      "rustStatus": "matched",
+      "rustEvidence": [
         "crates/compat-harness/src/baseline.rs",
         "crates/tui/tests/command_render.rs",
         "fixtures/compat/commands.v1.json"
       ]
     },
     {
-      "id": "rust.command./compact",
-      "status": "matched",
-      "evidence": [
+      "id": "contract.command./continue",
+      "rustStatus": "matched",
+      "rustEvidence": [
         "crates/compat-harness/src/baseline.rs",
         "crates/tui/tests/command_render.rs",
         "fixtures/compat/commands.v1.json"
       ]
     },
     {
-      "id": "rust.command./continue",
-      "status": "matched",
-      "evidence": [
+      "id": "contract.command./exit",
+      "rustStatus": "matched",
+      "rustEvidence": [
         "crates/compat-harness/src/baseline.rs",
         "crates/tui/tests/command_render.rs",
         "fixtures/compat/commands.v1.json"
       ]
     },
     {
-      "id": "rust.command./exit",
-      "status": "matched",
-      "evidence": [
+      "id": "contract.command./interrupt",
+      "rustStatus": "approved_difference",
+      "rustEvidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ],
+      "approvedDifference": {
+        "id": "difference.command.interrupt",
+        "command": "/interrupt",
+        "lockedOutcome": "turn.interrupt",
+        "rustBehavior": "Ctrl-C interrupts an active turn; the slash command reports that binding when the input loop is idle.",
+        "reason": "The single foreground terminal cannot read a slash command while the Provider turn owns the input loop.",
+        "safety": "The cancellation token still persists one interrupted terminal receipt."
+      }
+    },
+    {
+      "id": "contract.command./model",
+      "rustStatus": "matched",
+      "rustEvidence": [
         "crates/compat-harness/src/baseline.rs",
         "crates/tui/tests/command_render.rs",
         "fixtures/compat/commands.v1.json"
       ]
     },
     {
-      "id": "rust.command./interrupt",
-      "status": "matched",
-      "evidence": [
+      "id": "contract.command./models",
+      "rustStatus": "approved_difference",
+      "rustEvidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ],
+      "approvedDifference": {
+        "id": "difference.command.models",
+        "command": "/models",
+        "lockedOutcome": "model.list",
+        "rustBehavior": "Lists the configured local model binding only.",
+        "reason": "Remote model enumeration would add an unbounded network call to an otherwise local command.",
+        "safety": "No Provider request or credential read is needed to inspect the selected model."
+      }
+    },
+    {
+      "id": "contract.command./new",
+      "rustStatus": "matched",
+      "rustEvidence": [
         "crates/compat-harness/src/baseline.rs",
         "crates/tui/tests/command_render.rs",
         "fixtures/compat/commands.v1.json"
       ]
     },
     {
-      "id": "rust.command./model",
-      "status": "matched",
-      "evidence": [
+      "id": "contract.command./permissions",
+      "rustStatus": "matched",
+      "rustEvidence": [
         "crates/compat-harness/src/baseline.rs",
         "crates/tui/tests/command_render.rs",
         "fixtures/compat/commands.v1.json"
       ]
     },
     {
-      "id": "rust.command./models",
-      "status": "matched",
-      "evidence": [
+      "id": "contract.command./provider",
+      "rustStatus": "approved_difference",
+      "rustEvidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ],
+      "approvedDifference": {
+        "id": "difference.command.provider",
+        "command": "/provider",
+        "lockedOutcome": "provider.list_or_switch",
+        "rustBehavior": "Lists the pinned provider; switching requires a validated new process/session binding.",
+        "reason": "Changing the Provider inside a durable session would mix model identity and recovery evidence.",
+        "safety": "Existing sessions retain their exact Provider, model, and protocol binding."
+      }
+    },
+    {
+      "id": "contract.command./quit",
+      "rustStatus": "matched",
+      "rustEvidence": [
         "crates/compat-harness/src/baseline.rs",
         "crates/tui/tests/command_render.rs",
         "fixtures/compat/commands.v1.json"
       ]
     },
     {
-      "id": "rust.command./new",
-      "status": "matched",
-      "evidence": [
+      "id": "contract.command./resume",
+      "rustStatus": "matched",
+      "rustEvidence": [
         "crates/compat-harness/src/baseline.rs",
         "crates/tui/tests/command_render.rs",
         "fixtures/compat/commands.v1.json"
       ]
     },
     {
-      "id": "rust.command./permissions",
-      "status": "matched",
-      "evidence": [
+      "id": "contract.command./retry",
+      "rustStatus": "approved_difference",
+      "rustEvidence": [
+        "crates/compat-harness/src/baseline.rs",
+        "crates/tui/tests/command_render.rs",
+        "fixtures/compat/commands.v1.json"
+      ],
+      "approvedDifference": {
+        "id": "difference.command.retry",
+        "command": "/retry",
+        "lockedOutcome": "runtime.init.retry",
+        "rustBehavior": "Retries initialization when unavailable; after healthy startup it retries the latest terminal turn.",
+        "reason": "This preserves initialization recovery and makes the required durable turn retry reachable.",
+        "safety": "Unknown side effects are never replayed; recovered started tools remain indeterminate."
+      }
+    },
+    {
+      "id": "contract.command./threads",
+      "rustStatus": "matched",
+      "rustEvidence": [
         "crates/compat-harness/src/baseline.rs",
         "crates/tui/tests/command_render.rs",
         "fixtures/compat/commands.v1.json"
       ]
     },
     {
-      "id": "rust.command./provider",
-      "status": "matched",
-      "evidence": [
+      "id": "contract.command./trace",
+      "rustStatus": "matched",
+      "rustEvidence": [
         "crates/compat-harness/src/baseline.rs",
         "crates/tui/tests/command_render.rs",
         "fixtures/compat/commands.v1.json"
       ]
     },
     {
-      "id": "rust.command./quit",
-      "status": "matched",
-      "evidence": [
-        "crates/compat-harness/src/baseline.rs",
-        "crates/tui/tests/command_render.rs",
-        "fixtures/compat/commands.v1.json"
-      ]
-    },
-    {
-      "id": "rust.command./resume",
-      "status": "matched",
-      "evidence": [
-        "crates/compat-harness/src/baseline.rs",
-        "crates/tui/tests/command_render.rs",
-        "fixtures/compat/commands.v1.json"
-      ]
-    },
-    {
-      "id": "rust.command./retry",
-      "status": "matched",
-      "evidence": [
-        "crates/compat-harness/src/baseline.rs",
-        "crates/tui/tests/command_render.rs",
-        "fixtures/compat/commands.v1.json"
-      ]
-    },
-    {
-      "id": "rust.command./threads",
-      "status": "matched",
-      "evidence": [
-        "crates/compat-harness/src/baseline.rs",
-        "crates/tui/tests/command_render.rs",
-        "fixtures/compat/commands.v1.json"
-      ]
-    },
-    {
-      "id": "rust.command./trace",
-      "status": "matched",
-      "evidence": [
-        "crates/compat-harness/src/baseline.rs",
-        "crates/tui/tests/command_render.rs",
-        "fixtures/compat/commands.v1.json"
-      ]
-    },
-    {
-      "id": "rust.migration",
-      "status": "matched",
-      "evidence": [
+      "id": "contract.migration",
+      "rustStatus": "matched",
+      "rustEvidence": [
         "crates/cli/src/migration.rs",
         "crates/cli/tests/migration.rs",
         "fixtures/compat/migration/typescript-v1/config.json"
       ]
     },
     {
-      "id": "rust.permission_modes",
-      "status": "matched",
-      "evidence": [
+      "id": "contract.permission_modes",
+      "rustStatus": "matched",
+      "rustEvidence": [
         "crates/compat-harness/src/baseline.rs",
         "crates/tui/tests/command_render.rs",
         "fixtures/compat/commands.v1.json"
       ]
     },
     {
-      "id": "rust.product_entry",
-      "status": "matched",
-      "evidence": [
+      "id": "contract.product_entry",
+      "rustStatus": "matched",
+      "rustEvidence": [
         "bin/minimax-codex.cjs",
         "crates/cli/tests/headless.rs",
         "crates/compat-harness/src/baseline.rs",
         "fixtures/compat/release/hosted-gates.v1.json",
-        "package.json",
-        "test/launcher.test.ts"
+        "package.json"
       ]
     },
     {
-      "id": "rust.provider_profile.custom_openai_compatible",
-      "status": "matched",
-      "evidence": [
+      "id": "contract.provider_profile.custom_openai_compatible",
+      "rustStatus": "matched",
+      "rustEvidence": [
         "crates/compat-harness/src/baseline.rs",
         "crates/provider/tests/config_credentials.rs",
         "fixtures/compat/providers.v1.json"
       ]
     },
     {
-      "id": "rust.provider_profile.minimax_hashsight",
-      "status": "matched",
-      "evidence": [
+      "id": "contract.provider_profile.minimax_hashsight",
+      "rustStatus": "matched",
+      "rustEvidence": [
         "crates/compat-harness/src/baseline.rs",
         "crates/provider/tests/config_credentials.rs",
         "fixtures/compat/providers.v1.json"
       ]
     },
     {
-      "id": "rust.provider_profile.minimax_official",
-      "status": "matched",
-      "evidence": [
+      "id": "contract.provider_profile.minimax_official",
+      "rustStatus": "matched",
+      "rustEvidence": [
         "crates/compat-harness/src/baseline.rs",
         "crates/provider/tests/config_credentials.rs",
         "fixtures/compat/providers.v1.json"
       ]
     },
     {
-      "id": "rust.provider_protocol.chat_completions",
-      "status": "matched",
-      "evidence": [
+      "id": "contract.provider_protocol.chat_completions",
+      "rustStatus": "matched",
+      "rustEvidence": [
         "crates/provider/tests/provider_fixtures.rs",
         "fixtures/compat/provider-streams/chat-completions.valid.jsonl",
+        "fixtures/compat/provider-streams/invalid-cases.v1.json"
+      ]
+    },
+    {
+      "id": "contract.provider_protocol.responses",
+      "rustStatus": "matched",
+      "rustEvidence": [
+        "crates/provider/tests/provider_fixtures.rs",
         "fixtures/compat/provider-streams/invalid-cases.v1.json",
         "fixtures/compat/provider-streams/responses.valid.jsonl"
       ]
     },
     {
-      "id": "rust.provider_protocol.responses",
-      "status": "matched",
-      "evidence": [
-        "crates/provider/tests/provider_fixtures.rs",
-        "fixtures/compat/provider-streams/chat-completions.valid.jsonl",
-        "fixtures/compat/provider-streams/invalid-cases.v1.json",
-        "fixtures/compat/provider-streams/responses.valid.jsonl"
-      ]
-    },
-    {
-      "id": "rust.release_gate",
-      "status": "matched",
-      "evidence": [
+      "id": "contract.release_gate",
+      "rustStatus": "matched",
+      "rustEvidence": [
         ".github/workflows/ci.yml",
         "fixtures/compat/release/hosted-gates.v1.json",
         "scripts/release/package-rust.mjs",
@@ -252,45 +290,45 @@
       ]
     },
     {
-      "id": "rust.requirement.TOOL-01",
-      "status": "matched",
-      "evidence": [
+      "id": "contract.requirement.TOOL-01",
+      "rustStatus": "matched",
+      "rustEvidence": [
         "crates/cli/tests/tool_loop.rs",
         "crates/provider/tests/provider_fixtures.rs",
         "fixtures/compat/tools/e2e.v1.json"
       ]
     },
     {
-      "id": "rust.requirement.TOOL-02",
-      "status": "matched",
-      "evidence": [
+      "id": "contract.requirement.TOOL-02",
+      "rustStatus": "matched",
+      "rustEvidence": [
         "crates/cli/tests/tool_loop.rs",
         "crates/tui/tests/command_render.rs",
         "fixtures/compat/tools/e2e.v1.json"
       ]
     },
     {
-      "id": "rust.requirement.TOOL-03",
-      "status": "matched",
-      "evidence": [
+      "id": "contract.requirement.TOOL-03",
+      "rustStatus": "matched",
+      "rustEvidence": [
         "crates/cli/tests/tool_loop.rs",
         "crates/tui/tests/command_render.rs",
         "fixtures/compat/commands.v1.json"
       ]
     },
     {
-      "id": "rust.requirement.TOOL-04",
-      "status": "matched",
-      "evidence": [
+      "id": "contract.requirement.TOOL-04",
+      "rustStatus": "matched",
+      "rustEvidence": [
         "crates/tools/tests/process_tools.rs",
         "crates/tools/tests/workspace_tools.rs",
         "fixtures/compat/tools/v1-schemas.json"
       ]
     },
     {
-      "id": "rust.requirement.TOOL-05",
-      "status": "matched",
-      "evidence": [
+      "id": "contract.requirement.TOOL-05",
+      "rustStatus": "matched",
+      "rustEvidence": [
         "crates/cli/tests/tool_loop.rs",
         "crates/tools/tests/process_tools.rs",
         "crates/tools/tests/workspace_tools.rs",
@@ -298,185 +336,21 @@
       ]
     },
     {
-      "id": "rust.retrieval",
-      "status": "matched",
-      "evidence": [
+      "id": "contract.retrieval",
+      "rustStatus": "matched",
+      "rustEvidence": [
         "crates/retrieval/tests/benchmark.rs",
         "crates/retrieval/tests/project_discovery.rs",
         "fixtures/compat/retrieval/explanations.v1.json"
       ]
     },
     {
-      "id": "rust.vault",
-      "status": "matched",
-      "evidence": [
+      "id": "contract.vault",
+      "rustStatus": "matched",
+      "rustEvidence": [
         "crates/vault/tests/maintenance.rs",
         "crates/vault/tests/retention.rs",
         "fixtures/compat/vault/maintenance.v1.json"
-      ]
-    },
-    {
-      "id": "typescript.command./agent",
-      "status": "matched",
-      "evidence": [
-        "test/chat-input-policy.test.ts"
-      ]
-    },
-    {
-      "id": "typescript.command./api",
-      "status": "matched",
-      "evidence": [
-        "test/chat-input-policy.test.ts"
-      ]
-    },
-    {
-      "id": "typescript.command./capabilities",
-      "status": "matched",
-      "evidence": [
-        "test/chat-input-policy.test.ts"
-      ]
-    },
-    {
-      "id": "typescript.command./chat",
-      "status": "matched",
-      "evidence": [
-        "test/chat-input-policy.test.ts"
-      ]
-    },
-    {
-      "id": "typescript.command./compact",
-      "status": "matched",
-      "evidence": [
-        "test/chat-input-policy.test.ts"
-      ]
-    },
-    {
-      "id": "typescript.command./continue",
-      "status": "matched",
-      "evidence": [
-        "test/chat-input-policy.test.ts"
-      ]
-    },
-    {
-      "id": "typescript.command./exit",
-      "status": "matched",
-      "evidence": [
-        "test/chat-input-policy.test.ts"
-      ]
-    },
-    {
-      "id": "typescript.command./interrupt",
-      "status": "matched",
-      "evidence": [
-        "test/chat-input-policy.test.ts"
-      ]
-    },
-    {
-      "id": "typescript.command./model",
-      "status": "matched",
-      "evidence": [
-        "test/chat-input-policy.test.ts"
-      ]
-    },
-    {
-      "id": "typescript.command./models",
-      "status": "matched",
-      "evidence": [
-        "test/chat-input-policy.test.ts"
-      ]
-    },
-    {
-      "id": "typescript.command./new",
-      "status": "matched",
-      "evidence": [
-        "test/chat-input-policy.test.ts"
-      ]
-    },
-    {
-      "id": "typescript.command./permissions",
-      "status": "matched",
-      "evidence": [
-        "test/chat-input-policy.test.ts"
-      ]
-    },
-    {
-      "id": "typescript.command./provider",
-      "status": "matched",
-      "evidence": [
-        "test/chat-input-policy.test.ts"
-      ]
-    },
-    {
-      "id": "typescript.command./quit",
-      "status": "matched",
-      "evidence": [
-        "test/chat-input-policy.test.ts"
-      ]
-    },
-    {
-      "id": "typescript.command./resume",
-      "status": "matched",
-      "evidence": [
-        "test/chat-input-policy.test.ts"
-      ]
-    },
-    {
-      "id": "typescript.command./retry",
-      "status": "matched",
-      "evidence": [
-        "test/chat-input-policy.test.ts"
-      ]
-    },
-    {
-      "id": "typescript.command./threads",
-      "status": "matched",
-      "evidence": [
-        "test/chat-input-policy.test.ts"
-      ]
-    },
-    {
-      "id": "typescript.command./trace",
-      "status": "matched",
-      "evidence": [
-        "test/chat-input-policy.test.ts"
-      ]
-    },
-    {
-      "id": "typescript.provider_profile.custom_openai_compatible",
-      "status": "matched",
-      "evidence": [
-        "test/model-profile-registry.test.ts",
-        "test/provider-conformance.test.ts"
-      ]
-    },
-    {
-      "id": "typescript.provider_profile.minimax_hashsight",
-      "status": "matched",
-      "evidence": [
-        "test/model-profile-registry.test.ts",
-        "test/provider-conformance.test.ts"
-      ]
-    },
-    {
-      "id": "typescript.provider_profile.minimax_official",
-      "status": "matched",
-      "evidence": [
-        "test/model-profile-registry.test.ts",
-        "test/provider-conformance.test.ts"
-      ]
-    },
-    {
-      "id": "typescript.provider_protocol.chat_completions",
-      "status": "matched",
-      "evidence": [
-        "test/provider-conformance.test.ts"
-      ]
-    },
-    {
-      "id": "typescript.provider_protocol.responses",
-      "status": "matched",
-      "evidence": [
-        "test/provider-conformance.test.ts"
       ]
     }
   ]

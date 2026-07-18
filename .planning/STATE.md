@@ -1,40 +1,36 @@
 ---
 gsd_state_version: 1.0
-milestone: v1.0
-milestone_name: Rust rewrite
-current_phase: 8
-current_phase_name: Codex-style subprocess sandbox hardening
-status: complete
-stopped_at: Phase 8 and the v1.0 Rust rewrite milestone completed with fresh candidate and strict hosted evidence
-last_updated: "2026-07-17T12:10:00+08:00"
-last_activity: 2026-07-17
-last_activity_desc: Completed Phase 8 after candidate and strict Windows/Linux sandbox, release, and milestone gates passed
+milestone: v3.0
+milestone_name: Rust Convergence
+current_phase: 14
+current_phase_name: TypeScript Removal and Hosted Closure
+status: executing
+stopped_at: Completed 14-02-PLAN.md; continuing 14-03 local documentation task
+last_updated: "2026-07-18T04:33:46.945Z"
+last_activity: 2026-07-18
+last_activity_desc: Phase 14 permanent Rust-only gates and v3 fingerprint completed
 progress:
-  total_phases: 8
-  completed_phases: 8
-  total_plans: 25
-  completed_plans: 25
-  percent: 100
+  total_phases: 14
+  completed_phases: 13
+  total_plans: 48
+  completed_plans: 47
+  percent: 98
 ---
 
 # Project State
 
 ## Project Reference
 
-See: `.planning/PROJECT.md` (updated 2026-07-15)
+See: `.planning/PROJECT.md` (updated 2026-07-18)
 
 **Core value:** A non-programmer can safely find the right open-source capability or project and complete work in one recoverable local CLI.
 
 ## Current Position
 
-The v1.0 milestone is complete. Phase 8 replaced advisory subprocess safety with an enforced/fail-closed Linux boundary and truthful unsupported-platform behavior.
-
-- Requirements: 52/52 complete
-- Cross-phase integrations: 38/38
-- End-to-end flows: 7/7
-- Plans: 25/25
-- Phase 8 plans: 3/3
-- Final audit blockers: 0
+Phase: 14 (TypeScript Removal and Hosted Closure) — EXECUTING
+Plan: 3 of 3
+Status: Ready to execute
+Last activity: 2026-07-18 — Phase 14 execution started
 
 ## Previous Phase 7 Hosted Baseline (superseded)
 
@@ -54,9 +50,27 @@ The v1.0 milestone is complete. Phase 8 replaced advisory subprocess safety with
 - Ubuntu executed the real Bubblewrap namespace preflight and malicious transitive Cargo canary; strict Rust, release, retrieval, Provider, package, and milestone-flow gates passed.
 - Windows and Linux archives, binaries, environment facts, and performance measurements are bound to the refreshed machine-readable evidence.
 
+## Phase 9 Local Evidence
+
+- Dedicated source-only project, Skill, and MCP catalogs and three typed exact/BM25 indexes are implemented.
+- Candidate-only embedding, outsider rejection, lexical fallback, readiness precedence, strict JSON, rendering parity, and prompt no-action boundaries are covered by Rust tests.
+- Rust candidate workspace tests and doc tests passed; strict workspace Clippy passed with warnings denied.
+- TypeScript check, 440 tests, build, 175-case retrieval evaluation, and Provider conformance evaluation passed.
+- The previous hosted evidence is intentionally stale after product changes. A manual candidate CI run and subsequent strict push are required before release; no local evidence fixture was forged.
+- The current pre-hosted product fingerprint is `f599aa324e135d30db744d86c497d67196d5d170d469aaa03941aed64d0a74f7` across 414 product files.
+- A fallback GNU-LLVM release archive was built, but its installed smoke exited `0xC0000135`; it was not represented as Windows MSVC release evidence.
+
+## Phase 13 Local Evidence
+
+- npm now exposes one dependency-free `minimax-codex` command that resolves only the fixed packaged Rust sibling and fails closed without search, fallback, or download.
+- Deterministic native and npm candidates share product fingerprint `39bbe83352d1be482ecdca59482855732683505112fa23a1cdcc5337f5a1eaee` across 438 files and binary SHA-256 `942adad08597801f037b8dfc1be49937963c12d7c5337055cf669c6ed0c5ffee`.
+- Both independently extracted installed paths report `minimax-codex-rust 0.1.0`, the same read-only capability output, offline true, and zero Provider, credential, or model-download activity.
+- All eleven package corruption categories, 19 package tests, full Rust workspace/doc tests, strict Clippy, Provider 20/20, 175-case retrieval evaluation, milestone flow, and candidate verification pass locally.
+- This is GNU-LLVM `development_only` evidence. Fresh hosted Windows MSVC/Linux GNU evidence and TypeScript deletion remain Phase 14 work and are not authorized by this result.
+
 ## Locked Decisions
 
-- Rust is the default product entry; `minimax-codex-legacy` keeps the explicit TypeScript path for the support window.
+- Rust is the sole supported product entry; `minimax-codex` reaches only the fixed native launcher and no legacy command is exposed.
 - Permissions are exactly `confirm` and process-scoped `full-access`; all hard safety gates remain active.
 - The product uses one project-bound Obsidian-compatible Vault and no SQLite.
 - Raw terminal sessions finalize before the separate pinned-main-model Wiki workflow.
@@ -68,14 +82,15 @@ The v1.0 milestone is complete. Phase 8 replaced advisory subprocess safety with
 
 - GitHub reports that `actions/checkout@v4` and `actions/setup-node@v4` still target a deprecated Node 20 action runtime. The hosted runner forced Node 24 for those actions and all gates passed; upgrade the action versions when the upstream replacements are adopted.
 - Installed-package smoke uses a read-only Rust capability command. The complete Provider/Vault/Wiki chain is verified compositionally by Rust integration tests rather than replayed from the extracted package without credentials.
+- Refresh the hosted release record through the documented manual candidate CI flow before merging or releasing this product change.
 
 ## Deferred Items
 
 | Category | Item | Target |
 |----------|------|--------|
 | Platform | macOS support | v2 |
-| Extensions | MCP/plugins/subagents | v2 |
-| Retrieval | Optional separately installed embedding resource distribution | post-v1 |
+| Extensions | Explicitly confirmed installer and sandboxed Skill/MCP runtime | post-v2 |
+| Retrieval | Optional separately installed embedding resource distribution | post-v2 |
 
 ## Authorization Boundaries Preserved
 
@@ -89,3 +104,93 @@ No package publication, tag, PR, merge, live Provider request, credential read, 
 - Approval and sandboxing are independent axes: confirm maps to restricted execution, while process-scoped full access explicitly disables the subprocess sandbox.
 - Confirm-mode process execution fails closed on platforms or installations without a proven backend; no partial Windows imitation is presented as safe.
 - Phase 8 code, docs, CI contracts, adversarial canaries, native release artifacts, and refreshed product-fingerprint evidence all pass. The milestone has no remaining mandatory gate.
+- Phase 9 separates external capability metadata from executable tools, keeps BM25 authoritative, and exposes readiness without granting action authority.
+- Phase 9 local gates pass. Hosted release evidence is a separate pre-release follow-up because this branch changes the deterministic product fingerprint.
+
+## Decisions
+
+- [Phase 9]: External project, Skill, and MCP metadata lives under capabilities/; crates/tools remains the fixed internal adapter set. — Separates discovery metadata from executable authority.
+- [Phase 9]: BM25 is authoritative recall; verified embedding may rerank only the bounded lexical candidate union. — Preserves offline usefulness and prevents semantic expansion.
+- [Phase 9]: Discovery exposes ready, needs_install, or needs_authorization but never performs the next action. — Makes prerequisites understandable without granting install or execution authority.
+- [Phase 10]: Hash-pin every tracked TS/TSX path as inert transitional evidence until Phase 11 retirement. — Any addition or content edit must become an explicit source-authority review.
+- [Phase 10]: Keep the three diagnostic JavaScript fixtures in a separate lifecycle class outside executable authority. — Phase 11 must disposition them and Phase 14 must delete them and zero the class.
+- [Phase 10]: Exclude generated dist contents from source authority while validating committed sources and package executable links. — The offline gate must be independent of generated build outputs.
+- [Phase 10]: The supported npm surface exposes only minimax-codex through the fixed Rust launcher; TypeScript remains inert source evidence until retirement. — Removes duplicate executable authority without deleting Phase 10 transition evidence.
+- [Phase 10]: .minimax is the only project writable runtime root; .mini-codex is read-only migration input and rollback is receipt-scoped. — Keeps migration source-preserving and makes every project mutation attributable to Rust state.
+- [Phase 10]: Candidate archives expose only the fixed launcher and one platform Rust binary; generated TypeScript output is not packaged.
+- [Phase 10]: Installed identity requires matching direct and launcher versions plus the exact packaged binary SHA-256 under a controlled environment.
+- [Phase 10]: CI runs Rust contracts before transitional Node checks and every package or installed smoke step.
+- [Phase 10]: Milestone evidence is selected by the actual rustc host so GNU-LLVM development evidence cannot satisfy a hosted tier.
+- [Phase 10]: npm development uses the exact locked Cargo CLI route; installed startup remains on the fixed native launcher. — This removes direct TypeScript product execution while preserving argv forwarding and the cross-platform npm shim.
+- [Phase 10]: Both offline authority preflights share a structural package-script policy that preserves only transitional test, evaluation, and smoke TypeScript routes. — One fail-closed classifier prevents compatibility and source-authority checks from drifting apart without executing package scripts.
+- [Phase 11]: Freeze every Phase 10 verification source by exact path and SHA-256 while allowing multiple responsibility rows per source. — Preserves reviewable history without collapsing distinct public outcomes or requiring one Rust filename per TypeScript file.
+- [Phase 11]: Rust-cover documented public and safety behavior, and explicitly retire only dormant, internal, or unshipped TypeScript responsibilities. — Avoids porting undocumented internals merely for file-count parity while making every non-port reviewable.
+- [Phase 11]: Treat the responsibility matrix as evidence rather than runtime authority and require every Rust-covered row to name an existing Rust file and exact test function. — Keeps product behavior in Rust while making stale or fabricated coverage bindings fail closed.
+- [Phase 11]: Provider evaluation uses fingerprinted immutable fixtures and production Rust replay/config/profile APIs only. — Keeps evaluation deterministic, offline, credential-free, and free of a second Provider implementation.
+- [Phase 11]: Both Provider protocols publish the same ordered ten-check contract and verification requires its byte-stable golden. — Makes fixture/check/report drift reviewable and fail-closed.
+- [Phase 11]: Transitional package smoke cannot override any failed Rust Provider check. — Preserves D-11-03 and D-11-05 Rust evaluation authority.
+- [Phase 11]: The 175-case retrieval corpus moves to immutable compatibility ownership with stable IDs and locked thresholds. — Lets Plan 11-03 consume one fingerprinted corpus while the original remains hash-pinned until 14-01.
+- [Phase 11]: The immutable 175-case corpus is the sole lexical evaluation input; its stable IDs, fingerprint, count, and thresholds fail closed in Rust.
+- [Phase 11]: BM25 is authoritative candidate recall; deterministic semantic evaluation may rerank only the observed bounded lexical set and outsiders preserve BM25.
+- [Phase 11]: Retrieval degradation is fixture-only and model-free; stable reasons preserve BM25 without network, Provider, credentials, downloads, or model loads.
+- [Phase 11]: Package evaluation aliases are exact Rust compatibility-harness commands, and verify:agent composes coverage, Provider, then retrieval. — One shared aggregate prevents release-order drift and removes TypeScript evaluator authority.
+- [Phase 11]: CI requires coverage, Provider evaluation, and retrieval evaluation before every build, package, or evidence step. — A package smoke success cannot compensate for a failed Rust evaluator report.
+- [Phase 11]: Transitional TypeScript tests, static checks, build, and smoke remain allowed, but TypeScript evaluator commands and src/eval paths are denied. — Phase 11 cuts authority without deleting hash-pinned evidence reserved for Phase 14.
+- [Phase 11]: Bind every responsibility through one closed semantic evidence contract registry. — A strict row-to-contract bijection preserves per-source auditability while preventing unrelated test-owner reuse.
+- [Phase 11]: Keep parser recognition separate from retry and continue outcome authority. — Only executed CLI runtime behavior proves distinct durable requests, turns, terminals, immutable source, and replay.
+- [Phase 11]: Validate the complete discovered TypeScript test dependency graph before any test import. — Pre-import closure prevents an earlier test module from producing side effects before a later forbidden evaluator edge is detected.
+- [Phase 11]: Keep independent TypeScript AST and Rust lexical graph validators. — Shared fail-closed semantics with separate implementations prevent one parser defect from silently authorizing both gates.
+- [Phase 11]: Retain TypeScript evaluator sources as hash-pinned Phase 14 inputs while Rust owns executable evaluation. — Static evidence preserves migration provenance without leaving a Node evaluator route in npm test.
+- [Phase 12]: Use immutable contract.* IDs as the fixture-owned public compatibility surface — Separates public product contracts from legacy TypeScript or Rust implementation identities.
+- [Phase 12]: Require approved command differences to match explicit fixture IDs, commands, and outcomes — Prevents unknown or loosely matched migration differences from passing verification.
+- [Phase 12]: Run candidate compatibility verification through Rust-only fixture consumers — Allows hermetic verification without top-level TypeScript source, tests, dist artifacts, or Node execution.
+- [Phase 12]: Exclude migration metadata from its own recursive fingerprint while binding every evidence row. — Prevents self-referential hashes and makes source or policy drift review-visible.
+- [Phase 12]: Compute fixture removal eligibility from two distinct ordered public releases after 3.0.0. — Prevents elapsed-time guesses duplicate evidence and premature fixture deletion.
+- [Phase 12]: Bind recovery and rollback ownership to exact Rust migration targets. — Forged operation manifests or recomputed receipts must not claim arbitrary project files.
+- [Phase 12]: Derive compatibility authority from lib.rs/main.rs and exact recursive source-inventory equality; classify legacy references only when they flow through executable read, include, process, or shell contexts. — This prevents omitted or orphaned Rust modules from escaping the gate without turning inert historical fixture and authority literals into false positives.
+- [Phase 13]: Keep npm as a dependency-free distribution shell with exact metadata and one Rust launcher. — Exact allowlists make legacy dependencies, scripts, lifecycle hooks, and bins fail closed.
+- [Phase 13]: Use stable E_* launcher categories with expected-path or supported-target guidance. — Failures remain actionable while never searching, downloading, or falling back to another runtime.
+- [Phase 13]: Keep GNU-LLVM verification development-only and defer hosted fingerprint refresh to Phase 14. — Local artifacts cannot satisfy Windows MSVC and Linux GNU hosted evidence identity.
+- [Phase 13]: Select release target and support tier only from the active exact rustc host. — Removing caller-controlled platform labels prevents GNU-LLVM development artifacts from being represented as MSVC hosted evidence.
+- [Phase 13]: Emit the strict release manifest beside the two archives. — An external manifest can bind both whole-archive hashes without a self-referential hash cycle.
+- [Phase 13]: Classify package contract tests as hash-pinned package-test-only authority. — Fixture and assertion literals remain reviewable without being mistaken for executable production fallback behavior.
+- [Phase 13]: Reject all packed-artifact corruption before installation using stable ARTIFACT_* categories. — Package bytes and metadata must fail closed before any command can run or evidence can be emitted.
+- [Phase 13]: Require explicit current fingerprint, binary, artifact, and evidence paths for every release command. — A healthy source tree or stale default target output cannot substitute for the packed candidate being verified.
+- [Phase 13]: Bind separate native and npm installed identities to one exact Rust binary and capability output. — Both supported distribution paths must independently prove the same product without fallback, network, credentials, or downloads.
+- [Phase 13]: Keep Phase 13 CI read-only and defer hosted MSVC/Linux refresh to Phase 14. — Local GNU-LLVM development evidence cannot satisfy hosted release authority.
+- [Phase 14]: Transitional TypeScript and legacy fixture authority remains permanently empty after deletion. — Reintroduction must fail closed instead of reopening a migration class.
+- [Phase 14]: The 97-source TypeScript responsibility matrix remains immutable sealed historical evidence. — Deleted source provenance remains reviewable while current executable authority stays Rust-only.
+- [Phase 14]: Local GNU-LLVM release evidence remains development_only. — Only fresh hosted Windows MSVC and Linux GNU artifacts can close the release record.
+- [Phase 14]: Validate package-lock.json as one exact dependency-free Rust distribution object. — TypeScript, React, Ink, lifecycle, and transitive package authority cannot silently re-enter.
+- [Phase 14]: Fingerprint v3 hashes current tracked and untracked working-tree bytes while excluding only planning and the hosted evidence record. — Uncommitted product edits cannot reuse an index-snapshot fingerprint.
+- [Phase 14]: Classify exact fingerprint/file-count mismatch as stale hosted evidence and keep GNU-LLVM development evidence distinct from hosted MSVC. — Candidate refresh stays local-positive while strict closure fails closed.
+
+## Performance Metrics
+
+| Phase | Plan | Duration | Notes |
+|-------|------|----------|-------|
+| Phase 10 P01 | 29min | 2 tasks | 5 files |
+| Phase 10 P02 | 31min | 2 tasks | 9 files |
+| Phase 10 P03 | 31min | 3 tasks | 8 files |
+| Phase 10 P04 | 20min | 2 tasks | 8 files |
+| Phase 11 P01 | 30min | 2 tasks | 9 files |
+| Phase 11 P02 | 45min | 2 tasks | 9 files |
+| Phase 11 P03 | 17min | 2 tasks | 9 files |
+| Phase 11 P04 | 26min | 1 task | 9 files |
+| Phase 11 P05 | 65min | 2 tasks | 7 files |
+| Phase 11 P06 | 42min | 2 tasks | 10 files |
+| Phase 12 P01 | 22min | 2 tasks | 14 files |
+| Phase 12 P02 | 23min | 2 tasks | 8 files |
+| Phase 12 P03 | 29min | 2 tasks | 2 files |
+| Phase 12 P04 | 2h 46m | 2 tasks | 2 files |
+| Phase 13 P01 | 12min | 2 tasks | 9 files |
+| Phase 13 P02 | 24min | 2 tasks | 9 files |
+| Phase 13 P03 | 49min | 3 tasks | 16 files |
+| Phase 14 P01 | 1h | 2 tasks | 209 files |
+| Phase 14 P02 | 1h | 2 tasks | 9 files |
+
+## Session
+
+**Last session:** 2026-07-18T04:02:40.131Z
+**Stopped at:** Completed 14-02-PLAN.md; continuing 14-03 local documentation task
+**Resume file:** None

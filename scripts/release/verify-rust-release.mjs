@@ -1,29 +1,36 @@
 import {createHash} from "node:crypto";
-import {chmodSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync} from "node:fs";
+import {chmodSync, copyFileSync, existsSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync} from "node:fs";
 import {arch, cpus, platform as osPlatform, release as osRelease, totalmem} from "node:os";
 import {dirname, join, relative, resolve, sep} from "node:path";
 import {fileURLToPath} from "node:url";
 import {gunzipSync} from "node:zlib";
 import {spawn, spawnSync} from "node:child_process";
 import {performance} from "node:perf_hooks";
+import {loadTargetContract, validateArtifactCandidate, validateReleaseManifest} from "./package-contract.mjs";
 import {computeProductFingerprint} from "./product-fingerprint.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const targetRoot = resolve(root, "target");
 const args = parseArgs(process.argv.slice(2));
-const cargoTarget = process.env.CARGO_TARGET_DIR?.trim()
-  ? resolve(root, process.env.CARGO_TARGET_DIR)
-  : targetRoot;
-const defaultBinary = resolve(cargoTarget, process.platform === "win32" ? "release/minimax-cli.exe" : "release/minimax-cli");
-const binary = resolve(root, args.binary ?? defaultBinary);
-const artifacts = resolve(root, args.artifacts ?? "target/release-artifacts");
+if (!args.binary || !args.artifacts || !args["evidence-dir"]) {
+  fail("E_ARGUMENT_REQUIRED: explicit --binary, --artifacts, and --evidence-dir are required");
+}
+const binary = resolve(root, args.binary);
+const artifacts = resolve(root, args.artifacts);
+const evidenceDir = resolve(root, args["evidence-dir"]);
 const thresholds = JSON.parse(readFileSync(join(root, "fixtures/compat/release/thresholds.v1.json"), "utf8"));
+const targetContract = loadTargetContract();
+if (thresholds.schemaVersion !== targetContract.thresholdSchemaVersion
+    || thresholds.targetContractSchemaVersion !== targetContract.schemaVersion) {
+  fail("release threshold and target contract schema versions do not match");
+}
 assertWithinTarget(binary, "release binary");
 assertWithinTarget(artifacts, "release artifacts");
+assertWithinTarget(evidenceDir, "release evidence");
 if (!existsSync(binary) || !lstatSync(binary).isFile() || lstatSync(binary).isSymbolicLink()) fail("release binary is missing or unsafe");
 
-const environment = releaseEnvironment();
-const packageEvidence = verifyPackage(artifacts, binary, thresholds, environment.expectedPlatform);
+const environment = releaseEnvironment(targetContract);
+const packageEvidence = verifyPackage(artifacts, binary, thresholds, environment.expectedTarget, targetContract);
 const licenseEvidence = verifyLicenses();
 const securityEvidence = verifySecurityBoundary();
 const coldStartMs = measureColdStart(binary, thresholds.coldStartMs);
@@ -31,12 +38,13 @@ const idleRssBytes = await measureIdleRss(binary, thresholds.idleRssBytes);
 const wikiP95Ms = runWikiBenchmark(thresholds.wikiBm25P95Ms);
 const productInputs = computeProductFingerprint(root);
 const report = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   platform: packageEvidence.platform,
   productFingerprint: productInputs.fingerprint,
   productFileCount: productInputs.fileCount,
   environment,
   releaseBinary: binary.replaceAll("\\", "/"),
+  releaseBinarySha256: sha256(readFileSync(binary)),
   package: packageEvidence,
   licenses: licenseEvidence,
   security: securityEvidence,
@@ -55,143 +63,242 @@ const report = {
   credentialsRead: 0,
   modelDownloads: 0
 };
-mkdirSync(join(root, "target/release-evidence"), {recursive: true});
-const reportPath = join(root, "target/release-evidence", `${packageEvidence.platform}.json`);
+mkdirSync(evidenceDir, {recursive: true});
+const reportPath = join(evidenceDir, `${packageEvidence.platform}.json`);
 writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
 process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
 
-function verifyPackage(directory, sourceBinary, limits, expectedPlatform) {
+function verifyPackage(directory, sourceBinary, limits, expectedTarget, contract) {
   if (!existsSync(directory) || !lstatSync(directory).isDirectory() || lstatSync(directory).isSymbolicLink()) {
     fail("release artifacts directory is missing or unsafe");
   }
-  const archives = readdirSync(directory)
-    .filter((name) => name.startsWith("minimax-codex-v") && name.endsWith(".tar.gz"))
+  const manifests = readdirSync(directory)
+    .filter((name) => name.startsWith("minimax-codex-v") && name.endsWith("-RELEASE-MANIFEST.json"))
     .sort();
-  if (archives.length !== 1) fail(`expected exactly one release archive, found ${archives.length}`);
-  const archiveName = archives[0];
-  const archive = join(directory, archiveName);
-  const checksumPath = `${archive}.sha256`;
-  if (!existsSync(checksumPath)) fail("release checksum sidecar is missing");
-  const actualHash = sha256(readFileSync(archive));
-  const checksumText = readFileSync(checksumPath, "utf8").trim();
-  const expectedHash = checksumText.split(/\s+/u)[0];
-  if (actualHash !== expectedHash) fail("release archive checksum mismatch");
-  if (checksumText !== `${expectedHash}  ${archiveName}`) fail("release checksum sidecar format or filename is invalid");
-  const compressedBytes = statSync(archive).size;
-  if (compressedBytes > limits.baseCompressedBytes) fail(`base archive exceeds ${limits.baseCompressedBytes} bytes`);
-  const entries = parseTarGzip(readFileSync(archive));
-  const listing = [...entries.keys()];
-  if (listing.some((path) => /(?:embedding|safetensors|onnx|vector|model-weight)/iu.test(path))) {
-    fail("base archive contains an embedding/model resource");
+  if (manifests.length !== 1) fail(`expected exactly one release manifest, found ${manifests.length}`);
+  let manifest;
+  try {
+    manifest = JSON.parse(readFileSync(join(directory, manifests[0]), "utf8"));
+    validateReleaseManifest(manifest, contract);
+  } catch (error) {
+    fail(`release manifest is invalid: ${error instanceof Error ? error.message : String(error)}`);
   }
-  const rootName = archiveName.slice(0, -".tar.gz".length);
-  const manifestRaw = entries.get(`${rootName}/RELEASE-MANIFEST.json`)?.bytes.toString("utf8");
-  if (!manifestRaw) fail("release manifest is missing");
-  const manifest = JSON.parse(manifestRaw);
-  if (manifest.schemaVersion !== 1 || manifest.embeddingIncluded !== false || manifest.name !== "minimax-codex") {
-    fail("release manifest is invalid or claims bundled embedding content");
+  const expectedManifestName = `minimax-codex-v${manifest.version}-${manifest.target.id}-RELEASE-MANIFEST.json`;
+  if (manifests[0] !== expectedManifestName) fail("release manifest filename does not match its target");
+  if (manifest.target.id !== expectedTarget.id
+      || manifest.target.rustcHost !== expectedTarget.rustcHost
+      || manifest.target.supportTier !== expectedTarget.supportTier) {
+    fail(`release target ${manifest.target.id}/${manifest.target.rustcHost} does not match Rust host ${expectedTarget.id}/${expectedTarget.rustcHost}`);
   }
-  if (manifest.platform !== expectedPlatform) fail(`release platform ${manifest.platform} does not match Rust host ${expectedPlatform}`);
-  if (rootName !== `minimax-codex-v${manifest.version}-${manifest.platform}`) fail("release archive name does not match its manifest");
-  const expectedBinary = manifest.platform.startsWith("windows-") ? "minimax-codex.exe" : "minimax-codex";
-  if (manifest.binary !== expectedBinary) fail("release manifest binary name does not match its platform");
-  if (manifest.launcher !== "bin/minimax-codex.cjs") fail("release manifest launcher path is invalid");
-  if (manifest.legacy !== "dist/cli.js") fail("release manifest legacy path is invalid");
-  const expectedSupportTier = manifest.platform.endsWith("-dev") ? "development_only" : "hosted_release";
-  if (manifest.supportTier !== expectedSupportTier) fail("release support tier does not match its platform");
-  if (manifest.binarySha256 !== sha256(readFileSync(sourceBinary))) fail("packaged binary hash does not match the release binary");
-  if (manifest.launcherSha256 !== sha256(readFileSync(join(root, manifest.launcher)))) {
-    fail("packaged launcher hash does not match the repository launcher");
+  const sourceBinaryBytes = readFileSync(sourceBinary);
+  if (manifest.binary.sha256 !== sha256(sourceBinaryBytes) || manifest.binary.bytes !== sourceBinaryBytes.length) {
+    fail("packaged binary evidence does not match the release binary");
   }
-  const expectedEntries = [
-    `${rootName}/`,
-    `${rootName}/bin/`,
-    `${rootName}/bin/minimax-codex.cjs`,
-    `${rootName}/LICENSE-APACHE`,
-    `${rootName}/LICENSE-MIT`,
-    `${rootName}/RELEASE-MANIFEST.json`,
-    `${rootName}/${manifest.binary}`
+  const launcherBytes = readFileSync(join(root, manifest.launcher.path));
+  if (manifest.launcher.sha256 !== sha256(launcherBytes) || manifest.launcher.bytes !== launcherBytes.length) {
+    fail("packaged launcher evidence does not match the repository launcher");
+  }
+  const product = computeProductFingerprint(root);
+  if (manifest.product.fingerprint !== product.fingerprint || manifest.product.fileCount !== product.fileCount) {
+    fail("release manifest product fingerprint does not match the repository");
+  }
+  const expectedFiles = [
+    manifest.nativeArchive.name,
+    `${manifest.nativeArchive.name}.sha256`,
+    manifest.npmPackage.name,
+    `${manifest.npmPackage.name}.sha256`,
+    expectedManifestName
   ].sort();
-  if (JSON.stringify([...listing].sort()) !== JSON.stringify(expectedEntries)) {
-    fail("release archive contains missing or unexpected entries");
+  if (JSON.stringify(readdirSync(directory).sort()) !== JSON.stringify(expectedFiles)) {
+    fail("release artifact directory contains missing or unexpected files");
   }
-  for (const name of expectedEntries) {
-    const entry = entries.get(name);
-    const expectedType = name.endsWith("/") ? "5" : "0";
-    if (!entry || entry.type !== expectedType) fail(`release archive entry has an unsafe type: ${name}`);
+  try {
+    validateArtifactCandidate({
+      manifest,
+      contract,
+      expectedTargetId: expectedTarget.id,
+      expectedProduct: product,
+      artifacts: candidateArtifactFiles(directory, manifest)
+    });
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
   }
-  if (sha256(entries.get(`${rootName}/${manifest.binary}`).bytes) !== manifest.binarySha256) {
-    fail("binary inside the release archive does not match the manifest");
-  }
-  if (sha256(entries.get(`${rootName}/${manifest.launcher}`).bytes) !== manifest.launcherSha256) {
-    fail("launcher inside the release archive does not match the manifest");
-  }
+  const nativePackage = verifyNativePackage(directory, manifest, limits);
   const npmPackage = verifyNpmPackage(directory, manifest, limits);
+  if (nativePackage.installedRustIdentity.installedVersionOutput
+        !== npmPackage.installedRustIdentity.installedVersionOutput
+      || nativePackage.installedRustIdentity.packagedBinarySha256
+        !== npmPackage.installedRustIdentity.packagedBinarySha256) {
+    fail("native and npm installed Rust identities do not match");
+  }
   return {
-    archive: archive.replaceAll("\\", "/"),
-    archiveSha256: actualHash,
-    compressedBytes,
-    platform: manifest.platform,
+    archive: nativePackage.archive,
+    archiveSha256: nativePackage.archiveSha256,
+    compressedBytes: nativePackage.compressedBytes,
+    platform: manifest.target.id,
     manifest,
+    nativeInstalledRustIdentity: nativePackage.installedRustIdentity,
     npmPackage
   };
 }
 
-function verifyNpmPackage(directory, manifest, limits) {
-  const archives = readdirSync(directory)
-    .filter((name) => name.startsWith("minimax-codex-v") && name.endsWith("-npm.tgz"))
-    .sort();
-  if (archives.length !== 1) fail(`expected exactly one npm package, found ${archives.length}`);
-  const archiveName = archives[0];
-  if (archiveName !== manifest.npmPackage) fail("npm package name does not match the release manifest");
-  const archive = join(directory, archiveName);
-  const checksumPath = `${archive}.sha256`;
-  if (!existsSync(checksumPath)) fail("npm package checksum sidecar is missing");
-  const bytes = readFileSync(archive);
+function candidateArtifactFiles(directory, manifest) {
+  const artifacts = new Map();
+  for (const name of [
+    manifest.nativeArchive.name,
+    `${manifest.nativeArchive.name}.sha256`,
+    manifest.npmPackage.name,
+    `${manifest.npmPackage.name}.sha256`
+  ]) {
+    const path = join(directory, name);
+    if (!existsSync(path)) {
+      artifacts.set(name, {kind: "missing", bytes: Buffer.alloc(0)});
+      continue;
+    }
+    const status = lstatSync(path);
+    const kind = status.isFile() && !status.isSymbolicLink() ? "file" : "unsafe";
+    artifacts.set(name, {kind, bytes: kind === "file" ? readFileSync(path) : Buffer.alloc(0)});
+  }
+  return artifacts;
+}
+
+function verifyArchive(directory, evidence, limits, label) {
+  const path = join(directory, evidence.name);
+  const checksumPath = `${path}.sha256`;
+  if (!existsSync(path) || !lstatSync(path).isFile() || lstatSync(path).isSymbolicLink()) {
+    fail(`${label} archive is missing or unsafe`);
+  }
+  if (!existsSync(checksumPath) || !lstatSync(checksumPath).isFile() || lstatSync(checksumPath).isSymbolicLink()) {
+    fail(`${label} checksum sidecar is missing or unsafe`);
+  }
+  const bytes = readFileSync(path);
   const hash = sha256(bytes);
-  if (hash !== manifest.npmPackageSha256) fail("npm package hash does not match the release manifest");
-  if (readFileSync(checksumPath, "utf8").trim() !== `${hash}  ${archiveName}`) {
-    fail("npm package checksum sidecar is invalid");
+  if (hash !== evidence.sha256 || bytes.length !== evidence.bytes) {
+    fail(`${label} archive bytes do not match the release manifest`);
   }
-  if (bytes.length > limits.baseCompressedBytes) fail("npm package exceeds the base artifact budget");
+  if (readFileSync(checksumPath, "utf8") !== `${hash}  ${evidence.name}\n`) {
+    fail(`${label} checksum sidecar format, hash, or filename is invalid`);
+  }
+  if (bytes.length > limits.baseCompressedBytes) {
+    fail(`${label} archive exceeds ${limits.baseCompressedBytes} bytes`);
+  }
   const entries = parseTarGzip(bytes);
-  const required = [
-    "package/",
-    "package/bin/",
-    "package/bin/minimax-codex.cjs",
-    `package/${manifest.binary}`,
-    "package/package.json",
-    "package/dist/",
-    "package/dist/cli.js",
-    "package/docs/",
-    "package/docs/release/",
-    "package/README.md",
-    "package/LICENSE-APACHE",
-    "package/LICENSE-MIT"
-  ];
-  for (const name of required) {
-    if (!entries.has(name)) fail(`npm package is missing ${name}`);
+  const paths = [...entries.keys()];
+  const expectedPaths = evidence.entries.map((entry) => entry.path);
+  if (JSON.stringify(paths) !== JSON.stringify(expectedPaths)) {
+    fail(`${label} archive contains missing, reordered, or unexpected entries`);
   }
-  for (const name of entries.keys()) {
-    const forbiddenSource = /(?:^|\/)\.planning(?:\/|$)|(?:^|\/)crates(?:\/|$)/u.test(name);
-    const bundledModelResource = /\.(?:onnx|safetensors|gguf|bin)$/iu.test(name)
-      || /(?:^|\/)(?:models?|model-weights?|embedding-resources?)(?:\/|$)/iu.test(name);
-    if (forbiddenSource || bundledModelResource) {
-      fail(`npm package contains a forbidden source or model path: ${name}`);
+  if (paths.some(containsBundledModelPath)) {
+    fail(`${label} archive contains an embedding/model resource`);
+  }
+  for (const expected of evidence.entries) {
+    const actual = entries.get(expected.path);
+    const expectedType = expected.type === "directory" ? "5" : "0";
+    if (!actual || actual.type !== expectedType || actual.mode !== expected.mode) {
+      fail(`${label} archive entry type or mode drifted: ${expected.path}`);
+    }
+    if (expected.type === "file"
+        && (actual.bytes.length !== expected.bytes || sha256(actual.bytes) !== expected.sha256)) {
+      fail(`${label} archive entry bytes drifted: ${expected.path}`);
     }
   }
-  const packageJson = JSON.parse(entries.get("package/package.json").bytes.toString("utf8"));
-  if (packageJson.bin?.["minimax-codex"] !== "bin/minimax-codex.cjs"
-      || packageJson.bin?.["minimax-codex-legacy"] !== "dist/cli.js") {
-    fail("npm package does not expose both Rust-default and TypeScript-legacy bins");
+  return {path, bytes, hash, entries};
+}
+
+function containsBundledModelPath(path) {
+  return /\.(?:onnx|safetensors|gguf)$/iu.test(path)
+    || /(?:^|\/)(?:models?|model-weights?|embedding-resources?)(?:\/|$)/iu.test(path);
+}
+
+function verifyNativePackage(directory, manifest, limits) {
+  const verified = verifyArchive(directory, manifest.nativeArchive, limits, "native");
+  const {entries, bytes, hash, path: archive} = verified;
+  const rootName = `minimax-codex-v${manifest.version}-${manifest.target.id}`;
+  assertOnlyProductExecutables(
+    entries,
+    new Set([`${rootName}/${manifest.binary.path}`, `${rootName}/${manifest.launcher.path}`])
+  );
+  const smokeRoot = mkdtempSync(join(targetRoot, "release-native-smoke-"));
+  try {
+    extractArchiveEntries(entries, smokeRoot);
+    const installedRoot = join(smokeRoot, rootName);
+    const native = join(installedRoot, manifest.binary.path);
+    if (process.platform !== "win32") chmodSync(native, 0o755);
+    const packagedBinarySha256 = sha256(readFileSync(native));
+    if (packagedBinarySha256 !== manifest.binary.sha256) {
+      fail("installed native binary hash does not match the release manifest");
+    }
+    const developmentRuntimeAugmented = installDevelopmentRuntime(manifest, installedRoot) === 1;
+    return {
+      archive: archive.replaceAll("\\", "/"),
+      archiveSha256: hash,
+      compressedBytes: bytes.length,
+      installedRustIdentity: installedIdentity(
+        native,
+        [],
+        installedRoot,
+        manifest,
+        "installed native Rust binary",
+        packagedBinarySha256,
+        developmentRuntimeAugmented
+      )
+    };
+  } finally {
+    rmSync(smokeRoot, {recursive: true, force: true});
   }
-  if (sha256(entries.get(`package/${manifest.binary}`).bytes) !== manifest.binarySha256
-      || sha256(entries.get("package/bin/minimax-codex.cjs").bytes) !== manifest.launcherSha256) {
+}
+
+function verifyNpmPackage(directory, manifest, limits) {
+  const verified = verifyArchive(directory, manifest.npmPackage, limits, "npm");
+  const {entries, bytes, hash, path: archive} = verified;
+  const packageJson = JSON.parse(entries.get("package/package.json").bytes.toString("utf8"));
+  if (JSON.stringify(packageJson.bin) !== JSON.stringify({"minimax-codex": "bin/minimax-codex.cjs"})) {
+    fail("npm package must expose exactly the Rust launcher bin");
+  }
+  for (const dependencyClass of ["dependencies", "devDependencies", "optionalDependencies"]) {
+    if (Object.hasOwn(packageJson, dependencyClass)) fail(`npm package contains ${dependencyClass}`);
+  }
+  assertOnlyProductExecutables(entries, new Set(["package/bin/minimax-codex.cjs", `package/${manifest.binary.path}`]));
+  if (sha256(entries.get(`package/${manifest.binary.path}`).bytes) !== manifest.binary.sha256
+      || sha256(entries.get("package/bin/minimax-codex.cjs").bytes) !== manifest.launcher.sha256) {
     fail("npm package launcher or native binary hash is invalid");
   }
   const smokeRoot = mkdtempSync(join(targetRoot, "release-npm-smoke-"));
+  try {
+    extractArchiveEntries(entries, smokeRoot);
+    const packageRoot = join(smokeRoot, "package");
+    const native = join(packageRoot, manifest.binary.path);
+    const launcher = join(packageRoot, "bin/minimax-codex.cjs");
+    if (process.platform !== "win32") chmodSync(native, 0o755);
+    const packagedBinarySha256 = sha256(readFileSync(native));
+    if (packagedBinarySha256 !== manifest.binary.sha256) {
+      fail("installed npm binary hash does not match the release manifest");
+    }
+    const developmentRuntimeAugmented = installDevelopmentRuntime(manifest, packageRoot) === 1;
+    const installedRustIdentity = installedIdentity(
+      process.execPath,
+      [launcher],
+      packageRoot,
+      manifest,
+      "installed npm launcher",
+      packagedBinarySha256,
+      developmentRuntimeAugmented
+    );
+    const siblingEvidence = verifyRejectedSiblings(entries.get("package/bin/minimax-codex.cjs").bytes, manifest, smokeRoot);
+    return {
+      archive: archive.replaceAll("\\", "/"),
+      archiveSha256: hash,
+      compressedBytes: bytes.length,
+      installedRustIdentity: {...installedRustIdentity, ...siblingEvidence}
+    };
+  } finally {
+    rmSync(smokeRoot, {recursive: true, force: true});
+  }
+}
+
+function extractArchiveEntries(entries, destinationRoot) {
   for (const [name, entry] of entries) {
-    const destination = join(smokeRoot, name);
+    const destination = join(destinationRoot, name);
     if (entry.type === "5") {
       mkdirSync(destination, {recursive: true});
     } else {
@@ -199,23 +306,132 @@ function verifyNpmPackage(directory, manifest, limits) {
       writeFileSync(destination, entry.bytes);
     }
   }
-  const native = join(smokeRoot, "package", manifest.binary);
-  if (process.platform !== "win32") chmodSync(native, 0o755);
-  const smoke = spawnSync(
-    process.execPath,
-    [join(smokeRoot, "package/bin/minimax-codex.cjs"), "index", "capabilities", "status"],
-    {cwd: join(smokeRoot, "package"), encoding: "utf8", shell: false, windowsHide: true, timeout: 10_000}
-  );
-  if (smoke.status !== 0 || !smoke.stdout.includes("domain=capability")) {
-    fail(`installed npm Rust launcher smoke test failed: ${(smoke.stderr || smoke.stdout || "no output").trim()}`);
+}
+
+function installedIdentity(command, prefixArgs, cwd, manifest, label, packagedBinarySha256, developmentRuntimeAugmented) {
+  const env = releaseSmokeEnvironment(cwd);
+  const installedVersionOutput = productIdentity(command, prefixArgs, cwd, env, label);
+  if (installedVersionOutput !== `minimax-codex-rust ${manifest.version}`) {
+    fail(`${label} product identity does not match the package version`);
+  }
+  const capability = spawnSync(command, [...prefixArgs, "index", "capabilities", "status"], {
+    cwd,
+    encoding: "utf8",
+    env,
+    shell: false,
+    windowsHide: true,
+    timeout: 10_000
+  });
+  if (capability.status !== 0 || !capability.stdout.includes("domain=capability")) {
+    fail(`${label} capability status smoke failed: ${(capability.stderr || capability.stdout || "no output").trim()}`);
   }
   return {
-    archive: archive.replaceAll("\\", "/"),
-    archiveSha256: hash,
-    compressedBytes: bytes.length,
-    rustDefaultSmoke: true,
-    legacyBin: "dist/cli.js"
+    installedVersionOutput,
+    packagedBinarySha256,
+    capabilityStatusSmoke: true,
+    capabilityStatusOutputSha256: sha256(Buffer.from(capability.stdout, "utf8")),
+    productFingerprint: manifest.product.fingerprint,
+    offline: true,
+    providerCalls: 0,
+    credentialsRead: 0,
+    modelDownloads: 0,
+    credentialsExcluded: true,
+    pathLookupExcluded: true,
+    developmentRuntimeAugmented
   };
+}
+
+function productIdentity(command, prefixArgs, cwd, env, label) {
+  const result = spawnSync(command, [...prefixArgs, "--version"], {
+    cwd,
+    encoding: "utf8",
+    env,
+    shell: false,
+    windowsHide: true,
+    timeout: 10_000
+  });
+  if (result.status !== 0) {
+    fail(`${label} identity failed: ${(result.stderr || result.stdout || "no output").trim()}`);
+  }
+  return result.stdout.trim();
+}
+
+function verifyRejectedSiblings(launcherBytes, manifest, smokeRoot) {
+  const missingRoot = join(smokeRoot, "missing-sibling");
+  const unsafeRoot = join(smokeRoot, "unsafe-sibling");
+  for (const rootPath of [missingRoot, unsafeRoot]) {
+    mkdirSync(join(rootPath, "bin"), {recursive: true});
+    writeFileSync(join(rootPath, "bin/minimax-codex.cjs"), launcherBytes);
+  }
+  mkdirSync(join(unsafeRoot, manifest.binary.path));
+
+  const missing = spawnSync(process.execPath, [join(missingRoot, "bin/minimax-codex.cjs"), "--version"], {
+    cwd: missingRoot,
+    encoding: "utf8",
+    env: releaseSmokeEnvironment(missingRoot),
+    shell: false,
+    windowsHide: true,
+    timeout: 10_000
+  });
+  const unsafe = spawnSync(process.execPath, [join(unsafeRoot, "bin/minimax-codex.cjs"), "--version"], {
+    cwd: unsafeRoot,
+    encoding: "utf8",
+    env: releaseSmokeEnvironment(unsafeRoot),
+    shell: false,
+    windowsHide: true,
+    timeout: 10_000
+  });
+  if (missing.status === 0 || !missing.stderr.includes("packaged Rust binary is missing")) {
+    fail("installed launcher did not reject a missing sibling binary");
+  }
+  if (unsafe.status === 0 || !unsafe.stderr.includes("not a safe regular file")) {
+    fail("installed launcher did not reject an unsafe sibling binary");
+  }
+  return {missingSiblingRejected: true, unsafeSiblingRejected: true};
+}
+
+function releaseSmokeEnvironment(isolatedRoot) {
+  const environment = {
+    HOME: isolatedRoot,
+    NO_PROXY: "*",
+    PATH: "",
+    TEMP: isolatedRoot,
+    TMP: isolatedRoot,
+    USERPROFILE: isolatedRoot,
+    npm_config_audit: "false",
+    npm_config_fund: "false",
+    npm_config_ignore_scripts: "true",
+    npm_config_offline: "true",
+    npm_config_update_notifier: "false"
+  };
+  for (const name of ["ComSpec", "PATHEXT", "SystemRoot", "WINDIR"]) {
+    if (typeof process.env[name] === "string") environment[name] = process.env[name];
+  }
+  return environment;
+}
+
+function installDevelopmentRuntime(manifest, destination) {
+  if (manifest.target.id !== "windows-x86_64-gnullvm-dev") return 0;
+  const sysroot = run("rustc", ["--print", "sysroot"]).trim();
+  const runtime = join(sysroot, "lib/rustlib/x86_64-pc-windows-gnullvm/bin/libunwind.dll");
+  if (!existsSync(runtime) || !lstatSync(runtime).isFile() || lstatSync(runtime).isSymbolicLink()) {
+    fail("GNU-LLVM development runtime is missing or unsafe");
+  }
+  copyFileSync(runtime, join(destination, "libunwind.dll"));
+  return 1;
+}
+
+function assertOnlyProductExecutables(entries, expectedExecutablePaths) {
+  for (const [name, entry] of entries) {
+    if (entry.type !== "0") continue;
+    const executable = (entry.mode & 0o111) !== 0;
+    if (expectedExecutablePaths.has(name) && !executable) {
+      fail(`product entry is not executable: ${name}`);
+    }
+    if (!expectedExecutablePaths.has(name) && executable) {
+      fail(`npm package contains an extra executable entry: ${name}`);
+    }
+  }
 }
 
 function verifyLicenses() {
@@ -244,11 +460,12 @@ function verifySecurityBoundary() {
   return {unsafeFiles: 0, unsafeWorkspaceLint: "forbid", databasePackages: 0, migrationNetworkOrCredentialPaths: 0};
 }
 
-function releaseEnvironment() {
+function releaseEnvironment(contract) {
   const rustc = run("rustc", ["-vV"]);
   const host = /^host:\s*(.+)$/mu.exec(rustc)?.[1]?.trim() ?? "";
   const rustcRelease = /^release:\s*(.+)$/mu.exec(rustc)?.[1]?.trim() ?? "";
-  const expectedPlatform = platformForHost(host);
+  const expectedTarget = contract.targets.find((target) => target.rustcHost === host);
+  if (!expectedTarget) fail(`unsupported Rust release host: ${host || "unknown"}`);
   const processors = cpus();
   return {
     os: osPlatform(),
@@ -260,15 +477,10 @@ function releaseEnvironment() {
     node: process.version,
     rustcRelease,
     rustcHost: host,
-    expectedPlatform
+    expectedPlatform: expectedTarget.id,
+    expectedSupportTier: expectedTarget.supportTier,
+    expectedTarget
   };
-}
-
-function platformForHost(host) {
-  if (host === "x86_64-pc-windows-msvc") return "windows-x86_64-msvc";
-  if (host === "x86_64-pc-windows-gnullvm") return "windows-x86_64-gnullvm-dev";
-  if (host === "x86_64-unknown-linux-gnu") return "linux-x86_64-gnu";
-  fail(`unsupported Rust release host: ${host || "unknown"}`);
 }
 
 function parseTarGzip(bytes) {
@@ -287,6 +499,7 @@ function parseTarGzip(bytes) {
     const prefix = readTarString(header, 345, 155);
     const path = prefix ? `${prefix}/${name}` : name;
     const size = readTarOctal(header, 124, 12);
+    const mode = readTarOctal(header, 100, 8);
     const storedChecksum = readTarOctal(header, 148, 8);
     const checksumHeader = Buffer.from(header);
     checksumHeader.fill(0x20, 148, 156);
@@ -302,7 +515,7 @@ function parseTarGzip(bytes) {
     const contentStart = offset + 512;
     const contentEnd = contentStart + size;
     if (contentEnd > tar.length) fail("release archive entry is truncated");
-    entries.set(path, {type, bytes: Buffer.from(tar.subarray(contentStart, contentEnd))});
+    entries.set(path, {type, mode, bytes: Buffer.from(tar.subarray(contentStart, contentEnd))});
     offset = contentStart + Math.ceil(size / 512) * 512;
   }
   if (entries.size === 0) fail("release archive is empty");
@@ -447,7 +660,7 @@ function run(command, commandArgs) {
 
 function parseArgs(values) {
   const parsed = {};
-  const allowed = new Set(["binary", "artifacts"]);
+  const allowed = new Set(["artifacts", "binary", "evidence-dir"]);
   for (let index = 0; index < values.length; index += 1) {
     const key = values[index];
     const name = key?.startsWith("--") ? key.slice(2) : "";

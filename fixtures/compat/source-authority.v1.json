@@ -1,0 +1,238 @@
+{
+  "schemaVersion": 1,
+  "rustProductRoots": [
+    {
+      "path": "crates/cli",
+      "kind": "product"
+    },
+    {
+      "path": "crates/compat-harness",
+      "kind": "verification"
+    },
+    {
+      "path": "crates/core",
+      "kind": "product"
+    },
+    {
+      "path": "crates/protocol",
+      "kind": "product"
+    },
+    {
+      "path": "crates/provider",
+      "kind": "product"
+    },
+    {
+      "path": "crates/retrieval",
+      "kind": "product"
+    },
+    {
+      "path": "crates/tools",
+      "kind": "product"
+    },
+    {
+      "path": "crates/tui",
+      "kind": "product"
+    },
+    {
+      "path": "crates/vault",
+      "kind": "product"
+    }
+  ],
+  "executableEntries": [
+    {
+      "command": "minimax-codex",
+      "packageManifest": "package.json",
+      "javascriptEntryId": "npm-launcher",
+      "rustBinary": "minimax-codex",
+      "purpose": "supportedRustProductCommand"
+    }
+  ],
+  "javascriptAllowlist": [
+    {
+      "id": "npm-launcher",
+      "path": "bin/minimax-codex.cjs",
+      "sha256": "eb4b2c224742f84e4d6fe46a33757b9c345e286c82a64b4d6f5dfd5e5ed0a1e9",
+      "purpose": "rustBinaryLauncher",
+      "forbiddenCapabilities": [
+        "fallback",
+        "migration",
+        "provider",
+        "retrieval",
+        "runtimeDownload",
+        "session",
+        "tool",
+        "vault",
+        "wiki"
+      ]
+    },
+    {
+      "id": "package-contract",
+      "path": "scripts/release/package-contract.mjs",
+      "sha256": "29f3533d65d28e18e54ab0954731154f98a82dd1b06f018ae8453c11aa45c2d7",
+      "purpose": "releaseOrchestration",
+      "forbiddenCapabilities": [
+        "fallback",
+        "migration",
+        "provider",
+        "retrieval",
+        "runtimeDownload",
+        "session",
+        "tool",
+        "vault",
+        "wiki"
+      ]
+    },
+    {
+      "id": "package-contract-tests",
+      "path": "scripts/release/package-contract.test.mjs",
+      "sha256": "947421233904e15852e67056244ce980af25acd45f501d9bbbfdc46f7bb7aacc",
+      "purpose": "packageTestOnly",
+      "forbiddenCapabilities": [
+        "fallback",
+        "migration",
+        "provider",
+        "retrieval",
+        "runtimeDownload",
+        "session",
+        "tool",
+        "vault",
+        "wiki"
+      ]
+    },
+    {
+      "id": "release-package",
+      "path": "scripts/release/package-rust.mjs",
+      "sha256": "36c7045eb70ed2f7d77658e40327559c052288f94e5fe4526f858da12ae6023f",
+      "purpose": "rustReleasePackaging",
+      "forbiddenCapabilities": [
+        "fallback",
+        "migration",
+        "provider",
+        "retrieval",
+        "runtimeDownload",
+        "session",
+        "tool",
+        "vault",
+        "wiki"
+      ]
+    },
+    {
+      "id": "product-fingerprint",
+      "path": "scripts/release/product-fingerprint.mjs",
+      "sha256": "502b6adf042f1e4ca99f425cb9774e3a4668892b799b302027b1abfed342c29a",
+      "purpose": "productFingerprinting",
+      "forbiddenCapabilities": [
+        "fallback",
+        "migration",
+        "provider",
+        "retrieval",
+        "runtimeDownload",
+        "session",
+        "tool",
+        "vault",
+        "wiki"
+      ]
+    },
+    {
+      "id": "milestone-verification",
+      "path": "scripts/release/verify-milestone-flow.mjs",
+      "sha256": "23df4f92b51faaae673012859e3168e0e4c916079aec320391dc21b0c4b4ce3e",
+      "purpose": "milestoneVerification",
+      "forbiddenCapabilities": [
+        "fallback",
+        "migration",
+        "provider",
+        "retrieval",
+        "runtimeDownload",
+        "session",
+        "tool",
+        "vault",
+        "wiki"
+      ]
+    },
+    {
+      "id": "release-verification",
+      "path": "scripts/release/verify-rust-release.mjs",
+      "sha256": "12330cdd9da748e0bee2b8413407078c07752896fb8d7f9b89d8f3e9f35359bd",
+      "purpose": "rustReleaseVerification",
+      "forbiddenCapabilities": [
+        "fallback",
+        "migration",
+        "provider",
+        "retrieval",
+        "runtimeDownload",
+        "session",
+        "tool",
+        "vault",
+        "wiki"
+      ]
+    }
+  ],
+  "transitionalTypeScript": {
+    "phase14ZeroContract": "delete-all-entries-and-set-count-to-zero",
+    "entries": []
+  },
+  "transitionalLegacyTestFixtures": {
+    "phase11Disposition": "record-each-fixture-responsibility-in-typescript-responsibilities.v1.json",
+    "phase14ZeroContract": "delete-all-entries-and-set-the-class-count-to-zero",
+    "entries": []
+  },
+  "immutableFixtureRoots": [
+    {
+      "path": "fixtures/compat/migration",
+      "purpose": "rustCompatibilityEvidence"
+    },
+    {
+      "path": "fixtures/compat/provider-streams",
+      "purpose": "rustCompatibilityEvidence"
+    },
+    {
+      "path": "fixtures/compat/release",
+      "purpose": "rustCompatibilityEvidence"
+    },
+    {
+      "path": "fixtures/compat/retrieval",
+      "purpose": "rustCompatibilityEvidence"
+    },
+    {
+      "path": "fixtures/compat/tools",
+      "purpose": "rustCompatibilityEvidence"
+    },
+    {
+      "path": "fixtures/compat/vault",
+      "purpose": "rustCompatibilityEvidence"
+    },
+    {
+      "path": "fixtures/compat/wiki",
+      "purpose": "rustCompatibilityEvidence"
+    }
+  ],
+  "supportedTargets": [
+    {
+      "id": "linux-x86_64-gnu",
+      "platform": "linux",
+      "rustTarget": "x86_64-unknown-linux-gnu"
+    },
+    {
+      "id": "windows-x86_64-msvc",
+      "platform": "windows",
+      "rustTarget": "x86_64-pc-windows-msvc"
+    }
+  ],
+  "stateAuthority": {
+    "writableRoots": [
+      {
+        "path": ".minimax",
+        "owner": "rust",
+        "access": "readWrite"
+      }
+    ],
+    "migrationInputRoots": [
+      {
+        "path": ".mini-codex",
+        "owner": "typeScriptEra",
+        "access": "readOnlyMigrationInput"
+      }
+    ]
+  }
+}
