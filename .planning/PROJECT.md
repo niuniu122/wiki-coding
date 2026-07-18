@@ -12,7 +12,7 @@ A non-programmer can describe a goal and safely use one local, recoverable CLI t
 
 ### Validated
 
-- The Rust CLI/TUI is the default product path on Windows and Linux, with the TypeScript path retained explicitly for the support window.
+- The Rust CLI/TUI is the only product path on supported Windows x64 MSVC and Linux x64 GNU hosts; TypeScript-era data remains only as immutable migration fixtures for the two-release support window.
 - Exact + BM25 retrieval is active across schema-isolated command, project, and Wiki indexes; optional embedding can only rerank BM25 project candidates.
 - Provider/tool event identity, the per-project Vault/Wiki workflow, deterministic fixtures, and the confirm-mode subprocess boundary are release-gated and verified.
 - Project, Skill, and MCP source metadata lives in a dedicated `capabilities/` workspace outside internal executable adapters.
@@ -23,11 +23,11 @@ A non-programmer can describe a goal and safely use one local, recoverable CLI t
 - Phase 11 establishes Rust as the sole executable verification and evaluation authority: all 101 historical responsibilities have semantic contracts, Provider/retrieval reports are Rust-owned, and `npm test` cannot reach the hash-pinned TypeScript evaluators.
 - Phase 12 establishes fixture-owned Rust compatibility and source-preserving TypeScript-era migration: the complete compatibility module closure is enforced, rollback ownership is durably provenance-bound, and target symlink escapes fail closed.
 - Phase 13 establishes a dependency-free npm/native Rust distribution path: deterministic candidates, explicit current fingerprints, eleven fail-closed corruption categories, separate offline installed smokes, and strict CI ordering are release-gated without fallback or runtime download.
+- Phase 14 removes the inert TypeScript implementation and test tree, finalizes Rust-only documentation, and binds reproducible hosted Windows MSVC/Linux GNU candidate plus strict evidence to one 235-file product fingerprint.
 
 ### Active
 
-- [ ] Make Rust the only product/runtime implementation and remove the live TypeScript CLI, tests, evaluations, and build dependencies.
-- [ ] Refresh hosted Windows/Linux release evidence for the final Rust-converged product fingerprint before release.
+- None — all v3.0 Rust Convergence implementation requirements are validated; milestone audit/archive remains a separate lifecycle action.
 
 ### Out of Scope
 
@@ -43,7 +43,7 @@ A non-programmer can describe a goal and safely use one local, recoverable CLI t
 
 ## Context
 
-The v1 Rust rewrite, Phase 8 subprocess hardening, Phase 9 capability workspace, Phase 10 executable/source authority boundary, Phase 11 Rust verification authority, Phase 12 fixture-backed migration, and Phase 13 thin npm/native release are implemented. Rust is now the only product, writable-runtime, executable-evaluation, compatibility, migration, and installed-package authority. The repository still retains hash-pinned TypeScript source, static tests, and build dependencies as transitional compatibility material, but test discovery cannot execute the TypeScript evaluators and packages cannot fall back to them. The remaining convergence work is final TypeScript deletion, Rust-only documentation, and fresh hosted Windows/Linux closure.
+The v1 Rust rewrite, Phase 8 subprocess hardening, Phase 9 capability workspace, Phase 10 executable/source authority boundary, Phase 11 Rust verification authority, Phase 12 fixture-backed migration, Phase 13 thin npm/native release, and Phase 14 final cutover are implemented. Rust is the only product, writable-runtime, executable-evaluation, compatibility, migration, and installed-package authority. The TypeScript product/test tree is gone; only immutable TypeScript-era migration fixtures remain for the machine-enforced two-release support window. Hosted candidate and strict Windows MSVC/Linux GNU evidence now bind the final Rust-only product fingerprint.
 
 ## Constraints
 
@@ -85,6 +85,8 @@ The v1 Rust rewrite, Phase 8 subprocess hardening, Phase 9 capability workspace,
 | Windows x64 and Linux x64 remain the release matrix | Keep convergence focused; platform expansion is a separate milestone | Locked |
 | Semantic evidence contracts own TypeScript responsibility retirement | Keep every historical public/safety outcome reviewable without filename-parity ports or broad boilerplate retirement | Locked |
 | Discovered TypeScript tests are graph-preflighted before import | Retain transitional static checks while preventing direct or transitive execution of `src/eval/**` | Locked |
+| Candidate evidence precedes strict closure | Require a remotely visible pending record before the ordinary strict push run | Locked |
+| Windows MSVC builds use reproducible linking | Require `/Brepro` and exact candidate/strict artifact equality | Locked |
 
 ## Current Milestone: v3.0 Rust Convergence
 
@@ -114,4 +116,4 @@ This document evolves at phase transitions and milestone boundaries.
 3. Update context with shipped behavior and evaluation evidence.
 
 ---
-*Last updated: 2026-07-18 after Phase 13 established fail-closed npm/native Rust packaging and offline installed evidence*
+*Last updated: 2026-07-18 after Phase 14 completed Rust-only removal, documentation, and hosted Windows/Linux closure*

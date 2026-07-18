@@ -131,8 +131,8 @@
 ### Final Cutover
 
 - [x] **RCUT-01**: The repository contains no TypeScript/TSX product or test source, and CI blocks reintroduction outside static migration data fixtures.
-- [ ] **RCUT-02**: Windows x64 MSVC and Linux x64 GNU pass Rust tests, evaluations, packaging, installed smoke, checksum, upgrade/rollback, security, license, and performance gates against one final product fingerprint.
-- [ ] **RCUT-03**: User and maintainer documentation describes Rust-only architecture, npm/native installation, supported platforms, no-fallback failures, migration/rollback, and the two-release compatibility window.
+- [x] **RCUT-02**: Windows x64 MSVC and Linux x64 GNU pass Rust tests, evaluations, packaging, installed smoke, checksum, upgrade/rollback, security, license, and performance gates against one final product fingerprint.
+- [x] **RCUT-03**: User and maintainer documentation describes Rust-only architecture, npm/native installation, supported platforms, no-fallback failures, migration/rollback, and the two-release compatibility window.
 
 ## Future Requirements
 
@@ -229,17 +229,17 @@
 | RNPM-02 | Phase 13 | Complete |
 | RNPM-03 | Phase 13 | Complete |
 | RCUT-01 | Phase 14 | Complete |
-| RCUT-02 | Phase 14 | Pending |
-| RCUT-03 | Phase 14 | Pending |
+| RCUT-02 | Phase 14 | Complete |
+| RCUT-03 | Phase 14 | Complete |
 
 **Coverage:**
 
 - v1 requirements: 52 complete
 - v2.0 requirements: 8 complete
-- v3.0 requirements: 14 pending
+- v3.0 requirements: 14 complete
 - Mapped to phases: 74
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-07-15*
-*Last updated: 2026-07-17 when defining the v3.0 Rust Convergence milestone*
+*Last updated: 2026-07-18 after completing and verifying the v3.0 Rust Convergence milestone implementation*

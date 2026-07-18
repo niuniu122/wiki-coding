@@ -3,18 +3,18 @@ gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: Rust Convergence
 current_phase: 14
-current_phase_name: TypeScript Removal and Hosted Closure
-status: executing
-stopped_at: Completed 14-02-PLAN.md; continuing 14-03 local documentation task
-last_updated: "2026-07-18T04:33:46.945Z"
+status: verifying
+stopped_at: Completed 14-03-PLAN.md
+last_updated: "2026-07-18T10:02:53.967Z"
 last_activity: 2026-07-18
-last_activity_desc: Phase 14 permanent Rust-only gates and v3 fingerprint completed
+last_activity_desc: Phase 14 complete
 progress:
   total_phases: 14
-  completed_phases: 13
+  completed_phases: 14
   total_plans: 48
-  completed_plans: 47
-  percent: 98
+  completed_plans: 48
+  percent: 100
+current_phase_name: TypeScript Removal and Hosted Closure
 ---
 
 # Project State
@@ -27,46 +27,26 @@ See: `.planning/PROJECT.md` (updated 2026-07-18)
 
 ## Current Position
 
-Phase: 14 (TypeScript Removal and Hosted Closure) — EXECUTING
-Plan: 3 of 3
-Status: Ready to execute
-Last activity: 2026-07-18 — Phase 14 execution started
+Phase: 14
+Plan: Not started
+Status: Phase verified — milestone implementation complete
+Last activity: 2026-07-18 — Phase 14 complete
 
-## Previous Phase 7 Hosted Baseline (superseded)
+## Superseded Evidence
 
-- Local TypeScript suite: 438 passed.
-- Rust workspace tests and doc tests: passed.
-- Rust formatting and workspace Clippy with warnings denied: passed.
-- Compatibility, retrieval, Provider, migration, release-package, and milestone-flow gates: passed offline.
-- Hosted CI run `29485975135`: Windows x64 MSVC and Linux x64 GNU passed.
-- Hosted tree: `54b780d09d1a461495120b9987869a073eec5ecb`.
-- Product fingerprint: `ff805ee8d73168b968e0b5834b2e7582bf9cc598b4cb3f35835c004aec577172` across 402 product files.
+- Phase 7 through Phase 13 fingerprints, local candidates, and hosted runs are historical only; their detailed records remain in the corresponding phase summaries and evidence fixtures.
+- None of those superseded values is accepted as Phase 14 release authority.
 
-## Final Phase 8 Evidence
+## Final Phase 14 Evidence
 
-- Local Rust formatting, TypeScript checks, 440 tests, build, and fingerprint comparison passed.
-- Hosted candidate run `29553147648` passed on Windows job `87799771241` and Ubuntu job `87799771311` and produced fingerprint `12e41e7384a4474e8e1ed53ccb8942fd7992a6b7b0585a1ab537406b9c74cce4` across 406 product files.
-- Hosted strict push run `29553650069` passed on Windows job `87801243529` and Ubuntu job `87801243532` without candidate mode.
-- Ubuntu executed the real Bubblewrap namespace preflight and malicious transitive Cargo canary; strict Rust, release, retrieval, Provider, package, and milestone-flow gates passed.
-- Windows and Linux archives, binaries, environment facts, and performance measurements are bound to the refreshed machine-readable evidence.
-
-## Phase 9 Local Evidence
-
-- Dedicated source-only project, Skill, and MCP catalogs and three typed exact/BM25 indexes are implemented.
-- Candidate-only embedding, outsider rejection, lexical fallback, readiness precedence, strict JSON, rendering parity, and prompt no-action boundaries are covered by Rust tests.
-- Rust candidate workspace tests and doc tests passed; strict workspace Clippy passed with warnings denied.
-- TypeScript check, 440 tests, build, 175-case retrieval evaluation, and Provider conformance evaluation passed.
-- The previous hosted evidence is intentionally stale after product changes. A manual candidate CI run and subsequent strict push are required before release; no local evidence fixture was forged.
-- The current pre-hosted product fingerprint is `f599aa324e135d30db744d86c497d67196d5d170d469aaa03941aed64d0a74f7` across 414 product files.
-- A fallback GNU-LLVM release archive was built, but its installed smoke exited `0xC0000135`; it was not represented as Windows MSVC release evidence.
-
-## Phase 13 Local Evidence
-
-- npm now exposes one dependency-free `minimax-codex` command that resolves only the fixed packaged Rust sibling and fails closed without search, fallback, or download.
-- Deterministic native and npm candidates share product fingerprint `39bbe83352d1be482ecdca59482855732683505112fa23a1cdcc5337f5a1eaee` across 438 files and binary SHA-256 `942adad08597801f037b8dfc1be49937963c12d7c5337055cf669c6ed0c5ffee`.
-- Both independently extracted installed paths report `minimax-codex-rust 0.1.0`, the same read-only capability output, offline true, and zero Provider, credential, or model-download activity.
-- All eleven package corruption categories, 19 package tests, full Rust workspace/doc tests, strict Clippy, Provider 20/20, 175-case retrieval evaluation, milestone flow, and candidate verification pass locally.
-- This is GNU-LLVM `development_only` evidence. Fresh hosted Windows MSVC/Linux GNU evidence and TypeScript deletion remain Phase 14 work and are not authorized by this result.
+- Rust is the sole product implementation; TypeScript/TSX product and test sources are absent and permanent-empty authority gates block reintroduction.
+- Final product fingerprint is `513c7565593b3e3088131d2854709be4773f0a81c2445c146f4a5acb597d29b6` across 235 files.
+- Candidate run `29638773706` passed Windows job `88065594381` and Linux job `88065594400`.
+- Strict run `29639243817` passed Windows job `88066830361` and Linux job `88066830338`.
+- Candidate and strict binary, native archive, npm archive, and capability-output hashes are byte-identical per platform; Windows release linking uses `/Brepro`.
+- Both hosted paths proved offline execution, zero Provider/credential/model-download activity, and the Linux security canaries.
+- Final exact-root closure passed the locked Rust workspace/doc tests, compatibility harness, Rust-contract verification, release verification, and milestone flow.
+- Local GNU-LLVM evidence remains `development_only`; it was not represented as hosted Windows MSVC authority.
 
 ## Locked Decisions
 
@@ -82,7 +62,7 @@ Last activity: 2026-07-18 — Phase 14 execution started
 
 - GitHub reports that `actions/checkout@v4` and `actions/setup-node@v4` still target a deprecated Node 20 action runtime. The hosted runner forced Node 24 for those actions and all gates passed; upgrade the action versions when the upstream replacements are adopted.
 - Installed-package smoke uses a read-only Rust capability command. The complete Provider/Vault/Wiki chain is verified compositionally by Rust integration tests rather than replayed from the extracted package without credentials.
-- Refresh the hosted release record through the documented manual candidate CI flow before merging or releasing this product change.
+- Publication, tags, PR, merge, and milestone audit/archive remain separate explicitly initiated operations.
 
 ## Deferred Items
 
@@ -94,18 +74,7 @@ Last activity: 2026-07-18 — Phase 14 execution started
 
 ## Authorization Boundaries Preserved
 
-No package publication, tag, PR, merge, live Provider request, credential read, embedding model download, SQLite use, source deletion, or real user-data migration was performed.
-
-## Accumulated Context
-
-### Roadmap Evolution
-
-- Phase 8 added: Codex-style subprocess sandbox hardening.
-- Approval and sandboxing are independent axes: confirm maps to restricted execution, while process-scoped full access explicitly disables the subprocess sandbox.
-- Confirm-mode process execution fails closed on platforms or installations without a proven backend; no partial Windows imitation is presented as safe.
-- Phase 8 code, docs, CI contracts, adversarial canaries, native release artifacts, and refreshed product-fingerprint evidence all pass. The milestone has no remaining mandatory gate.
-- Phase 9 separates external capability metadata from executable tools, keeps BM25 authoritative, and exposes readiness without granting action authority.
-- Phase 9 local gates pass. Hosted release evidence is a separate pre-release follow-up because this branch changes the deterministic product fingerprint.
+Phase 14-01 performed the planned repository TypeScript/TSX source deletion. No package publication, tag, PR, merge, live Provider request, credential read, embedding model download, SQLite use, or real user-data migration was performed.
 
 ## Decisions
 
@@ -164,6 +133,11 @@ No package publication, tag, PR, merge, live Provider request, credential read, 
 - [Phase 14]: Validate package-lock.json as one exact dependency-free Rust distribution object. — TypeScript, React, Ink, lifecycle, and transitive package authority cannot silently re-enter.
 - [Phase 14]: Fingerprint v3 hashes current tracked and untracked working-tree bytes while excluding only planning and the hosted evidence record. — Uncommitted product edits cannot reuse an index-snapshot fingerprint.
 - [Phase 14]: Classify exact fingerprint/file-count mismatch as stale hosted evidence and keep GNU-LLVM development evidence distinct from hosted MSVC. — Candidate refresh stays local-positive while strict closure fails closed.
+- [Phase 14]: Local GNU-LLVM remains development-only; only hosted MSVC and GNU evidence may close RCUT-02. — Prevents a locally available target from being relabeled as supported release authority.
+- [Phase 14]: Candidate evidence must be committed as pending before the ordinary strict push run. — Makes run order auditable and prevents strict verification from relying on an unrecorded candidate.
+- [Phase 14]: Fingerprint inputs use universal LF checkout policy with one explicit manifest-bound CRLF migration exception. — Keeps Windows and Linux product identity equal without changing immutable historical bytes.
+- [Phase 14]: Windows hosted release builds use /Brepro and must match candidate/strict artifact hashes. — Eliminates MSVC linker nondeterminism and turns reproducibility into a release gate.
+- [Phase 14]: Remote evidence history advances only through non-force exact-tree commits. — Preserves intentional local/remote history differences while proving byte equality before every ref update.
 
 ## Performance Metrics
 
@@ -188,9 +162,10 @@ No package publication, tag, PR, merge, live Provider request, credential read, 
 | Phase 13 P03 | 49min | 3 tasks | 16 files |
 | Phase 14 P01 | 1h | 2 tasks | 209 files |
 | Phase 14 P02 | 1h | 2 tasks | 9 files |
+| Phase 14 P03 | 5h 11m | 3 tasks | 21 files |
 
 ## Session
 
-**Last session:** 2026-07-18T04:02:40.131Z
-**Stopped at:** Completed 14-02-PLAN.md; continuing 14-03 local documentation task
+**Last session:** 2026-07-18T09:56:01.005Z
+**Stopped at:** Completed 14-03-PLAN.md
 **Resume file:** None
