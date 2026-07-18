@@ -417,14 +417,14 @@ Plans:
   3. Hosted Windows x64 MSVC and Linux x64 GNU jobs pass tests, evaluations, checksums, install, upgrade/rollback, security, license, and performance gates against one final product fingerprint; stale v2/Phase 9 or local GNU-LLVM evidence cannot satisfy the gate.
   4. User and maintainer documentation explains the Rust-only architecture, npm/native installation, supported platforms, actionable no-fallback failures, migration/rollback, and the two-release compatibility window.
 
-**Plans:** 1/3 plans executed
+**Plans:** 2/3 plans executed
 
 Plans:
 
 - [x] 14-01-PLAN.md
-- [ ] 14-02-PLAN.md
+- [x] 14-02-PLAN.md
 - [ ] 14-03-PLAN.md
 
 - [x] 14-01: Delete replaced TypeScript source, tests, configuration, and legacy references
-- [ ] 14-02: Make permanent source, CI, release, and product-fingerprint gates enforce the Rust-only tree
+- [x] 14-02: Make permanent source, CI, release, and product-fingerprint gates enforce the Rust-only tree
 - [ ] 14-03: Finalize Rust-only docs, freeze the final fingerprint/intake, collect hosted Windows/Linux evidence, and close v3.0
