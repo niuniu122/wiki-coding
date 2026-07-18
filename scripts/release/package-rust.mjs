@@ -9,10 +9,11 @@ import {
 import {basename, dirname, relative, resolve, sep} from "node:path";
 import {spawnSync} from "node:child_process";
 import {fileURLToPath} from "node:url";
-import {gzipSync} from "node:zlib";
 
 import {
+  createDeterministicTarGzip,
   expectedArchiveEntries,
+  loadExplicitFingerprint,
   loadTargetContract,
   validateReleaseManifest
 } from "./package-contract.mjs";
@@ -23,8 +24,12 @@ const targetRoot = resolve(root, "target");
 const args = parseArgs(process.argv.slice(2));
 const packageJson = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
 const version = args.version ?? packageJson.version;
-const binary = resolve(root, args.binary ?? defaultBinary());
-const output = resolve(root, args.output ?? "target/release-artifacts");
+for (const required of ["binary", "output", "fingerprint-file"]) {
+  if (!args[required]) fail(`E_FINGERPRINT_REQUIRED: explicit --binary, --output, and --fingerprint-file are required`);
+}
+const binary = resolve(root, args.binary);
+const output = resolve(root, args.output);
+const fingerprintFile = resolve(root, args["fingerprint-file"]);
 const targetContract = loadTargetContract();
 const rustcHost = detectRustcHost();
 const target = targetContract.targets.find((candidate) => candidate.rustcHost === rustcHost);
@@ -33,6 +38,7 @@ if (!target) fail(`unsupported release host: ${rustcHost || "unknown"}`);
 if (!/^[0-9A-Za-z][0-9A-Za-z.+-]{0,63}$/u.test(version)) fail("release version is invalid");
 assertWithinTarget(binary, "release binary");
 assertWithinTarget(output, "release output");
+assertWithinTarget(fingerprintFile, "product fingerprint file");
 const binaryBytes = readRegularFile(binary, "release binary");
 if (binaryBytes.length === 0 || binaryBytes.length > 50 * 1024 * 1024) {
   fail("release binary must be non-empty and at most 50 MiB before packaging");
@@ -56,13 +62,19 @@ const sourceBytes = new Map([
 
 const nativeEntries = materializeEntries(expectedArchiveEntries(target, version, "native"), "native");
 const npmEntries = materializeEntries(expectedArchiveEntries(target, version, "npm"), "npm");
-const nativeBytes = deterministicTarGzip(nativeEntries);
-const npmBytes = deterministicTarGzip(npmEntries);
+const nativeBytes = createDeterministicTarGzip(nativeEntries);
+const npmBytes = createDeterministicTarGzip(npmEntries);
 const baseName = `minimax-codex-v${version}-${target.id}`;
 const archiveName = `${baseName}${target.archiveSuffix}`;
 const npmName = `${baseName}-npm.tgz`;
 const manifestName = `${baseName}-RELEASE-MANIFEST.json`;
-const product = computeProductFingerprint(root);
+const currentProduct = computeProductFingerprint(root);
+let product;
+try {
+  product = loadExplicitFingerprint(fingerprintFile, currentProduct);
+} catch (error) {
+  fail(error instanceof Error ? error.message : String(error));
+}
 const launcherBytes = sourceBytes.get("bin/minimax-codex.cjs");
 const manifest = {
   schemaVersion: targetContract.manifestSchemaVersion,
@@ -109,6 +121,8 @@ process.stdout.write(`${JSON.stringify({
   platform: target.id,
   rustcHost,
   supportTier: target.supportTier,
+  fingerprintFile,
+  productFingerprint: product.fingerprint,
   version
 })}\n`);
 
@@ -137,64 +151,6 @@ function writeArtifact(directory, name, bytes, hash) {
   writeFileSync(`${path}.sha256`, `${hash}  ${basename(path)}\n`, "utf8");
 }
 
-function deterministicTarGzip(entries) {
-  const blocks = [];
-  for (const entry of [...entries].sort((left, right) => left.name.localeCompare(right.name, "en"))) {
-    blocks.push(tarHeader(entry), entry.bytes);
-    const padding = (512 - (entry.bytes.length % 512)) % 512;
-    if (padding > 0) blocks.push(Buffer.alloc(padding));
-  }
-  blocks.push(Buffer.alloc(1024));
-  const archive = gzipSync(Buffer.concat(blocks), {level: 9, mtime: 0});
-  archive.fill(0, 4, 8);
-  archive[9] = 255;
-  return archive;
-}
-
-function tarHeader(entry) {
-  if (Buffer.byteLength(entry.name, "utf8") > 100) fail(`archive path is too long: ${entry.name}`);
-  const header = Buffer.alloc(512);
-  writeString(header, 0, 100, entry.name);
-  writeOctal(header, 100, 8, entry.mode);
-  writeOctal(header, 108, 8, 0);
-  writeOctal(header, 116, 8, 0);
-  writeOctal(header, 124, 12, entry.bytes.length);
-  writeOctal(header, 136, 12, 0);
-  header.fill(0x20, 148, 156);
-  writeString(header, 156, 1, entry.type);
-  writeString(header, 257, 6, "ustar\0");
-  writeString(header, 263, 2, "00");
-  writeString(header, 265, 32, "root");
-  writeString(header, 297, 32, "root");
-  writeOctal(header, 329, 8, 0);
-  writeOctal(header, 337, 8, 0);
-  const checksum = header.reduce((sum, value) => sum + value, 0);
-  writeString(header, 148, 6, checksum.toString(8).padStart(6, "0"));
-  header[154] = 0;
-  header[155] = 0x20;
-  return header;
-}
-
-function writeString(buffer, offset, length, value) {
-  const bytes = Buffer.from(value, "utf8");
-  if (bytes.length > length) fail(`archive metadata exceeds ${length} bytes`);
-  bytes.copy(buffer, offset);
-}
-
-function writeOctal(buffer, offset, length, value) {
-  const encoded = value.toString(8).padStart(length - 1, "0");
-  if (encoded.length >= length) fail("archive numeric field overflow");
-  writeString(buffer, offset, length - 1, encoded);
-  buffer[offset + length - 1] = 0;
-}
-
-function defaultBinary() {
-  const cargoTarget = process.env.CARGO_TARGET_DIR?.trim()
-    ? resolve(root, process.env.CARGO_TARGET_DIR)
-    : targetRoot;
-  return resolve(cargoTarget, process.platform === "win32" ? "release/minimax-cli.exe" : "release/minimax-cli");
-}
-
 function detectRustcHost() {
   const output = spawnSync("rustc", ["-vV"], {cwd: root, encoding: "utf8", shell: false, windowsHide: true});
   if (output.status !== 0) fail("rustc -vV failed while detecting the release target");
@@ -203,7 +159,7 @@ function detectRustcHost() {
 
 function parseArgs(values) {
   const parsed = {};
-  const allowed = new Set(["binary", "output", "version"]);
+  const allowed = new Set(["binary", "fingerprint-file", "output", "version"]);
   for (let index = 0; index < values.length; index += 1) {
     const key = values[index];
     const name = key?.startsWith("--") ? key.slice(2) : "";

@@ -31,21 +31,21 @@
     {
       "id": "package-contract",
       "path": "scripts/release/package-contract.mjs",
-      "sha256": "c5954dfd3aab45b212833800d9ec12bd0b97df04286cdd65740191b13d756c71",
+      "sha256": "29f3533d65d28e18e54ab0954731154f98a82dd1b06f018ae8453c11aa45c2d7",
       "purpose": "releaseOrchestration",
       "forbiddenCapabilities": ["fallback", "migration", "provider", "retrieval", "runtimeDownload", "session", "tool", "vault", "wiki"]
     },
     {
       "id": "package-contract-tests",
       "path": "scripts/release/package-contract.test.mjs",
-      "sha256": "e5b824ab7f5be5221c6eff339c304356f0410d6f1e3c614fea3c8f8b708dbf84",
+      "sha256": "947421233904e15852e67056244ce980af25acd45f501d9bbbfdc46f7bb7aacc",
       "purpose": "packageTestOnly",
       "forbiddenCapabilities": ["fallback", "migration", "provider", "retrieval", "runtimeDownload", "session", "tool", "vault", "wiki"]
     },
     {
       "id": "release-package",
       "path": "scripts/release/package-rust.mjs",
-      "sha256": "943fff856a08f0818d9a85b9a81b8069ada05e2517d72469091e08e0f7d15acd",
+      "sha256": "36c7045eb70ed2f7d77658e40327559c052288f94e5fe4526f858da12ae6023f",
       "purpose": "rustReleasePackaging",
       "forbiddenCapabilities": ["fallback", "migration", "provider", "retrieval", "runtimeDownload", "session", "tool", "vault", "wiki"]
     },
@@ -59,14 +59,14 @@
     {
       "id": "milestone-verification",
       "path": "scripts/release/verify-milestone-flow.mjs",
-      "sha256": "265cc1026d94484b369ce153c70d30225a5d2cdb13609a401f63a252b3695e99",
+      "sha256": "9c382f5c040cc417957e8d39dec7208a82774c7f59167544eb3cf906d266624e",
       "purpose": "milestoneVerification",
       "forbiddenCapabilities": ["fallback", "migration", "provider", "retrieval", "runtimeDownload", "session", "tool", "vault", "wiki"]
     },
     {
       "id": "release-verification",
       "path": "scripts/release/verify-rust-release.mjs",
-      "sha256": "839be89bfef094a1b28939ba5de3b6ea37520740fe7e6246385cc6ca8b623797",
+      "sha256": "12330cdd9da748e0bee2b8413407078c07752896fb8d7f9b89d8f3e9f35359bd",
       "purpose": "rustReleaseVerification",
       "forbiddenCapabilities": ["fallback", "migration", "provider", "retrieval", "runtimeDownload", "session", "tool", "vault", "wiki"]
     }

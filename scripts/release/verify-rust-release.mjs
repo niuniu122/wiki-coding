@@ -6,18 +6,18 @@ import {fileURLToPath} from "node:url";
 import {gunzipSync} from "node:zlib";
 import {spawn, spawnSync} from "node:child_process";
 import {performance} from "node:perf_hooks";
-import {loadTargetContract, validateReleaseManifest} from "./package-contract.mjs";
+import {loadTargetContract, validateArtifactCandidate, validateReleaseManifest} from "./package-contract.mjs";
 import {computeProductFingerprint} from "./product-fingerprint.mjs";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const targetRoot = resolve(root, "target");
 const args = parseArgs(process.argv.slice(2));
-const cargoTarget = process.env.CARGO_TARGET_DIR?.trim()
-  ? resolve(root, process.env.CARGO_TARGET_DIR)
-  : targetRoot;
-const defaultBinary = resolve(cargoTarget, process.platform === "win32" ? "release/minimax-cli.exe" : "release/minimax-cli");
-const binary = resolve(root, args.binary ?? defaultBinary);
-const artifacts = resolve(root, args.artifacts ?? "target/release-artifacts");
+if (!args.binary || !args.artifacts || !args["evidence-dir"]) {
+  fail("E_ARGUMENT_REQUIRED: explicit --binary, --artifacts, and --evidence-dir are required");
+}
+const binary = resolve(root, args.binary);
+const artifacts = resolve(root, args.artifacts);
+const evidenceDir = resolve(root, args["evidence-dir"]);
 const thresholds = JSON.parse(readFileSync(join(root, "fixtures/compat/release/thresholds.v1.json"), "utf8"));
 const targetContract = loadTargetContract();
 if (thresholds.schemaVersion !== targetContract.thresholdSchemaVersion
@@ -26,6 +26,7 @@ if (thresholds.schemaVersion !== targetContract.thresholdSchemaVersion
 }
 assertWithinTarget(binary, "release binary");
 assertWithinTarget(artifacts, "release artifacts");
+assertWithinTarget(evidenceDir, "release evidence");
 if (!existsSync(binary) || !lstatSync(binary).isFile() || lstatSync(binary).isSymbolicLink()) fail("release binary is missing or unsafe");
 
 const environment = releaseEnvironment(targetContract);
@@ -37,12 +38,13 @@ const idleRssBytes = await measureIdleRss(binary, thresholds.idleRssBytes);
 const wikiP95Ms = runWikiBenchmark(thresholds.wikiBm25P95Ms);
 const productInputs = computeProductFingerprint(root);
 const report = {
-  schemaVersion: 1,
+  schemaVersion: 2,
   platform: packageEvidence.platform,
   productFingerprint: productInputs.fingerprint,
   productFileCount: productInputs.fileCount,
   environment,
   releaseBinary: binary.replaceAll("\\", "/"),
+  releaseBinarySha256: sha256(readFileSync(binary)),
   package: packageEvidence,
   licenses: licenseEvidence,
   security: securityEvidence,
@@ -61,8 +63,8 @@ const report = {
   credentialsRead: 0,
   modelDownloads: 0
 };
-mkdirSync(join(root, "target/release-evidence"), {recursive: true});
-const reportPath = join(root, "target/release-evidence", `${packageEvidence.platform}.json`);
+mkdirSync(evidenceDir, {recursive: true});
+const reportPath = join(evidenceDir, `${packageEvidence.platform}.json`);
 writeFileSync(reportPath, `${JSON.stringify(report, null, 2)}\n`, "utf8");
 process.stdout.write(`${JSON.stringify(report, null, 2)}\n`);
 
@@ -110,21 +112,54 @@ function verifyPackage(directory, sourceBinary, limits, expectedTarget, contract
   if (JSON.stringify(readdirSync(directory).sort()) !== JSON.stringify(expectedFiles)) {
     fail("release artifact directory contains missing or unexpected files");
   }
-  const native = verifyArchive(directory, manifest.nativeArchive, limits, "native");
-  const rootName = `minimax-codex-v${manifest.version}-${manifest.target.id}`;
-  assertOnlyProductExecutables(
-    native.entries,
-    new Set([`${rootName}/${manifest.binary.path}`, `${rootName}/${manifest.launcher.path}`])
-  );
-  const npmPackage = verifyNpmPackage(directory, manifest, limits, sourceBinary);
+  try {
+    validateArtifactCandidate({
+      manifest,
+      contract,
+      expectedTargetId: expectedTarget.id,
+      expectedProduct: product,
+      artifacts: candidateArtifactFiles(directory, manifest)
+    });
+  } catch (error) {
+    fail(error instanceof Error ? error.message : String(error));
+  }
+  const nativePackage = verifyNativePackage(directory, manifest, limits);
+  const npmPackage = verifyNpmPackage(directory, manifest, limits);
+  if (nativePackage.installedRustIdentity.installedVersionOutput
+        !== npmPackage.installedRustIdentity.installedVersionOutput
+      || nativePackage.installedRustIdentity.packagedBinarySha256
+        !== npmPackage.installedRustIdentity.packagedBinarySha256) {
+    fail("native and npm installed Rust identities do not match");
+  }
   return {
-    archive: native.path.replaceAll("\\", "/"),
-    archiveSha256: native.hash,
-    compressedBytes: native.bytes.length,
+    archive: nativePackage.archive,
+    archiveSha256: nativePackage.archiveSha256,
+    compressedBytes: nativePackage.compressedBytes,
     platform: manifest.target.id,
     manifest,
+    nativeInstalledRustIdentity: nativePackage.installedRustIdentity,
     npmPackage
   };
+}
+
+function candidateArtifactFiles(directory, manifest) {
+  const artifacts = new Map();
+  for (const name of [
+    manifest.nativeArchive.name,
+    `${manifest.nativeArchive.name}.sha256`,
+    manifest.npmPackage.name,
+    `${manifest.npmPackage.name}.sha256`
+  ]) {
+    const path = join(directory, name);
+    if (!existsSync(path)) {
+      artifacts.set(name, {kind: "missing", bytes: Buffer.alloc(0)});
+      continue;
+    }
+    const status = lstatSync(path);
+    const kind = status.isFile() && !status.isSymbolicLink() ? "file" : "unsafe";
+    artifacts.set(name, {kind, bytes: kind === "file" ? readFileSync(path) : Buffer.alloc(0)});
+  }
+  return artifacts;
 }
 
 function verifyArchive(directory, evidence, limits, label) {
@@ -175,7 +210,45 @@ function containsBundledModelPath(path) {
     || /(?:^|\/)(?:models?|model-weights?|embedding-resources?)(?:\/|$)/iu.test(path);
 }
 
-function verifyNpmPackage(directory, manifest, limits, sourceBinary) {
+function verifyNativePackage(directory, manifest, limits) {
+  const verified = verifyArchive(directory, manifest.nativeArchive, limits, "native");
+  const {entries, bytes, hash, path: archive} = verified;
+  const rootName = `minimax-codex-v${manifest.version}-${manifest.target.id}`;
+  assertOnlyProductExecutables(
+    entries,
+    new Set([`${rootName}/${manifest.binary.path}`, `${rootName}/${manifest.launcher.path}`])
+  );
+  const smokeRoot = mkdtempSync(join(targetRoot, "release-native-smoke-"));
+  try {
+    extractArchiveEntries(entries, smokeRoot);
+    const installedRoot = join(smokeRoot, rootName);
+    const native = join(installedRoot, manifest.binary.path);
+    if (process.platform !== "win32") chmodSync(native, 0o755);
+    const packagedBinarySha256 = sha256(readFileSync(native));
+    if (packagedBinarySha256 !== manifest.binary.sha256) {
+      fail("installed native binary hash does not match the release manifest");
+    }
+    const developmentRuntimeAugmented = installDevelopmentRuntime(manifest, installedRoot) === 1;
+    return {
+      archive: archive.replaceAll("\\", "/"),
+      archiveSha256: hash,
+      compressedBytes: bytes.length,
+      installedRustIdentity: installedIdentity(
+        native,
+        [],
+        installedRoot,
+        manifest,
+        "installed native Rust binary",
+        packagedBinarySha256,
+        developmentRuntimeAugmented
+      )
+    };
+  } finally {
+    rmSync(smokeRoot, {recursive: true, force: true});
+  }
+}
+
+function verifyNpmPackage(directory, manifest, limits) {
   const verified = verifyArchive(directory, manifest.npmPackage, limits, "npm");
   const {entries, bytes, hash, path: archive} = verified;
   const packageJson = JSON.parse(entries.get("package/package.json").bytes.toString("utf8"));
@@ -191,17 +264,8 @@ function verifyNpmPackage(directory, manifest, limits, sourceBinary) {
     fail("npm package launcher or native binary hash is invalid");
   }
   const smokeRoot = mkdtempSync(join(targetRoot, "release-npm-smoke-"));
-  const directRoot = mkdtempSync(join(targetRoot, "release-direct-smoke-"));
   try {
-    for (const [name, entry] of entries) {
-      const destination = join(smokeRoot, name);
-      if (entry.type === "5") {
-        mkdirSync(destination, {recursive: true});
-      } else {
-        mkdirSync(dirname(destination), {recursive: true});
-        writeFileSync(destination, entry.bytes);
-      }
-    }
+    extractArchiveEntries(entries, smokeRoot);
     const packageRoot = join(smokeRoot, "package");
     const native = join(packageRoot, manifest.binary.path);
     const launcher = join(packageRoot, "bin/minimax-codex.cjs");
@@ -210,73 +274,71 @@ function verifyNpmPackage(directory, manifest, limits, sourceBinary) {
     if (packagedBinarySha256 !== manifest.binary.sha256) {
       fail("installed npm binary hash does not match the release manifest");
     }
-
-    const directBinary = join(directRoot, manifest.binary.path);
-    copyFileSync(sourceBinary, directBinary);
-    if (process.platform !== "win32") chmodSync(directBinary, 0o755);
-    const directBinarySha256 = sha256(readFileSync(directBinary));
-    if (directBinarySha256 !== packagedBinarySha256) {
-      fail("direct and installed Rust binaries do not have the same SHA-256");
-    }
-
-    const developmentRuntimeAugmented = installDevelopmentRuntime(manifest, directRoot)
-      | installDevelopmentRuntime(manifest, packageRoot);
-    const sourceVersionOutput = productIdentity(
-      directBinary,
-      [],
-      directRoot,
-      releaseSmokeEnvironment(directRoot),
-      "direct Rust binary"
-    );
-    const installedVersionOutput = productIdentity(
+    const developmentRuntimeAugmented = installDevelopmentRuntime(manifest, packageRoot) === 1;
+    const installedRustIdentity = installedIdentity(
       process.execPath,
       [launcher],
       packageRoot,
-      releaseSmokeEnvironment(packageRoot),
-      "installed npm launcher"
+      manifest,
+      "installed npm launcher",
+      packagedBinarySha256,
+      developmentRuntimeAugmented
     );
-    if (installedVersionOutput !== sourceVersionOutput) {
-      fail("installed npm launcher identity differs from the direct Rust binary");
-    }
-    if (sourceVersionOutput !== `minimax-codex-rust ${manifest.version}`) {
-      fail("Rust product identity does not match the package version");
-    }
-
-    const smoke = spawnSync(
-      process.execPath,
-      [launcher, "index", "capabilities", "status"],
-      {
-        cwd: packageRoot,
-        encoding: "utf8",
-        env: releaseSmokeEnvironment(packageRoot),
-        shell: false,
-        windowsHide: true,
-        timeout: 10_000
-      }
-    );
-    if (smoke.status !== 0 || !smoke.stdout.includes("domain=capability")) {
-      fail(`installed npm Rust launcher smoke test failed: ${(smoke.stderr || smoke.stdout || "no output").trim()}`);
-    }
     const siblingEvidence = verifyRejectedSiblings(entries.get("package/bin/minimax-codex.cjs").bytes, manifest, smokeRoot);
     return {
       archive: archive.replaceAll("\\", "/"),
       archiveSha256: hash,
       compressedBytes: bytes.length,
-      installedRustIdentity: {
-        sourceVersionOutput,
-        installedVersionOutput,
-        packagedBinarySha256,
-        capabilityStatusSmoke: true,
-        credentialsExcluded: true,
-        pathLookupExcluded: true,
-        developmentRuntimeAugmented: developmentRuntimeAugmented === 1,
-        ...siblingEvidence
-      }
+      installedRustIdentity: {...installedRustIdentity, ...siblingEvidence}
     };
   } finally {
     rmSync(smokeRoot, {recursive: true, force: true});
-    rmSync(directRoot, {recursive: true, force: true});
   }
+}
+
+function extractArchiveEntries(entries, destinationRoot) {
+  for (const [name, entry] of entries) {
+    const destination = join(destinationRoot, name);
+    if (entry.type === "5") {
+      mkdirSync(destination, {recursive: true});
+    } else {
+      mkdirSync(dirname(destination), {recursive: true});
+      writeFileSync(destination, entry.bytes);
+    }
+  }
+}
+
+function installedIdentity(command, prefixArgs, cwd, manifest, label, packagedBinarySha256, developmentRuntimeAugmented) {
+  const env = releaseSmokeEnvironment(cwd);
+  const installedVersionOutput = productIdentity(command, prefixArgs, cwd, env, label);
+  if (installedVersionOutput !== `minimax-codex-rust ${manifest.version}`) {
+    fail(`${label} product identity does not match the package version`);
+  }
+  const capability = spawnSync(command, [...prefixArgs, "index", "capabilities", "status"], {
+    cwd,
+    encoding: "utf8",
+    env,
+    shell: false,
+    windowsHide: true,
+    timeout: 10_000
+  });
+  if (capability.status !== 0 || !capability.stdout.includes("domain=capability")) {
+    fail(`${label} capability status smoke failed: ${(capability.stderr || capability.stdout || "no output").trim()}`);
+  }
+  return {
+    installedVersionOutput,
+    packagedBinarySha256,
+    capabilityStatusSmoke: true,
+    capabilityStatusOutputSha256: sha256(Buffer.from(capability.stdout, "utf8")),
+    productFingerprint: manifest.product.fingerprint,
+    offline: true,
+    providerCalls: 0,
+    credentialsRead: 0,
+    modelDownloads: 0,
+    credentialsExcluded: true,
+    pathLookupExcluded: true,
+    developmentRuntimeAugmented
+  };
 }
 
 function productIdentity(command, prefixArgs, cwd, env, label) {
@@ -331,10 +393,16 @@ function verifyRejectedSiblings(launcherBytes, manifest, smokeRoot) {
 function releaseSmokeEnvironment(isolatedRoot) {
   const environment = {
     HOME: isolatedRoot,
+    NO_PROXY: "*",
     PATH: "",
     TEMP: isolatedRoot,
     TMP: isolatedRoot,
-    USERPROFILE: isolatedRoot
+    USERPROFILE: isolatedRoot,
+    npm_config_audit: "false",
+    npm_config_fund: "false",
+    npm_config_ignore_scripts: "true",
+    npm_config_offline: "true",
+    npm_config_update_notifier: "false"
   };
   for (const name of ["ComSpec", "PATHEXT", "SystemRoot", "WINDIR"]) {
     if (typeof process.env[name] === "string") environment[name] = process.env[name];
@@ -592,7 +660,7 @@ function run(command, commandArgs) {
 
 function parseArgs(values) {
   const parsed = {};
-  const allowed = new Set(["binary", "artifacts"]);
+  const allowed = new Set(["artifacts", "binary", "evidence-dir"]);
   for (let index = 0; index < values.length; index += 1) {
     const key = values[index];
     const name = key?.startsWith("--") ? key.slice(2) : "";

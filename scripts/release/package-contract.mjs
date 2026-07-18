@@ -1,5 +1,5 @@
 import {createHash} from "node:crypto";
-import {readFileSync} from "node:fs";
+import {existsSync, lstatSync, readFileSync} from "node:fs";
 import {dirname, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
 import {gunzipSync, gzipSync} from "node:zlib";
@@ -216,6 +216,49 @@ export function validateArtifactCandidate({manifest, contract, expectedTargetId,
   validateArtifactArchive(manifest.nativeArchive, manifest, artifacts, "native");
   validateArtifactArchive(manifest.npmPackage, manifest, artifacts, "npm");
   return manifest;
+}
+
+export function loadExplicitFingerprint(path, currentProduct) {
+  if (typeof path !== "string" || path.length === 0) {
+    contractFail("E_FINGERPRINT_REQUIRED", "--fingerprint-file is required");
+  }
+  if (!existsSync(path)) {
+    contractFail("E_FINGERPRINT_REQUIRED", `fingerprint file is missing: ${path}`);
+  }
+  const status = lstatSync(path);
+  if (!status.isFile() || status.isSymbolicLink()) {
+    contractFail("E_FINGERPRINT_INVALID", `fingerprint file is not a safe regular file: ${path}`);
+  }
+  let fingerprint;
+  try {
+    fingerprint = JSON.parse(readFileSync(path, "utf8"));
+  } catch {
+    contractFail("E_FINGERPRINT_INVALID", "fingerprint file is not valid JSON");
+  }
+  exactObject(fingerprint, ["schemaVersion", "fingerprint", "fileCount"], "E_FINGERPRINT_INVALID", "fingerprint file");
+  if (fingerprint.schemaVersion !== 1
+      || typeof fingerprint.fingerprint !== "string"
+      || !/^[0-9a-f]{64}$/u.test(fingerprint.fingerprint)
+      || !Number.isSafeInteger(fingerprint.fileCount)
+      || fingerprint.fileCount <= 0) {
+    contractFail("E_FINGERPRINT_INVALID", "fingerprint file fields are invalid");
+  }
+  if (!isPlainObject(currentProduct)
+      || fingerprint.fingerprint !== currentProduct.fingerprint
+      || fingerprint.fileCount !== currentProduct.fileCount) {
+    contractFail("E_FINGERPRINT_STALE", "fingerprint file does not match the current product");
+  }
+  return fingerprint;
+}
+
+export function validateFingerprintArtifactBinding(fingerprint, artifactProduct) {
+  if (!isPlainObject(fingerprint)
+      || !isPlainObject(artifactProduct)
+      || fingerprint.fingerprint !== artifactProduct.fingerprint
+      || fingerprint.fileCount !== artifactProduct.fileCount) {
+    contractFail("E_FINGERPRINT_ARTIFACT_MISMATCH", "artifact product does not match the explicit fingerprint file");
+  }
+  return artifactProduct;
 }
 
 function validateArtifactArchive(archive, manifest, artifacts, channel) {

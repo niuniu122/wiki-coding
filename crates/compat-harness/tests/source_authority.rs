@@ -387,6 +387,15 @@ fn package_contract_sources_have_non_product_authority_classes() {
             "scripts/release/package-contract.test.mjs",
             "packageTestOnly",
         ),
+        ("scripts/release/package-rust.mjs", "rustReleasePackaging"),
+        (
+            "scripts/release/verify-milestone-flow.mjs",
+            "milestoneVerification",
+        ),
+        (
+            "scripts/release/verify-rust-release.mjs",
+            "rustReleaseVerification",
+        ),
     ] {
         let entry = entries
             .iter()
