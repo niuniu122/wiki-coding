@@ -1,3 +1,7 @@
+# Product fingerprints read working-tree bytes, so every detected text file must
+# check out identically on Windows and Linux regardless of core.autocrlf.
+* text=auto eol=lf
+
 *.cjs text eol=lf
 *.js text eol=lf
 *.json text eol=lf
