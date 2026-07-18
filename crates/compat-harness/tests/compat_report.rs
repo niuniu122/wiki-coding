@@ -776,6 +776,42 @@ fn product_fingerprint_v3_tracks_working_tree_and_excludes_only_planning_and_hos
 }
 
 #[test]
+fn product_fingerprint_inputs_have_one_cross_platform_checkout_policy() {
+    let root = repository_root();
+    let attributes =
+        fs::read_to_string(root.join(".gitattributes")).expect("repository checkout policy");
+    assert!(
+        attributes.lines().any(|line| line == "* text=auto eol=lf"),
+        "all detected product text must check out as LF on every supported host"
+    );
+    assert!(
+        attributes
+            .lines()
+            .any(|line| line == "fixtures/compat/migration/** -text"),
+        "manifest-bound migration evidence must retain its exact historical bytes"
+    );
+
+    for relative in [
+        ".gitattributes",
+        ".gitignore",
+        "LICENSE-APACHE",
+        "LICENSE-MIT",
+        "scripts/ci-linux-sandbox-canary.sh",
+    ] {
+        let bytes = fs::read(root.join(relative)).expect("cross-platform product input");
+        assert!(
+            !bytes.windows(2).any(|pair| pair == b"\r\n"),
+            "Git-declared text input must be LF-normalized: {relative}"
+        );
+    }
+
+    let migration_cache =
+        fs::read(root.join("fixtures/compat/migration/typescript-v1/indexes/capability.cache"))
+            .expect("byte-exact migration cache");
+    assert!(migration_cache.ends_with(b"\r\n"));
+}
+
+#[test]
 fn cutover_rejects_a_pending_mandatory_rust_item() {
     let root = repository_root();
     let manifests = load_compat_manifests(&root).expect("strict manifests");
