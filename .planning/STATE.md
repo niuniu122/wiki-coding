@@ -5,16 +5,16 @@ milestone_name: Rust Convergence
 current_phase: 13
 current_phase_name: Thin npm and Native Release
 status: executing
-stopped_at: Completed 13-01-PLAN.md
-last_updated: "2026-07-18T01:35:45.438Z"
+stopped_at: Completed 13-02-PLAN.md
+last_updated: "2026-07-18T02:02:10.777Z"
 last_activity: 2026-07-18
-last_activity_desc: Phase 13 Plan 01 completed the dependency-free npm shell and fail-closed launcher
+last_activity_desc: Phase 13 Plan 02 completed deterministic native and npm candidate packaging
 progress:
   total_phases: 14
   completed_phases: 12
   total_plans: 48
-  completed_plans: 43
-  percent: 90
+  completed_plans: 44
+  percent: 92
 ---
 
 # Project State
@@ -28,9 +28,9 @@ See: `.planning/PROJECT.md` (updated 2026-07-15)
 ## Current Position
 
 Phase: 13 — Thin npm and Native Release
-Plan: 1 of 3 complete
+Plan: 2 of 3 complete
 Status: In progress
-Last activity: 2026-07-18 — Thin npm metadata and launcher completed
+Last activity: 2026-07-18 — Deterministic native and npm candidate packaging completed
 
 ## Previous Phase 7 Hosted Baseline (superseded)
 
@@ -143,6 +143,9 @@ No package publication, tag, PR, merge, live Provider request, credential read, 
 - [Phase 13]: Keep npm as a dependency-free distribution shell with exact metadata and one Rust launcher. — Exact allowlists make legacy dependencies, scripts, lifecycle hooks, and bins fail closed.
 - [Phase 13]: Use stable E_* launcher categories with expected-path or supported-target guidance. — Failures remain actionable while never searching, downloading, or falling back to another runtime.
 - [Phase 13]: Keep GNU-LLVM verification development-only and defer hosted fingerprint refresh to Phase 14. — Local artifacts cannot satisfy Windows MSVC and Linux GNU hosted evidence identity.
+- [Phase 13]: Select release target and support tier only from the active exact rustc host. — Removing caller-controlled platform labels prevents GNU-LLVM development artifacts from being represented as MSVC hosted evidence.
+- [Phase 13]: Emit the strict release manifest beside the two archives. — An external manifest can bind both whole-archive hashes without a self-referential hash cycle.
+- [Phase 13]: Classify package contract tests as hash-pinned package-test-only authority. — Fixture and assertion literals remain reviewable without being mistaken for executable production fallback behavior.
 
 ## Performance Metrics
 
@@ -163,9 +166,10 @@ No package publication, tag, PR, merge, live Provider request, credential read, 
 | Phase 12 P03 | 29min | 2 tasks | 2 files |
 | Phase 12 P04 | 2h 46m | 2 tasks | 2 files |
 | Phase 13 P01 | 12min | 2 tasks | 9 files |
+| Phase 13 P02 | 24min | 2 tasks | 9 files |
 
 ## Session
 
-**Last session:** 2026-07-18T01:35:45.422Z
-**Stopped at:** Completed 13-01-PLAN.md
+**Last session:** 2026-07-18T02:02:10.754Z
+**Stopped at:** Completed 13-02-PLAN.md
 **Resume file:** None
