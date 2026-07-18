@@ -791,23 +791,17 @@ fn interrupted_operation_manifest_recovers_only_exact_claimed_targets() {
         .path()
         .join(format!(".minimax/migrations/v1/{}", plan.migration_id));
     std::fs::remove_file(migration_root.join("receipt.json")).expect("simulate lost receipt");
-    let operation = migration_root.join("operation");
-    std::fs::create_dir_all(&operation).expect("operation directory");
-    std::fs::write(
-        operation.join("operation.json"),
-        serde_json::to_vec_pretty(&serde_json::json!({
-            "schemaVersion": 1,
-            "planHash": plan.plan_hash,
-            "candidates": first.created
-        }))
-        .expect("operation manifest"),
-    )
-    .expect("write operation manifest");
+    let operation = migration_root.join("operation.json");
+    assert!(operation.is_file(), "durable operation must survive apply");
 
     let recovered = apply_migration(&plan_path, &plan.confirmation()).expect("recovered apply");
     assert_eq!(recovered.created.len(), 3);
+    assert_eq!(recovered.created, first.created);
     assert!(migration_root.join("receipt.json").is_file());
-    assert!(!operation.exists());
+    assert!(
+        operation.is_file(),
+        "durable ownership must survive recovery"
+    );
 }
 
 #[test]
@@ -834,22 +828,32 @@ fn forged_operation_manifest_cannot_delete_unowned_project_files() {
         .iter()
         .map(|byte| format!("{byte:02x}"))
         .collect::<String>();
-    let operation = migration_root.join("operation");
-    std::fs::create_dir_all(&operation).expect("operation directory");
-    std::fs::write(
-        operation.join("operation.json"),
-        serde_json::to_vec_pretty(&serde_json::json!({
-            "schemaVersion": 1,
-            "planHash": "0".repeat(64),
-            "candidates": [{
-                "relativePath": "unowned-project-file.txt",
-                "sha256": unowned_sha256,
-                "bytes": unowned_bytes.len()
-            }]
-        }))
-        .expect("forged operation manifest"),
-    )
-    .expect("write forged operation manifest");
+    let operation_body = ForgedOperationBody {
+        schema_version: 1,
+        migration_id: plan.migration_id.clone(),
+        plan_hash: plan.plan_hash.clone(),
+        created: vec![MigrationReceiptTarget {
+            relative_path: "unowned-project-file.txt".to_owned(),
+            sha256: unowned_sha256,
+            bytes: unowned_bytes.len() as u64,
+        }],
+        reused: Vec::new(),
+    };
+    let forged_operation = ForgedOperation {
+        schema_version: operation_body.schema_version,
+        migration_id: operation_body.migration_id.clone(),
+        plan_hash: operation_body.plan_hash.clone(),
+        created: operation_body.created.clone(),
+        reused: operation_body.reused.clone(),
+        operation_hash: serializable_sha256(&operation_body),
+    };
+    let operation = migration_root.join("operation.json");
+    remove_file_checked(project.path(), &operation);
+    write_checked(
+        project.path(),
+        &operation,
+        serde_json::to_vec_pretty(&forged_operation).expect("forged operation manifest"),
+    );
 
     assert_eq!(
         apply_migration(&plan_path, &plan.confirmation()),
