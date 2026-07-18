@@ -102,8 +102,8 @@ fn both_compatibility_verification_modes_are_coverage_gated() {
         .find("validate_coverage_matrix")
         .expect("coverage preflight");
     let compatibility = verification
-        .find("load_compat_manifests")
-        .expect("compatibility manifests");
+        .find("verify_fixture_compatibility")
+        .expect("fixture compatibility verification");
 
     assert!(source_authority < coverage);
     assert!(coverage < compatibility);
