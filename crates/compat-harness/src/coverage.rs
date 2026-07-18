@@ -1,15 +1,19 @@
 use std::collections::{BTreeMap, BTreeSet};
-use std::fmt;
+use std::fmt::{self, Write as _};
 use std::fs;
 use std::path::{Component, Path};
 
 use serde::Deserialize;
+use sha2::{Digest as _, Sha256};
 
 use crate::source_authority::SourceAuthorityManifest;
 
 pub const COVERAGE_MATRIX_PATH: &str =
     "fixtures/compat/verification/typescript-responsibilities.v1.json";
 pub const COVERAGE_SOURCE_AUTHORITY: &str = "fixtures/compat/source-authority.v1.json";
+const PHASE_10_VERIFICATION_SOURCE_COUNT: usize = 97;
+const PHASE_10_VERIFICATION_SOURCE_SHA256: &str =
+    "49c08ba55c6bedaaa3a5f0260913f8cd5a4dd5084c659879f629741fcf8d09c8";
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -157,31 +161,18 @@ pub fn validate_coverage_matrix(
         return invalid("coverage matrix must name the Phase 10 source authority manifest");
     }
 
-    let expected = verification_sources(authority);
-    let actual = matrix
-        .sources
-        .iter()
-        .map(|source| (source.source_path.clone(), source.source_sha256.clone()))
-        .collect::<BTreeSet<_>>();
-    if actual != expected {
-        let expected_paths = expected
-            .iter()
-            .map(|(path, _)| path.as_str())
-            .collect::<BTreeSet<_>>();
-        let actual_paths = actual
-            .iter()
-            .map(|(path, _)| path.as_str())
-            .collect::<BTreeSet<_>>();
-        if let Some(path) = expected_paths.difference(&actual_paths).next() {
-            return invalid(format!("coverage matrix is missing source: {path}"));
-        }
-        if let Some(path) = actual_paths.difference(&expected_paths).next() {
-            return invalid(format!("coverage matrix contains unknown source: {path}"));
-        }
-        return invalid("coverage matrix source hash does not match Phase 10 authority");
+    if !authority.transitional_type_script.entries.is_empty()
+        || !authority
+            .transitional_legacy_test_fixtures
+            .entries
+            .is_empty()
+    {
+        return invalid("Phase 14 coverage validation requires zero transitional source authority");
     }
-    if matrix.sources.len() != expected.len() {
-        return invalid("coverage matrix source paths must be unique");
+    if matrix.sources.len() != PHASE_10_VERIFICATION_SOURCE_COUNT
+        || sealed_source_inventory_sha256(&matrix.sources) != PHASE_10_VERIFICATION_SOURCE_SHA256
+    {
+        return invalid("sealed Phase 10 source inventory drift");
     }
 
     let allowed_javascript = authority
@@ -560,26 +551,24 @@ fn validate_evidence_owner(
     Ok(())
 }
 
-fn verification_sources(authority: &SourceAuthorityManifest) -> BTreeSet<(String, String)> {
-    let mut sources = authority
-        .transitional_type_script
-        .entries
+fn sealed_source_inventory_sha256(sources: &[CoverageSource]) -> String {
+    let mut rows = sources
         .iter()
-        .filter(|entry| {
-            entry.path.starts_with("test/")
-                || entry.path.starts_with("src/eval/")
-                || entry.path.starts_with("src/smoke/")
-        })
-        .map(|entry| (entry.path.clone(), entry.sha256.clone()))
-        .collect::<BTreeSet<_>>();
-    sources.extend(
-        authority
-            .transitional_legacy_test_fixtures
-            .entries
-            .iter()
-            .map(|entry| (entry.path.clone(), entry.sha256.clone())),
-    );
-    sources
+        .map(|source| (source.source_path.as_str(), source.source_sha256.as_str()))
+        .collect::<Vec<_>>();
+    rows.sort_unstable();
+    let mut digest = Sha256::new();
+    for (path, sha256) in rows {
+        digest.update(path.as_bytes());
+        digest.update([0]);
+        digest.update(sha256.as_bytes());
+        digest.update(b"\n");
+    }
+    let mut output = String::with_capacity(64);
+    for byte in digest.finalize() {
+        write!(&mut output, "{byte:02x}").expect("writing to a String cannot fail");
+    }
+    output
 }
 
 fn valid_responsibility_id(value: &str) -> bool {

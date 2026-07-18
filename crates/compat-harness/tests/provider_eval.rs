@@ -231,12 +231,8 @@ fn immutable_retrieval_corpus_preserves_transitional_175_case_contract() {
     let root = repository_root();
     let source_path = "test/fixtures/capabilities/retrieval-cases-expanded.json";
     let target_path = "fixtures/compat/retrieval/capability-cases-expanded.v1.json";
-    let source_bytes = fs::read(root.join(source_path)).expect("transitional retrieval corpus");
-    let source: Value = serde_json::from_slice(&source_bytes).expect("source retrieval JSON");
-    let target: Value = serde_json::from_str(
-        &fs::read_to_string(root.join(target_path)).expect("immutable retrieval corpus"),
-    )
-    .expect("immutable retrieval JSON");
+    let target_bytes = fs::read(root.join(target_path)).expect("immutable retrieval corpus");
+    let target: Value = serde_json::from_slice(&target_bytes).expect("immutable retrieval JSON");
 
     assert_object_keys(
         &target,
@@ -265,9 +261,18 @@ fn immutable_retrieval_corpus_preserves_transitional_175_case_contract() {
     assert_eq!(target["schemaVersion"], 1);
     assert_eq!(target["corpusId"], "capability-retrieval-expanded-v1");
     assert_eq!(target["source"]["path"], source_path);
-    assert_eq!(target["source"]["sha256"], sha256(&source_bytes));
+    assert_eq!(
+        target["source"]["sha256"],
+        "fd60690849c25a6aca7bb7fc074f724303754006cb5a4075a174f8090e76ba22"
+    );
     assert_eq!(target["source"]["retainedUntil"], "14-01");
-    assert_eq!(target["descriptors"], source["descriptors"]);
+    assert_eq!(
+        target["descriptors"]
+            .as_array()
+            .expect("immutable descriptors")
+            .len(),
+        3
+    );
     assert_eq!(
         target["thresholds"],
         json!({
@@ -280,22 +285,18 @@ fn immutable_retrieval_corpus_preserves_transitional_175_case_contract() {
         })
     );
 
-    let source_groups = source["caseGroups"].as_array().expect("source groups");
     let target_groups = target["caseGroups"].as_array().expect("target groups");
-    assert_eq!(target_groups.len(), source_groups.len());
     let mut query_ids = std::collections::BTreeSet::new();
     let mut cases = 0usize;
-    for (source_group, target_group) in source_groups.iter().zip(target_groups) {
+    for target_group in target_groups {
         assert_object_keys(
             target_group,
             &["expectedIds", "id", "noMatch", "queries", "queryIds"],
         );
-        assert_eq!(target_group["expectedIds"], source_group["expectedIds"]);
-        assert_eq!(
-            target_group["noMatch"].as_bool().expect("target noMatch"),
-            source_group["noMatch"].as_bool().unwrap_or(false)
-        );
-        assert_eq!(target_group["queries"], source_group["queries"]);
+        target_group["expectedIds"]
+            .as_array()
+            .expect("expected capability IDs");
+        target_group["noMatch"].as_bool().expect("target noMatch");
         let queries = target_group["queries"].as_array().expect("queries");
         let ids = target_group["queryIds"].as_array().expect("query IDs");
         assert_eq!(ids.len(), queries.len());

@@ -102,39 +102,19 @@ impl SyntheticRepository {
             &fs::read_to_string(repository_root().join(CI_WORKFLOW))
                 .expect("committed CI workflow should be readable"),
         );
-        write_file(&root, "src/legacy.ts", "export {};\n");
-        for path in [
-            "test/fixtures/executors/diag-large.js",
-            "test/fixtures/executors/diag-ok.js",
-            "test/fixtures/executors/diag-slow.js",
-        ] {
-            write_file(&root, path, "process.stdout.write(\"diagnostic\");\n");
-        }
-
         let committed = manifest_json(&repository_root());
         let mut manifest: Value =
             serde_json::from_str(&committed).expect("committed manifest should parse");
-        manifest["transitionalTypeScript"]["entries"] = serde_json::json!([{
-            "path": "src/legacy.ts",
-            "sha256": sha256_file(&root.join("src/legacy.ts")),
-            "purpose": "inertShrinkingEvidence"
-        }]);
-        for class in ["javascriptAllowlist", "transitionalLegacyTestFixtures"] {
-            let entries = if class == "javascriptAllowlist" {
-                manifest[class]
-                    .as_array_mut()
-                    .expect("JavaScript allowlist should be an array")
-            } else {
-                manifest[class]["entries"]
-                    .as_array_mut()
-                    .expect("legacy fixtures should be an array")
-            };
-            for entry in entries {
-                let path = entry["path"]
-                    .as_str()
-                    .expect("authority entry should contain a path");
-                entry["sha256"] = Value::String(sha256_file(&root.join(path)));
-            }
+        manifest["transitionalTypeScript"]["entries"] = serde_json::json!([]);
+        manifest["transitionalLegacyTestFixtures"]["entries"] = serde_json::json!([]);
+        for entry in manifest["javascriptAllowlist"]
+            .as_array_mut()
+            .expect("JavaScript allowlist should be an array")
+        {
+            let path = entry["path"]
+                .as_str()
+                .expect("authority entry should contain a path");
+            entry["sha256"] = Value::String(sha256_file(&root.join(path)));
         }
         write_manifest(&root, &manifest);
         Self { root }
@@ -178,36 +158,6 @@ impl SyntheticRepository {
         )
         .expect("synthetic package should be written");
     }
-
-    fn replace_typescript_sources(&self, sources: &[(&str, &str)]) {
-        let legacy = self.root.join("src/legacy.ts");
-        if legacy.exists() {
-            fs::remove_file(&legacy).expect("synthetic legacy source should be replaced");
-        }
-        for (path, contents) in sources {
-            write_file(&self.root, path, contents);
-        }
-        let mut manifest: Value = serde_json::from_str(&manifest_json(&self.root))
-            .expect("synthetic manifest should parse");
-        let mut entries = sources
-            .iter()
-            .map(|(path, _)| {
-                serde_json::json!({
-                    "path": path,
-                    "sha256": sha256_file(&self.root.join(path)),
-                    "purpose": "inertShrinkingEvidence"
-                })
-            })
-            .collect::<Vec<_>>();
-        entries.sort_by(|left, right| {
-            left["path"]
-                .as_str()
-                .expect("entry path should be text")
-                .cmp(right["path"].as_str().expect("entry path should be text"))
-        });
-        manifest["transitionalTypeScript"]["entries"] = Value::Array(entries);
-        write_manifest(&self.root, &manifest);
-    }
 }
 
 impl Drop for SyntheticRepository {
@@ -222,16 +172,6 @@ fn write_file(root: &Path, path: &str, contents: &str) {
         fs::create_dir_all(parent).expect("synthetic file parent should be created");
     }
     fs::write(absolute, contents).expect("synthetic file should be written");
-}
-
-#[cfg(windows)]
-fn create_directory_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
-    std::os::windows::fs::symlink_dir(target, link)
-}
-
-#[cfg(unix)]
-fn create_directory_symlink(target: &Path, link: &Path) -> std::io::Result<()> {
-    std::os::unix::fs::symlink(target, link)
 }
 
 fn write_manifest(root: &Path, manifest: &Value) {
@@ -287,7 +227,13 @@ fn manifest_schema() {
     assert_eq!(manifest.schema_version, 1);
     assert_eq!(manifest.executable_entries.len(), 1);
     assert_eq!(manifest.javascript_allowlist.len(), 7);
-    assert_eq!(manifest.transitional_legacy_test_fixtures.entries.len(), 3);
+    assert!(manifest.transitional_type_script.entries.is_empty());
+    assert!(
+        manifest
+            .transitional_legacy_test_fixtures
+            .entries
+            .is_empty()
+    );
     assert_eq!(manifest.state_authority.writable_roots.len(), 1);
     assert_eq!(manifest.state_authority.writable_roots[0].path, ".minimax");
     assert_eq!(manifest.state_authority.migration_input_roots.len(), 1);
@@ -296,20 +242,6 @@ fn manifest_schema() {
         ".mini-codex"
     );
 
-    let legacy_paths = manifest
-        .transitional_legacy_test_fixtures
-        .entries
-        .iter()
-        .map(|entry| entry.path.as_str())
-        .collect::<Vec<_>>();
-    assert_eq!(
-        legacy_paths,
-        [
-            "test/fixtures/executors/diag-large.js",
-            "test/fixtures/executors/diag-ok.js",
-            "test/fixtures/executors/diag-slow.js",
-        ]
-    );
     assert_eq!(
         manifest
             .transitional_legacy_test_fixtures
@@ -329,31 +261,27 @@ fn manifest_schema() {
     assert_rejected(&root, &unknown, "unknown field");
 
     let duplicate = mutated_manifest(&root, |value| {
-        let first = value["transitionalTypeScript"]["entries"][0].clone();
-        value["transitionalTypeScript"]["entries"]
+        let first = value["javascriptAllowlist"][0].clone();
+        value["javascriptAllowlist"]
             .as_array_mut()
             .expect("entries should be an array")
             .push(first);
     });
-    assert_rejected(&root, &duplicate, "duplicate-free");
+    assert_rejected(&root, &duplicate, "exact distribution allowlist");
 
     let unsafe_path = mutated_manifest(&root, |value| {
-        value["transitionalTypeScript"]["entries"][0]["path"] =
-            Value::String("../outside.ts".to_owned());
+        value["javascriptAllowlist"][0]["path"] = Value::String("../outside.mjs".to_owned());
     });
     assert_rejected(&root, &unsafe_path, "unsafe repository-relative path");
 
     let hash_drift = mutated_manifest(&root, |value| {
-        value["transitionalTypeScript"]["entries"][0]["sha256"] = Value::String("0".repeat(64));
+        value["javascriptAllowlist"][0]["sha256"] = Value::String("0".repeat(64));
     });
     assert_rejected(&root, &hash_drift, "hash drift");
 
     let smuggled_fixture = mutated_manifest(&root, |value| {
-        let fixture_path = value["transitionalLegacyTestFixtures"]["entries"][0]["path"].clone();
-        let fixture_hash = value["transitionalLegacyTestFixtures"]["entries"][0]["sha256"].clone();
         let mut fixture = value["javascriptAllowlist"][0].clone();
-        fixture["path"] = fixture_path;
-        fixture["sha256"] = fixture_hash;
+        fixture["path"] = Value::String("test/fixtures/executors/diag-ok.js".to_owned());
         value["javascriptAllowlist"]
             .as_array_mut()
             .expect("allowlist should be an array")[0] = fixture;
@@ -368,6 +296,32 @@ fn manifest_schema() {
         parse_source_authority(&root, "{}"),
         Err(SourceAuthorityError::ManifestParse(_))
     ));
+}
+
+#[test]
+fn transitional_typescript_authority_is_permanently_zero() {
+    let root = repository_root();
+    let json = mutated_manifest(&root, |manifest| {
+        manifest["transitionalTypeScript"]["entries"] = serde_json::json!([{
+            "path": "src/reintroduced.ts",
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+            "purpose": "inertShrinkingEvidence"
+        }]);
+    });
+    assert_rejected(&root, &json, "must remain empty after Phase 14");
+}
+
+#[test]
+fn legacy_fixture_authority_is_permanently_zero() {
+    let root = repository_root();
+    let json = mutated_manifest(&root, |manifest| {
+        manifest["transitionalLegacyTestFixtures"]["entries"] = serde_json::json!([{
+            "path": "test/fixtures/executors/diag-ok.js",
+            "sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+            "purpose": "executorDiagnosticFixture"
+        }]);
+    });
+    assert_rejected(&root, &json, "must remain empty after Phase 14");
 }
 
 #[test]
@@ -528,191 +482,21 @@ fn evaluator_package_scripts_are_rust_only_and_ordered_before_release_builds() {
 
 #[test]
 fn discovered_test_graph_rejects_transitive_typescript_evaluators() {
-    let root = repository_root();
-    let edited_paths = [
-        "test/run-tests.ts",
-        "test/test-discovery.ts",
-        "test/test-discovery.test.ts",
-        "test/provider-conformance.test.ts",
-        "test/capability-retrieval-report.test.ts",
-    ];
-    let current_manifest = mutated_manifest(&root, |manifest| {
-        let entries = manifest["transitionalTypeScript"]["entries"]
-            .as_array_mut()
-            .expect("TypeScript authority entries should be an array");
-        for path in edited_paths {
-            let entry = entries
-                .iter_mut()
-                .find(|entry| entry["path"] == path)
-                .expect("every edited TypeScript test source should be classified");
-            entry["sha256"] = Value::String(sha256_file(&root.join(path)));
-        }
-    });
-    let manifest = parse_source_authority(&root, &current_manifest)
-        .expect("the in-flight hash adjustment should preserve source authority shape");
-    validate_source_authority(&root, &manifest)
-        .expect("the committed discovered-test graph must not reach a TypeScript evaluator");
-
-    let cases: &[(&str, &[(&str, &str)])] = &[
-        (
-            "direct static import with emitted JavaScript mapping",
-            &[
-                (
-                    "test/direct.test.ts",
-                    "import '../src/eval/provider-conformance.js';\n",
-                ),
-                (
-                    "src/eval/provider-conformance.ts",
-                    "export const evaluator = true;\n",
-                ),
-            ],
-        ),
-        (
-            "TypeScript import-equals require",
-            &[
-                (
-                    "test/import-equals.test.ts",
-                    "import provider = require('../src/eval/provider-conformance.js');\n",
-                ),
-                (
-                    "src/eval/provider-conformance.ts",
-                    "export const evaluator = true;\n",
-                ),
-            ],
-        ),
-        (
-            "indirect import with normalized dot segments",
-            &[
-                ("test/indirect.test.ts", "import './support/./bridge.js';\n"),
-                (
-                    "test/support/bridge.ts",
-                    "import '../../src/other/../eval/capability-retrieval-report.js';\n",
-                ),
-                (
-                    "src/eval/capability-retrieval-report.ts",
-                    "export const evaluator = true;\n",
-                ),
-            ],
-        ),
-        (
-            "re-export from TypeScript evaluator",
-            &[
-                (
-                    "test/reexport.test.ts",
-                    "export {runProviderConformanceReport} from '../src/eval/provider-conformance.js';\n",
-                ),
-                (
-                    "src/eval/provider-conformance.ts",
-                    "export const runProviderConformanceReport = true;\n",
-                ),
-            ],
-        ),
-        (
-            "literal dynamic import through a cycle",
-            &[
-                ("test/dynamic.test.ts", "await import('./cycle-a.js');\n"),
-                ("test/cycle-a.ts", "export * from './cycle-b.js';\n"),
-                (
-                    "test/cycle-b.ts",
-                    "import './cycle-a.js';\nawait import('../src/eval/provider-conformance.js');\n",
-                ),
-                (
-                    "src/eval/provider-conformance.ts",
-                    "export const evaluator = true;\n",
-                ),
-            ],
-        ),
-        (
-            "Windows separator resolving to TSX",
-            &[
-                (
-                    "test/windows.test.ts",
-                    "import '..\\\\src\\\\eval\\\\provider-conformance.js';\n",
-                ),
-                (
-                    "src/eval/provider-conformance.tsx",
-                    "export const evaluator = true;\n",
-                ),
-            ],
-        ),
-    ];
-    for (label, sources) in cases {
-        let repository = SyntheticRepository::new();
-        repository.replace_typescript_sources(sources);
-        let manifest = repository.load();
-        let error = validate_source_authority(&repository.root, &manifest)
-            .expect_err("every transitive evaluator route must fail closed");
-        assert!(
-            error.to_string().contains("TypeScript evaluator"),
-            "{label}: expected evaluator reachability rejection, got {error:?}"
-        );
-    }
-
-    let safe_cycle = SyntheticRepository::new();
-    safe_cycle.replace_typescript_sources(&[
-        (
-            "test/cycle.test.ts",
-            "import './cycle-a.js';\nimport './regex-fixture.js';\n",
-        ),
-        ("test/cycle-a.ts", "export * from './cycle-b.js';\n"),
-        ("test/cycle-b.ts", "import './cycle-a.js';\n"),
-        (
-            "test/regex-fixture.ts",
-            r#"const importLike = /import\s+['\"]\.\.\/src\/eval/g;
-export {importLike};
-"#,
-        ),
-    ]);
-    let safe_cycle_manifest = safe_cycle.load();
-    validate_source_authority(&safe_cycle.root, &safe_cycle_manifest)
-        .expect("a cycle without evaluator reachability should terminate and pass");
-
-    for (label, sources, expected) in [
-        (
-            "unresolved",
-            &[("test/unresolved.test.ts", "import './missing.js';\n")][..],
-            "unresolved local TypeScript dependency",
-        ),
-        (
-            "ambiguous",
-            &[
-                ("test/ambiguous.test.ts", "import './helper.js';\n"),
-                ("test/helper.ts", "export {};\n"),
-                ("test/helper.tsx", "export {};\n"),
-            ][..],
-            "ambiguous local TypeScript dependency",
-        ),
-        (
-            "unsafe",
-            &[("test/unsafe.test.ts", "import '../../outside.js';\n")][..],
-            "unsafe local TypeScript dependency escapes repository",
-        ),
-    ] {
-        let repository = SyntheticRepository::new();
-        repository.replace_typescript_sources(sources);
-        let manifest = repository.load();
-        let error = validate_source_authority(&repository.root, &manifest)
-            .expect_err("unsafe dependency graph variants must fail closed");
-        assert!(
-            error.to_string().contains(expected),
-            "{label}: expected {expected:?}, got {error:?}"
-        );
-    }
-
-    let symlinked = SyntheticRepository::new();
-    symlinked
-        .replace_typescript_sources(&[("test/symlink.test.ts", "import './linked/helper.js';\n")]);
-    let external = symlinked.root.with_extension("external");
-    fs::create_dir_all(&external).expect("external symlink target should be created");
-    fs::write(external.join("helper.ts"), "export {};\n")
-        .expect("external symlink target source should be written");
-    create_directory_symlink(&external, &symlinked.root.join("test/linked"))
-        .expect("test dependency directory symlink should be created");
-    let manifest = symlinked.load();
-    let error = validate_source_authority(&symlinked.root, &manifest)
-        .expect_err("a symlinked TypeScript test dependency must fail closed");
-    assert!(error.to_string().contains("dependency path is symlinked"));
-    fs::remove_dir_all(external).expect("external symlink target should be removed");
+    let repository = SyntheticRepository::new();
+    write_file(
+        &repository.root,
+        "src/eval/reintroduced.ts",
+        "export const evaluator = true;\n",
+    );
+    write_file(
+        &repository.root,
+        "test/reintroduced.test.ts",
+        "import '../src/eval/reintroduced.js';\n",
+    );
+    let manifest = repository.load();
+    let error = validate_source_authority(&repository.root, &manifest)
+        .expect_err("any reintroduced TypeScript evaluator route must fail closed");
+    assert!(error.to_string().contains("unclassified TypeScript path"));
 }
 
 #[test]
@@ -795,11 +579,8 @@ fn rejects_unreviewed_sources_and_javascript_authority() {
 fn rejects_legacy_fixture_smuggling_and_second_writable_root() {
     let smuggled = SyntheticRepository::new();
     smuggled.mutate_manifest(|manifest| {
-        let fixture_path = manifest["transitionalLegacyTestFixtures"]["entries"][0]["path"].clone();
-        let fixture_hash =
-            manifest["transitionalLegacyTestFixtures"]["entries"][0]["sha256"].clone();
-        manifest["javascriptAllowlist"][0]["path"] = fixture_path;
-        manifest["javascriptAllowlist"][0]["sha256"] = fixture_hash;
+        manifest["javascriptAllowlist"][0]["path"] =
+            Value::String("test/fixtures/executors/diag-ok.js".to_owned());
     });
     let error = load_source_authority(&smuggled.root)
         .expect_err("legacy fixture must not enter the JavaScript authority class");
@@ -828,10 +609,9 @@ fn rejects_legacy_fixture_smuggling_and_second_writable_root() {
 #[test]
 fn rejects_windows_and_posix_absolute_authority_paths() {
     let root = repository_root();
-    for absolute_path in [r"C:\outside\authority.ts", "/outside/authority.ts"] {
+    for absolute_path in [r"C:\outside\authority.mjs", "/outside/authority.mjs"] {
         let json = mutated_manifest(&root, |manifest| {
-            manifest["transitionalTypeScript"]["entries"][0]["path"] =
-                Value::String(absolute_path.to_owned());
+            manifest["javascriptAllowlist"][0]["path"] = Value::String(absolute_path.to_owned());
         });
         assert_rejected(&root, &json, "unsafe repository-relative path");
     }

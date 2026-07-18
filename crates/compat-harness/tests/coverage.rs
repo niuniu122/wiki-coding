@@ -17,41 +17,8 @@ fn repository_root() -> PathBuf {
         .to_path_buf()
 }
 
-fn transitional_verification_paths(authority: &Value) -> BTreeSet<(String, String)> {
-    let mut paths = authority["transitionalTypeScript"]["entries"]
-        .as_array()
-        .expect("transitional TypeScript entries")
-        .iter()
-        .filter_map(|entry| {
-            let path = entry["path"].as_str()?;
-            (path.starts_with("test/")
-                || path.starts_with("src/eval/")
-                || path.starts_with("src/smoke/"))
-            .then(|| {
-                (
-                    path.to_owned(),
-                    entry["sha256"].as_str().expect("source hash").to_owned(),
-                )
-            })
-        })
-        .collect::<BTreeSet<_>>();
-    paths.extend(
-        authority["transitionalLegacyTestFixtures"]["entries"]
-            .as_array()
-            .expect("legacy test fixtures")
-            .iter()
-            .map(|entry| {
-                (
-                    entry["path"].as_str().expect("fixture path").to_owned(),
-                    entry["sha256"].as_str().expect("fixture hash").to_owned(),
-                )
-            }),
-    );
-    paths
-}
-
 #[test]
-fn coverage_matrix_exists_and_matches_the_phase_ten_verification_inventory() {
+fn historical_coverage_matrix_is_sealed_after_authority_reaches_zero() {
     let root = repository_root();
     let authority: Value = serde_json::from_str(
         &fs::read_to_string(root.join("fixtures/compat/source-authority.v1.json"))
@@ -66,25 +33,27 @@ fn coverage_matrix_exists_and_matches_the_phase_ten_verification_inventory() {
     )
     .expect("coverage matrix JSON");
 
-    let actual = matrix["sources"]
-        .as_array()
-        .expect("coverage sources")
-        .iter()
-        .map(|source| {
-            (
-                source["sourcePath"]
-                    .as_str()
-                    .expect("matrix source path")
-                    .to_owned(),
-                source["sourceSha256"]
-                    .as_str()
-                    .expect("matrix source hash")
-                    .to_owned(),
-            )
-        })
-        .collect::<BTreeSet<_>>();
-
-    assert_eq!(actual, transitional_verification_paths(&authority));
+    assert_eq!(
+        authority["transitionalTypeScript"]["entries"]
+            .as_array()
+            .expect("transitional TypeScript entries")
+            .len(),
+        0
+    );
+    assert_eq!(
+        authority["transitionalLegacyTestFixtures"]["entries"]
+            .as_array()
+            .expect("legacy test fixtures")
+            .len(),
+        0
+    );
+    assert_eq!(
+        matrix["sources"]
+            .as_array()
+            .expect("sealed historical coverage sources")
+            .len(),
+        97
+    );
 }
 
 #[test]
@@ -138,7 +107,7 @@ fn missing_source_hash_drift_and_duplicate_responsibility_are_rejected() {
         validate_coverage_matrix(&root, &missing, &authority)
             .expect_err("missing source must fail")
             .to_string()
-            .contains("missing source")
+            .contains("sealed Phase 10 source inventory drift")
     );
 
     let mut drifted = matrix.clone();
@@ -147,7 +116,7 @@ fn missing_source_hash_drift_and_duplicate_responsibility_are_rejected() {
         validate_coverage_matrix(&root, &drifted, &authority)
             .expect_err("hash drift must fail")
             .to_string()
-            .contains("source hash")
+            .contains("sealed Phase 10 source inventory drift")
     );
 
     let mut duplicate = matrix.clone();
@@ -180,7 +149,7 @@ fn unresolved_unknown_fields_and_typescript_evidence_are_rejected() {
     let authority = load_source_authority(&root).expect("source authority");
     let mut matrix = load_coverage_matrix(&root).expect("coverage matrix");
     let responsibility = &mut matrix.sources[0].responsibilities[0];
-    responsibility.evidence[0].path = "test/run-tests.ts".to_owned();
+    responsibility.evidence[0].path = "README.md".to_owned();
     responsibility.evidence[0].test = None;
     assert!(
         validate_coverage_matrix(&root, &matrix, &authority)
