@@ -756,6 +756,10 @@ fn source_authority_gate_precedes_compat_loading_for_all_verify_commands() {
 fn ci_keeps_rust_authority_ahead_of_packaging_and_fails_closed() {
     let source = fs::read_to_string(repository_root().join(CI_WORKFLOW))
         .expect("CI workflow should be readable");
+    assert!(
+        source.contains("RUSTFLAGS: ${{ runner.os == 'Windows' && '-C link-arg=/Brepro' || '' }}"),
+        "Windows MSVC hosted builds must opt into reproducible linker output"
+    );
     validate_ci_workflow_text(&source).expect("committed CI workflow should preserve authority");
 
     let skipped_contract = source.replace(
@@ -816,6 +820,15 @@ fn ci_keeps_rust_authority_ahead_of_packaging_and_fails_closed() {
     assert_ci_rejected(
         &missing_canary,
         "retain the Linux adversarial sandbox canary",
+    );
+
+    let non_reproducible_windows_link = source.replace(
+        "RUSTFLAGS: ${{ runner.os == 'Windows' && '-C link-arg=/Brepro' || '' }}",
+        "RUSTFLAGS: ''",
+    );
+    assert_ci_rejected(
+        &non_reproducible_windows_link,
+        "reproducible /Brepro linking",
     );
 
     let implicit_fingerprint =
