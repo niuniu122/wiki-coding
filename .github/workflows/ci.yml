@@ -12,6 +12,8 @@ jobs:
   verify:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
+    env:
+      CARGO_TARGET_DIR: target/phase13-ci/cargo
     strategy:
       fail-fast: false
       matrix:
@@ -33,16 +35,6 @@ jobs:
         if: runner.os == 'Linux'
         run: bash scripts/ci-linux-sandbox-canary.sh
       - run: npm ci
-      - name: Verify strict Rust source authority and contracts
-        if: github.event_name != 'workflow_dispatch'
-        run: npm run verify:rust-contracts
-      - name: Verify hosted evidence candidate Rust source authority and contracts
-        if: github.event_name == 'workflow_dispatch'
-        run: npm run verify:rust-contracts:candidate
-      - name: Run transitional TypeScript static checks
-        run: npm run check
-      - name: Run transitional TypeScript tests
-        run: npm test
       - run: npm run check:rust
       - name: Run strict Rust tests
         if: github.event_name != 'workflow_dispatch'
@@ -54,15 +46,26 @@ jobs:
         run: npm run eval:provider
       - name: Run Rust retrieval evaluation
         run: npm run eval:retrieval
+      - name: Verify strict Rust source authority and contracts
+        if: github.event_name != 'workflow_dispatch'
+        run: npm run verify:rust-contracts
+      - name: Verify hosted evidence candidate Rust source authority and contracts
+        if: github.event_name == 'workflow_dispatch'
+        run: npm run verify:rust-contracts:candidate
+      - name: Reject corrupt release package candidates
+        run: npm run test:package
+      - name: Generate explicit release product fingerprint
+        shell: bash
+        run: mkdir -p target/phase13-ci && node scripts/release/product-fingerprint.mjs > target/phase13-ci/fingerprint.json
       - run: npm run build:rust:release
-      - run: npm run package:rust
-      - run: npm run verify:rust-release
+      - run: npm run package:rust -- --binary "target/phase13-ci/cargo/release/minimax-cli${{ runner.os == 'Windows' && '.exe' || '' }}" --output target/phase13-ci/artifacts --fingerprint-file target/phase13-ci/fingerprint.json
+      - run: npm run verify:rust-release -- --binary "target/phase13-ci/cargo/release/minimax-cli${{ runner.os == 'Windows' && '.exe' || '' }}" --artifacts target/phase13-ci/artifacts --evidence-dir target/phase13-ci/evidence
+      - run: npm run verify:milestone-flow -- --artifacts target/phase13-ci/artifacts --evidence-dir target/phase13-ci/evidence --fingerprint-file target/phase13-ci/fingerprint.json
       - name: Upload hosted release evidence candidate
         if: github.event_name == 'workflow_dispatch'
         uses: actions/upload-artifact@v4
         with:
           name: hosted-release-evidence-${{ runner.os }}
-          path: target/release-evidence/*.json
+          path: target/phase13-ci/evidence/*.json
           if-no-files-found: error
           retention-days: 7
-      - run: npm run verify:milestone-flow

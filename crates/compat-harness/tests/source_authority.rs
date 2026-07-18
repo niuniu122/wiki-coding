@@ -871,42 +871,34 @@ fn ci_keeps_rust_authority_ahead_of_packaging_and_fails_closed() {
 
     let skipped_contract = source.replace(
         "run: npm run verify:rust-contracts\n",
-        "run: npm run check\n",
+        "run: npm run verify:rust-contracts:candidate\n",
     );
     assert_ci_rejected(&skipped_contract, "verify:rust-contracts exactly once");
 
-    let package_line = "      - run: npm run package:rust\n";
+    let package_line = r#"      - run: npm run package:rust -- --binary "target/phase13-ci/cargo/release/minimax-cli${{ runner.os == 'Windows' && '.exe' || '' }}" --output target/phase13-ci/artifacts --fingerprint-file target/phase13-ci/fingerprint.json
+"#;
     let reversed = source.replace(package_line, "").replace(
         "      - run: npm ci\n",
         &format!("      - run: npm ci\n{package_line}"),
     );
-    assert_ci_rejected(
-        &reversed,
-        "coverage, Provider, and retrieval evaluation must pass before build, package, and evidence",
-    );
+    assert_ci_rejected(&reversed, "strict order");
 
-    let provider =
-        "      - name: Run Rust Provider evaluation\n        run: npm run eval:provider\n";
-    let retrieval =
-        "      - name: Run Rust retrieval evaluation\n        run: npm run eval:retrieval\n";
-    let evaluations_after_package = source.replace(provider, "").replace(retrieval, "").replace(
-        "      - run: npm run verify:rust-release\n",
-        &format!("      - run: npm run verify:rust-release\n{provider}{retrieval}"),
+    let package_test = "      - name: Reject corrupt release package candidates\n        run: npm run test:package\n";
+    let corruption_after_build = source.replace(package_test, "").replace(
+        "      - run: npm run build:rust:release\n",
+        &format!("      - run: npm run build:rust:release\n{package_test}"),
     );
-    assert_ci_rejected(
-        &evaluations_after_package,
-        "coverage, Provider, and retrieval evaluation must pass before build, package, and evidence",
-    );
+    assert_ci_rejected(&corruption_after_build, "strict order");
 
     let typescript_product = source.replace(
-        "      - name: Run transitional TypeScript static checks\n",
-        "      - run: npm run build\n      - name: Run transitional TypeScript static checks\n",
+        "      - run: npm run check:rust\n",
+        "      - run: npm run build\n      - run: npm run check:rust\n",
     );
     assert_ci_rejected(&typescript_product, "transitional TypeScript product");
 
     let credential = source.replace(
-        "      - run: npm run package:rust\n",
-        "      - run: npm run package:rust\n        env:\n          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}\n",
+        package_line,
+        &format!("{package_line}        env:\n          OPENAI_API_KEY: ${{{{ secrets.OPENAI_API_KEY }}}}\n"),
     );
     assert_ci_rejected(&credential, "must not inject credentials");
 
@@ -914,8 +906,8 @@ fn ci_keeps_rust_authority_ahead_of_packaging_and_fails_closed() {
     assert_ci_rejected(&write_permission, "exactly contents: read");
 
     let non_blocking = source.replace(
-        "      - run: npm run package:rust\n",
-        "      - run: npm run package:rust\n        continue-on-error: true\n",
+        package_line,
+        &format!("{package_line}        continue-on-error: true\n"),
     );
     assert_ci_rejected(&non_blocking, "must fail closed");
 
@@ -933,6 +925,17 @@ fn ci_keeps_rust_authority_ahead_of_packaging_and_fails_closed() {
         &missing_canary,
         "retain the Linux adversarial sandbox canary",
     );
+
+    let implicit_fingerprint =
+        source.replace(" --fingerprint-file target/phase13-ci/fingerprint.json", "");
+    assert_ci_rejected(&implicit_fingerprint, "package:rust");
+
+    let upload = "        uses: actions/upload-artifact@v4\n";
+    let milestone = "      - run: npm run verify:milestone-flow -- --artifacts target/phase13-ci/artifacts --evidence-dir target/phase13-ci/evidence --fingerprint-file target/phase13-ci/fingerprint.json\n";
+    let upload_before_milestone = source
+        .replace(upload, "")
+        .replace(milestone, &format!("{upload}{milestone}"));
+    assert_ci_rejected(&upload_before_milestone, "upload must follow");
 }
 
 fn assert_ci_rejected(source: &str, expected: &str) {

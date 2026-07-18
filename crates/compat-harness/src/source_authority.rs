@@ -52,7 +52,8 @@ const RUST_PACKAGE_SCRIPT: &str = "node scripts/release/package-rust.mjs";
 const PACKAGE_TEST_SCRIPT: &str = "node --test scripts/release/package-contract.test.mjs";
 const RUST_PACKAGE_VERIFICATION_SCRIPT: &str = "node scripts/release/verify-rust-release.mjs";
 const RUST_MILESTONE_VERIFICATION_SCRIPT: &str = "node scripts/release/verify-milestone-flow.mjs";
-const RUST_RELEASE_VERIFICATION_SCRIPT: &str = "npm run check:rust && npm run test:rust && npm run verify:agent && npm run build:rust:release && npm run package:rust && npm run verify:rust-release && npm run verify:milestone-flow";
+const RUST_RELEASE_VERIFICATION_SCRIPT: &str =
+    "npm run check:rust && npm run test:rust && npm run verify:agent && npm run test:package";
 const PACKAGE_SCRIPTS: [(&str, &str); 14] = [
     ("build:rust:release", RUST_RELEASE_BUILD_SCRIPT),
     ("check:rust", RUST_CHECK_SCRIPT),
@@ -1008,6 +1009,8 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
                 .any(|window| matches!(window, ["npm", "start"]))
             || command.contains("node dist/cli.js")
             || command.contains("minimax-codex-legacy")
+            || command == &"npm run check"
+            || command == &"npm test"
             || command == &"npm run verify:release";
         if typescript_product_command {
             return violation("CI must not build or execute the transitional TypeScript product");
@@ -1015,14 +1018,19 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
     }
 
     let required_commands = [
-        "npm run verify:rust-contracts",
-        "npm run verify:rust-contracts:candidate",
+        "npm run check:rust",
+        "npm run test:rust",
+        "npm run test:rust:candidate",
         "npm run eval:provider",
         "npm run eval:retrieval",
+        "npm run verify:rust-contracts",
+        "npm run verify:rust-contracts:candidate",
+        "npm run test:package",
+        "mkdir -p target/phase13-ci && node scripts/release/product-fingerprint.mjs > target/phase13-ci/fingerprint.json",
         "npm run build:rust:release",
-        "npm run package:rust",
-        "npm run verify:rust-release",
-        "npm run verify:milestone-flow",
+        r#"npm run package:rust -- --binary "target/phase13-ci/cargo/release/minimax-cli${{ runner.os == 'Windows' && '.exe' || '' }}" --output target/phase13-ci/artifacts --fingerprint-file target/phase13-ci/fingerprint.json"#,
+        r#"npm run verify:rust-release -- --binary "target/phase13-ci/cargo/release/minimax-cli${{ runner.os == 'Windows' && '.exe' || '' }}" --artifacts target/phase13-ci/artifacts --evidence-dir target/phase13-ci/evidence"#,
+        "npm run verify:milestone-flow -- --artifacts target/phase13-ci/artifacts --evidence-dir target/phase13-ci/evidence --fingerprint-file target/phase13-ci/fingerprint.json",
     ];
     let mut command_lines = Vec::new();
     for required in required_commands {
@@ -1036,22 +1044,35 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
         };
         command_lines.push(*line);
     }
-    let coverage_gate = command_lines[0].max(command_lines[1]);
-    let provider_gate = command_lines[2];
-    let retrieval_gate = command_lines[3];
-    let first_build_package_or_evidence = *command_lines[4..]
-        .iter()
-        .min()
-        .expect("package commands are fixed above");
-    if !(coverage_gate < provider_gate
-        && provider_gate < retrieval_gate
-        && retrieval_gate < first_build_package_or_evidence)
-    {
+    let test_gate = command_lines[1].max(command_lines[2]);
+    let contract_gate = command_lines[5].max(command_lines[6]);
+    let ordered = command_lines[0] < test_gate
+        && test_gate < command_lines[3]
+        && command_lines[3] < command_lines[4]
+        && command_lines[4] < contract_gate
+        && contract_gate < command_lines[7]
+        && command_lines[7] < command_lines[8]
+        && command_lines[8] < command_lines[9]
+        && command_lines[9] < command_lines[10]
+        && command_lines[10] < command_lines[11]
+        && command_lines[11] < command_lines[12];
+    if !ordered {
         return violation(
-            "CI coverage, Provider, and retrieval evaluation must pass before build, package, and evidence",
+            "CI Rust checks/tests, evaluators, compatibility, package corruption, build, install, and milestone gates must remain in strict order",
         );
     }
-
+    let uploads = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| line.trim() == "uses: actions/upload-artifact@v4")
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    let [upload] = uploads.as_slice() else {
+        return violation("CI must retain exactly one hosted evidence candidate upload");
+    };
+    if *upload <= command_lines[12] {
+        return violation("CI evidence upload must follow every installed and milestone gate");
+    }
     for branch in [
         "- name: Verify strict Rust source authority and contracts\n        if: github.event_name != 'workflow_dispatch'\n        run: npm run verify:rust-contracts",
         "- name: Verify hosted evidence candidate Rust source authority and contracts\n        if: github.event_name == 'workflow_dispatch'\n        run: npm run verify:rust-contracts:candidate",

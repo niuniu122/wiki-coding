@@ -29,7 +29,7 @@
     "test:package": "node --test scripts/release/package-contract.test.mjs",
     "verify:rust-release": "node scripts/release/verify-rust-release.mjs",
     "verify:milestone-flow": "node scripts/release/verify-milestone-flow.mjs",
-    "verify:release": "npm run check:rust && npm run test:rust && npm run verify:agent && npm run build:rust:release && npm run package:rust && npm run verify:rust-release && npm run verify:milestone-flow"
+    "verify:release": "npm run check:rust && npm run test:rust && npm run verify:agent && npm run test:package"
   },
   "engines": {
     "node": ">=20"
