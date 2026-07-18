@@ -1,87 +1,217 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "evidenceClass": "hosted_release_gate",
   "workflow": "CI",
-  "runId": 29553147648,
-  "runUrl": "https://github.com/niuniu122/wiki-coding/actions/runs/29553147648",
-  "branch": "main",
-  "headSha": "fe765daf55d7712cc5f5f61d4077d08f7797bdfc",
-  "treeSha": "30b79993f230d37c06116936c298fa76c1c874fa",
-  "productFingerprint": "12e41e7384a4474e8e1ed53ccb8942fd7992a6b7b0585a1ab537406b9c74cce4",
-  "productFileCount": 406,
-  "conclusion": "success",
-  "jobs": [
-    {
-      "jobId": 87799771241,
-      "platform": "windows-x86_64-msvc",
-      "conclusion": "success",
-      "environment": {
-        "os": "win32",
-        "osRelease": "10.0.26100",
-        "architecture": "x64",
-        "cpuModel": "Intel(R) Xeon(R) Platinum 8370C CPU @ 2.80GHz",
-        "logicalCpuCount": 4,
-        "node": "v20.20.2",
-        "rustcRelease": "1.97.0",
-        "rustcHost": "x86_64-pc-windows-msvc"
+  "branch": "codex/rust-convergence-v3",
+  "productFingerprint": "a9bfc7222d8eacde6d540eaf3023924da2a93aea810f9ee4cb5f2975263917d1",
+  "productFileCount": 235,
+  "candidate": {
+    "runId": 29636689979,
+    "runUrl": "https://github.com/niuniu122/wiki-coding/actions/runs/29636689979",
+    "event": "workflow_dispatch",
+    "branch": "codex/rust-convergence-v3",
+    "headSha": "abca38106b950a36587de896dd803437a047b8cb",
+    "treeSha": "51e399257f72d6186554907727f4d0a99c3895fc",
+    "conclusion": "success",
+    "jobs": [
+      {
+        "jobId": 88060172525,
+        "jobUrl": "https://github.com/niuniu122/wiki-coding/actions/runs/29636689979/job/88060172525",
+        "jobName": "verify (windows-latest)",
+        "artifactName": "hosted-release-evidence-Windows",
+        "evidenceFileSha256": "2ce35466684b4815f704bcef71fc80703a227038beb189908f2e5dc710350f01",
+        "platform": "windows-x86_64-msvc",
+        "conclusion": "success",
+        "linuxSandboxCanary": false,
+        "environment": {
+          "os": "win32",
+          "osRelease": "10.0.26100",
+          "architecture": "x64",
+          "cpuModel": "AMD EPYC 9V74 80-Core Processor                ",
+          "logicalCpuCount": 4,
+          "totalMemoryBytes": 17174360064,
+          "node": "v20.20.2",
+          "rustcRelease": "1.97.0",
+          "rustcHost": "x86_64-pc-windows-msvc"
+        },
+        "package": {
+          "nativeArchiveSha256": "48988ea433de97e490dbf3895637f3dd440c593cc4abc949a695a2631d37536b",
+          "npmArchiveSha256": "780fb598427dca5bac8fbc1bc476098fcceacd46b79fda7a38705e93b0812eda",
+          "binarySha256": "98a71ea8da9260f9180a28cd70742bef8fe0a0b70892e7f9e27efd3d8a4dda90",
+          "nativeCompressedBytes": 4375356,
+          "npmCompressedBytes": 4375846,
+          "embeddingIncluded": false,
+          "supportTier": "hosted_release"
+        },
+        "installedNative": {
+          "installedVersionOutput": "minimax-codex-rust 0.1.0",
+          "packagedBinarySha256": "98a71ea8da9260f9180a28cd70742bef8fe0a0b70892e7f9e27efd3d8a4dda90",
+          "capabilityStatusSmoke": true,
+          "capabilityStatusOutputSha256": "7aba6c546f9783289656be65a1367e0570e769e5f589ae72e3f474047c01b3b0",
+          "productFingerprint": "a9bfc7222d8eacde6d540eaf3023924da2a93aea810f9ee4cb5f2975263917d1",
+          "offline": true,
+          "providerCalls": 0,
+          "credentialsRead": 0,
+          "modelDownloads": 0,
+          "credentialsExcluded": true,
+          "pathLookupExcluded": true,
+          "developmentRuntimeAugmented": false
+        },
+        "installedNpm": {
+          "installedVersionOutput": "minimax-codex-rust 0.1.0",
+          "packagedBinarySha256": "98a71ea8da9260f9180a28cd70742bef8fe0a0b70892e7f9e27efd3d8a4dda90",
+          "capabilityStatusSmoke": true,
+          "capabilityStatusOutputSha256": "7aba6c546f9783289656be65a1367e0570e769e5f589ae72e3f474047c01b3b0",
+          "productFingerprint": "a9bfc7222d8eacde6d540eaf3023924da2a93aea810f9ee4cb5f2975263917d1",
+          "offline": true,
+          "providerCalls": 0,
+          "credentialsRead": 0,
+          "modelDownloads": 0,
+          "credentialsExcluded": true,
+          "pathLookupExcluded": true,
+          "developmentRuntimeAugmented": false,
+          "missingSiblingRejected": true,
+          "unsafeSiblingRejected": true
+        },
+        "licenses": {
+          "packagesChecked": 234,
+          "invalid": 0
+        },
+        "security": {
+          "unsafeFiles": 0,
+          "unsafeWorkspaceLint": "forbid",
+          "databasePackages": 0,
+          "migrationNetworkOrCredentialPaths": 0
+        },
+        "performance": {
+          "coldStartSamplesMs": [
+            21.174,
+            15.658,
+            15.4,
+            15.705,
+            15.658,
+            15.26,
+            15.184,
+            15.353,
+            15.056
+          ],
+          "coldStartP95Ms": 21.174,
+          "idleRssSamplesBytes": [
+            7127040,
+            7127040,
+            7127040,
+            7127040,
+            7127040
+          ],
+          "idleRssMaximumBytes": 7127040,
+          "baseCompressedBytes": 4375356,
+          "wikiBm25P95Ms": 0.634
+        },
+        "offline": true,
+        "providerCalls": 0,
+        "credentialsRead": 0,
+        "modelDownloads": 0
       },
-      "package": {
-        "archiveSha256": "6c7215e664ce8f80863db37edcc897110768731add207a5c470349c30588b021",
-        "binarySha256": "f4073c265fbd45b593753ec7e3bab34ba5d07405c67e525b632d9c71d9257a06",
-        "compressedBytes": 4223738,
-        "embeddingIncluded": false,
-        "supportTier": "hosted_release"
-      },
-      "performance": {
-        "coldStartSamplesMs": [29.033, 22.187, 24.802, 24.35, 23.542, 24.077, 25.316, 24.084, 22.717],
-        "coldStartP95Ms": 29.033,
-        "idleRssSamplesBytes": [7163904, 7163904, 7163904, 7163904, 7163904],
-        "idleRssMaximumBytes": 7163904,
-        "wikiBm25P95Ms": 1.421
+      {
+        "jobId": 88060172500,
+        "jobUrl": "https://github.com/niuniu122/wiki-coding/actions/runs/29636689979/job/88060172500",
+        "jobName": "verify (ubuntu-latest)",
+        "artifactName": "hosted-release-evidence-Linux",
+        "evidenceFileSha256": "bf7390884a55966838d6985cbd02bb4dbb821d0bc69171b6d0c9f325a6a7c968",
+        "platform": "linux-x86_64-gnu",
+        "conclusion": "success",
+        "linuxSandboxCanary": true,
+        "environment": {
+          "os": "linux",
+          "osRelease": "6.17.0-1020-azure",
+          "architecture": "x64",
+          "cpuModel": "INTEL(R) XEON(R) PLATINUM 8573C",
+          "logicalCpuCount": 4,
+          "totalMemoryBytes": 16765386752,
+          "node": "v20.20.2",
+          "rustcRelease": "1.97.0",
+          "rustcHost": "x86_64-unknown-linux-gnu"
+        },
+        "package": {
+          "nativeArchiveSha256": "eeebb39771a3fae0e13e9d72dd092ea83abd4e90c546e76037431f37eda4e062",
+          "npmArchiveSha256": "13e504cecb6552e285b1c25f35d14c8fe4069842b97127c117e4e183794d5c4d",
+          "binarySha256": "e380053f8bc80ace8e4b037e89f9d4a59f7921f34d75710356d5990738cc9137",
+          "nativeCompressedBytes": 5166644,
+          "npmCompressedBytes": 5167130,
+          "embeddingIncluded": false,
+          "supportTier": "hosted_release"
+        },
+        "installedNative": {
+          "installedVersionOutput": "minimax-codex-rust 0.1.0",
+          "packagedBinarySha256": "e380053f8bc80ace8e4b037e89f9d4a59f7921f34d75710356d5990738cc9137",
+          "capabilityStatusSmoke": true,
+          "capabilityStatusOutputSha256": "7aba6c546f9783289656be65a1367e0570e769e5f589ae72e3f474047c01b3b0",
+          "productFingerprint": "a9bfc7222d8eacde6d540eaf3023924da2a93aea810f9ee4cb5f2975263917d1",
+          "offline": true,
+          "providerCalls": 0,
+          "credentialsRead": 0,
+          "modelDownloads": 0,
+          "credentialsExcluded": true,
+          "pathLookupExcluded": true,
+          "developmentRuntimeAugmented": false
+        },
+        "installedNpm": {
+          "installedVersionOutput": "minimax-codex-rust 0.1.0",
+          "packagedBinarySha256": "e380053f8bc80ace8e4b037e89f9d4a59f7921f34d75710356d5990738cc9137",
+          "capabilityStatusSmoke": true,
+          "capabilityStatusOutputSha256": "7aba6c546f9783289656be65a1367e0570e769e5f589ae72e3f474047c01b3b0",
+          "productFingerprint": "a9bfc7222d8eacde6d540eaf3023924da2a93aea810f9ee4cb5f2975263917d1",
+          "offline": true,
+          "providerCalls": 0,
+          "credentialsRead": 0,
+          "modelDownloads": 0,
+          "credentialsExcluded": true,
+          "pathLookupExcluded": true,
+          "developmentRuntimeAugmented": false,
+          "missingSiblingRejected": true,
+          "unsafeSiblingRejected": true
+        },
+        "licenses": {
+          "packagesChecked": 234,
+          "invalid": 0
+        },
+        "security": {
+          "unsafeFiles": 0,
+          "unsafeWorkspaceLint": "forbid",
+          "databasePackages": 0,
+          "migrationNetworkOrCredentialPaths": 0
+        },
+        "performance": {
+          "coldStartSamplesMs": [
+            4.214,
+            3.381,
+            3.205,
+            3.114,
+            3.105,
+            3.193,
+            3.326,
+            3.275,
+            3.07
+          ],
+          "coldStartP95Ms": 4.214,
+          "idleRssSamplesBytes": [
+            5849088,
+            5849088,
+            5849088,
+            5849088,
+            5849088
+          ],
+          "idleRssMaximumBytes": 5849088,
+          "baseCompressedBytes": 5166644,
+          "wikiBm25P95Ms": 1.208
+        },
+        "offline": true,
+        "providerCalls": 0,
+        "credentialsRead": 0,
+        "modelDownloads": 0
       }
-    },
-    {
-      "jobId": 87799771311,
-      "platform": "linux-x86_64-gnu",
-      "conclusion": "success",
-      "environment": {
-        "os": "linux",
-        "osRelease": "6.17.0-1020-azure",
-        "architecture": "x64",
-        "cpuModel": "AMD EPYC 7763 64-Core Processor",
-        "logicalCpuCount": 4,
-        "node": "v20.20.2",
-        "rustcRelease": "1.97.0",
-        "rustcHost": "x86_64-unknown-linux-gnu"
-      },
-      "package": {
-        "archiveSha256": "c07439f2c71642507a4b9f5b1c91ff329236e4736e6db743447e589921f0d2e7",
-        "binarySha256": "c4d9254dc3f3aaadc7346a5a30c2c207c05656cef1766f917156ae8adfeca93e",
-        "compressedBytes": 5005309,
-        "embeddingIncluded": false,
-        "supportTier": "hosted_release"
-      },
-      "performance": {
-        "coldStartSamplesMs": [4.261, 3.563, 3.385, 3.48, 3.443, 3.529, 3.41, 3.608, 3.369],
-        "coldStartP95Ms": 4.261,
-        "idleRssSamplesBytes": [5722112, 5722112, 5722112, 5722112, 5722112],
-        "idleRssMaximumBytes": 5722112,
-        "wikiBm25P95Ms": 1.02
-      }
-    }
-  ],
-  "licenses": {
-    "packagesChecked": 234,
-    "invalid": 0
+    ]
   },
-  "security": {
-    "unsafeFiles": 0,
-    "unsafeWorkspaceLint": "forbid",
-    "databasePackages": 0,
-    "migrationNetworkOrCredentialPaths": 0
-  },
-  "offline": true,
-  "providerCalls": 0,
-  "credentialsRead": 0,
-  "modelDownloads": 0
+  "strictStatus": "pending",
+  "strict": null
 }
