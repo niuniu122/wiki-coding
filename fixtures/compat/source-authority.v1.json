@@ -136,7 +136,7 @@
     {
       "id": "milestone-verification",
       "path": "scripts/release/verify-milestone-flow.mjs",
-      "sha256": "6e89de19b087f39aeb9fcf5c3f9ef8ef08e6ac4bc11ce6858e4ce88a333338ac",
+      "sha256": "23df4f92b51faaae673012859e3168e0e4c916079aec320391dc21b0c4b4ce3e",
       "purpose": "milestoneVerification",
       "forbiddenCapabilities": [
         "fallback",

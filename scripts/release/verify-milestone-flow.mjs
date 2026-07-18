@@ -186,11 +186,21 @@ function validateCompleteReleaseEvidence(release, manifest, fingerprint, rustHos
     || release.security.databasePackages !== 0
     || release.security.migrationNetworkOrCredentialPaths !== 0;
   const performance = release.performance;
+  const coldStart = performance?.coldStartMs;
+  const idleRss = performance?.idleRssBytes;
   const performanceInvalid = !performance
-    || ![performance.coldStartMs, performance.idleRssBytes, performance.baseCompressedBytes,
-      performance.wikiBm25P95Ms].every((value) => Number.isFinite(value) && value > 0)
-    || performance.coldStartMs > performance.coldStartLimitMs
-    || performance.idleRssBytes > performance.idleRssLimitBytes
+    || !Array.isArray(coldStart?.samples)
+    || coldStart.samples.length !== 9
+    || !coldStart.samples.every((value) => Number.isFinite(value) && value > 0)
+    || coldStart.p95 !== Math.max(...coldStart.samples)
+    || !Array.isArray(idleRss?.samples)
+    || idleRss.samples.length !== 5
+    || !idleRss.samples.every((value) => Number.isSafeInteger(value) && value > 0)
+    || idleRss.maximum !== Math.max(...idleRss.samples)
+    || ![performance.baseCompressedBytes, performance.wikiBm25P95Ms]
+      .every((value) => Number.isFinite(value) && value > 0)
+    || coldStart.p95 > performance.coldStartLimitMs
+    || idleRss.maximum > performance.idleRssLimitBytes
     || performance.baseCompressedBytes > performance.baseCompressedLimitBytes
     || performance.wikiBm25P95Ms > performance.wikiBm25P95LimitMs
     || performance.baseCompressedBytes !== release.package?.compressedBytes;
