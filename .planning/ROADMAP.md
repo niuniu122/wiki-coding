@@ -211,7 +211,7 @@ Plans:
 | 9. Capability Workspace and Non-Programmer Harness | 3/3 | Complete | 2026-07-17 |
 | 10. Rust Authority and Source Boundaries | 4/4 | Complete    | 2026-07-17 |
 | 11. Rust Verification and Evaluation Authority | 6/6 | Complete   | 2026-07-17 |
-| 12. Fixture Compatibility and Rust Migration | 4/4 | Complete   | 2026-07-18 |
+| 12. Fixture Compatibility and Rust Migration | 4/4 | Complete    | 2026-07-18 |
 | 13. Thin npm and Native Release | 0/3 | Not started | - |
 | 14. TypeScript Removal and Hosted Closure | 0/3 | Not started | - |
 
@@ -379,7 +379,7 @@ Plans:
 **Wave 10** *(gap closure; parallel after 12-02)*
 
 - [x] 12-03: Derive and enforce the complete compat-harness Rust module/source closure
-- [ ] 12-04: Bind migration ownership provenance and reject target-ancestor symlink escapes
+- [x] 12-04: Bind migration ownership provenance and reject target-ancestor symlink escapes
 
 ### Phase 13: Thin npm and Native Release
 
