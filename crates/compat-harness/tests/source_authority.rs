@@ -85,6 +85,28 @@ impl SyntheticRepository {
             &fs::read_to_string(repository_root().join("package.json"))
                 .expect("committed package manifest should be readable"),
         );
+        write_file(
+            &root,
+            "package-lock.json",
+            &fs::read_to_string(repository_root().join("package-lock.json"))
+                .expect("committed package lock should be readable"),
+        );
+        for path in [
+            "fixtures/compat/evaluations/provider.v1.json",
+            "fixtures/compat/evaluations/retrieval.v1.json",
+            "fixtures/compat/migration/typescript-v1/manifest.v1.json",
+            "fixtures/compat/migration/typescript-v1/support-window.v1.json",
+            "fixtures/compat/public-contract.v1.json",
+            "fixtures/compat/release/targets.v1.json",
+            "fixtures/compat/verification/typescript-responsibilities.v1.json",
+        ] {
+            write_file(
+                &root,
+                path,
+                &fs::read_to_string(repository_root().join(path))
+                    .expect("retained fixture should be readable"),
+            );
+        }
         for path in [
             "bin/minimax-codex.cjs",
             "scripts/release/package-contract.mjs",
@@ -573,6 +595,85 @@ fn rejects_unreviewed_sources_and_javascript_authority() {
         |repository| write_file(&repository.root, "bin/unreviewed.cjs", "\"use strict\";\n"),
         "unclassified JavaScript path",
     );
+}
+
+#[test]
+fn rejects_typescript_compiler_configuration_and_generated_output() {
+    for (label, path, contents, expected) in [
+        (
+            "root TypeScript compiler config",
+            "tsconfig.json",
+            "{}\n",
+            "TypeScript compiler configuration denied",
+        ),
+        (
+            "nested TypeScript compiler config",
+            "config/tsconfig.build.json",
+            "{}\n",
+            "TypeScript compiler configuration denied",
+        ),
+        (
+            "generated legacy output",
+            "dist/cli.js",
+            "\"use strict\";\n",
+            "generated legacy output directory denied",
+        ),
+    ] {
+        assert_validation_rejected(
+            label,
+            |repository| write_file(&repository.root, path, contents),
+            expected,
+        );
+    }
+}
+
+#[test]
+fn rejects_typescript_react_and_ink_lock_dependencies() {
+    for dependency in ["typescript", "tsx", "ts-node", "react", "ink"] {
+        assert_validation_rejected(
+            dependency,
+            |repository| {
+                let path = repository.root.join("package-lock.json");
+                let mut lock: Value = serde_json::from_str(
+                    &fs::read_to_string(&path).expect("synthetic package lock"),
+                )
+                .expect("synthetic package lock JSON");
+                lock["packages"][""]["dependencies"][dependency] =
+                    Value::String("0.0.0-forbidden".to_owned());
+                lock["packages"][format!("node_modules/{dependency}")] = serde_json::json!({
+                    "version": "0.0.0-forbidden"
+                });
+                fs::write(
+                    path,
+                    serde_json::to_vec_pretty(&lock).expect("serialize package lock mutation"),
+                )
+                .expect("write package lock mutation");
+            },
+            "package lock must contain only the dependency-free Rust distribution",
+        );
+    }
+}
+
+#[test]
+fn rejects_missing_retained_migration_support_and_evaluation_fixtures() {
+    for path in [
+        "fixtures/compat/evaluations/provider.v1.json",
+        "fixtures/compat/evaluations/retrieval.v1.json",
+        "fixtures/compat/migration/typescript-v1/manifest.v1.json",
+        "fixtures/compat/migration/typescript-v1/support-window.v1.json",
+        "fixtures/compat/public-contract.v1.json",
+        "fixtures/compat/release/targets.v1.json",
+        "fixtures/compat/verification/typescript-responsibilities.v1.json",
+    ] {
+        assert_validation_rejected(
+            path,
+            |repository| {
+                fs::remove_file(repository.root.join(path))
+                    .expect("retained fixture should be removed for the mutation");
+            },
+            "required retained compatibility fixture missing",
+        );
+    }
 }
 
 #[test]
