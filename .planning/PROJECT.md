@@ -21,12 +21,12 @@ A non-programmer can describe a goal and safely use one local, recoverable CLI t
 - Discovery and prompt augmentation cannot download, install, authorize, start, or execute a discovered capability.
 - Phase 10 establishes Rust as the sole executable product and writable runtime authority: npm `dev`, `start`, and the supported bin resolve only to Rust, `.minimax` is the only writable state root, and reviewed JavaScript is limited to distribution orchestration.
 - Phase 11 establishes Rust as the sole executable verification and evaluation authority: all 101 historical responsibilities have semantic contracts, Provider/retrieval reports are Rust-owned, and `npm test` cannot reach the hash-pinned TypeScript evaluators.
+- Phase 12 establishes fixture-owned Rust compatibility and source-preserving TypeScript-era migration: the complete compatibility module closure is enforced, rollback ownership is durably provenance-bound, and target symlink escapes fail closed.
 
 ### Active
 
 - [ ] Make Rust the only product/runtime implementation and remove the live TypeScript CLI, tests, evaluations, and build dependencies.
 - [ ] Keep npm as a thin distribution shell that launches the packaged Rust binary and never falls back to TypeScript.
-- [ ] Preserve upgrade safety through the Rust-owned TypeScript-data importer and immutable compatibility fixtures for at least two public releases after cutover.
 - [ ] Refresh hosted Windows/Linux release evidence for the final Rust-converged product fingerprint before release.
 
 ### Out of Scope
@@ -43,7 +43,7 @@ A non-programmer can describe a goal and safely use one local, recoverable CLI t
 
 ## Context
 
-The v1 Rust rewrite, Phase 8 subprocess hardening, Phase 9 capability workspace, Phase 10 executable/source authority boundary, and Phase 11 Rust verification authority are implemented. Rust is now the only product, writable-runtime, and executable-evaluation authority. The repository still retains hash-pinned TypeScript source, static tests, and build dependencies as transitional compatibility material, but test discovery cannot execute the TypeScript evaluators. The remaining convergence work is fixture-backed migration, a no-fallback native npm package, and final TypeScript deletion plus hosted closure.
+The v1 Rust rewrite, Phase 8 subprocess hardening, Phase 9 capability workspace, Phase 10 executable/source authority boundary, Phase 11 Rust verification authority, and Phase 12 fixture-backed migration are implemented. Rust is now the only product, writable-runtime, executable-evaluation, compatibility, and migration authority. The repository still retains hash-pinned TypeScript source, static tests, and build dependencies as transitional compatibility material, but test discovery cannot execute the TypeScript evaluators. The remaining convergence work is a no-fallback native npm package followed by final TypeScript deletion and hosted closure.
 
 ## Constraints
 
@@ -114,4 +114,4 @@ This document evolves at phase transitions and milestone boundaries.
 3. Update context with shipped behavior and evaluation evidence.
 
 ---
-*Last updated: 2026-07-17 after Phase 11 established Rust verification and evaluation authority*
+*Last updated: 2026-07-18 after Phase 12 established fixture-owned compatibility and source-preserving Rust migration*
