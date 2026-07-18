@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 "use strict";
 
-const {lstatSync} = require("node:fs");
+const {closeSync, lstatSync, openSync, readSync} = require("node:fs");
 const {join} = require("node:path");
 const {spawnSync} = require("node:child_process");
 
@@ -40,6 +40,31 @@ if (process.platform !== "win32" && (status.mode & 0o111) === 0) {
   fail(
     "E_BINARY_NOT_EXECUTABLE",
     `The packaged Rust binary is not executable for ${targetKey}.`,
+    binaryPath
+  );
+}
+
+const expectedMagic = targetKey === "win32:x64"
+  ? Buffer.from([0x4d, 0x5a])
+  : Buffer.from([0x7f, 0x45, 0x4c, 0x46]);
+let binaryMagic;
+try {
+  const descriptor = openSync(binaryPath, "r");
+  try {
+    binaryMagic = Buffer.alloc(expectedMagic.length);
+    if (readSync(descriptor, binaryMagic, 0, binaryMagic.length, 0) !== binaryMagic.length) {
+      binaryMagic = undefined;
+    }
+  } finally {
+    closeSync(descriptor);
+  }
+} catch {
+  binaryMagic = undefined;
+}
+if (!binaryMagic || !binaryMagic.equals(expectedMagic)) {
+  fail(
+    "E_START_FAILED",
+    `The packaged Rust binary could not start for ${targetKey}: invalid executable format.`,
     binaryPath
   );
 }

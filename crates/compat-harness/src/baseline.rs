@@ -1029,6 +1029,8 @@ pub fn validate_product_entry(root: &Path) -> Result<(), BaselineError> {
         "shell: false",
         "lstatSync",
         "isSymbolicLink",
+        "expectedMagic",
+        "invalid executable format",
         "Reinstall minimax-codex for a supported Windows x64 or Linux x64 release.",
         "could not start",
         "ended by signal",
