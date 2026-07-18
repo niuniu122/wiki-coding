@@ -25,6 +25,7 @@ pub enum BaselineError {
     ProviderEvidence,
     CutoverEvidence,
     HostedEvidenceFingerprintStale,
+    HostedEvidenceStrictPending,
 }
 
 impl fmt::Display for BaselineError {
@@ -50,6 +51,9 @@ impl fmt::Display for BaselineError {
             Self::CutoverEvidence => formatter.write_str("Rust cutover evidence is incomplete"),
             Self::HostedEvidenceFingerprintStale => formatter
                 .write_str("hosted release evidence is stale for the current product fingerprint"),
+            Self::HostedEvidenceStrictPending => {
+                formatter.write_str("hosted release evidence strict run is still pending")
+            }
         }
     }
 }
@@ -299,32 +303,56 @@ struct HostedReleaseGate {
     schema_version: u16,
     evidence_class: String,
     workflow: String,
+    branch: String,
+    product_fingerprint: String,
+    product_file_count: u64,
+    candidate: HostedRun,
+    strict_status: String,
+    strict: Option<HostedRun>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct HostedReleaseHeader {
+    product_fingerprint: String,
+    product_file_count: u64,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct HostedRun {
     run_id: u64,
     run_url: String,
+    event: String,
     branch: String,
     head_sha: String,
     tree_sha: String,
-    product_fingerprint: String,
-    product_file_count: u64,
     conclusion: String,
     jobs: Vec<HostedJob>,
-    licenses: HostedLicenses,
-    security: HostedSecurity,
-    offline: bool,
-    provider_calls: u64,
-    credentials_read: u64,
-    model_downloads: u64,
 }
 
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct HostedJob {
     job_id: u64,
+    job_url: String,
+    job_name: String,
+    artifact_name: String,
+    evidence_file_sha256: String,
     platform: String,
     conclusion: String,
+    linux_sandbox_canary: bool,
     environment: HostedEnvironment,
     package: HostedPackage,
+    installed_native: HostedInstalledIdentity,
+    installed_npm: HostedInstalledIdentity,
+    licenses: HostedLicenses,
+    security: HostedSecurity,
     performance: HostedPerformance,
+    offline: bool,
+    provider_calls: u64,
+    credentials_read: u64,
+    model_downloads: u64,
 }
 
 #[derive(Deserialize)]
@@ -335,6 +363,7 @@ struct HostedEnvironment {
     architecture: String,
     cpu_model: String,
     logical_cpu_count: u64,
+    total_memory_bytes: u64,
     node: String,
     rustc_release: String,
     rustc_host: String,
@@ -343,11 +372,32 @@ struct HostedEnvironment {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct HostedPackage {
-    archive_sha256: String,
+    native_archive_sha256: String,
+    npm_archive_sha256: String,
     binary_sha256: String,
-    compressed_bytes: u64,
+    native_compressed_bytes: u64,
+    npm_compressed_bytes: u64,
     embedding_included: bool,
     support_tier: String,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase", deny_unknown_fields)]
+struct HostedInstalledIdentity {
+    installed_version_output: String,
+    packaged_binary_sha256: String,
+    capability_status_smoke: bool,
+    capability_status_output_sha256: String,
+    product_fingerprint: String,
+    offline: bool,
+    provider_calls: u64,
+    credentials_read: u64,
+    model_downloads: u64,
+    credentials_excluded: bool,
+    path_lookup_excluded: bool,
+    development_runtime_augmented: bool,
+    missing_sibling_rejected: Option<bool>,
+    unsafe_sibling_rejected: Option<bool>,
 }
 
 #[derive(Deserialize)]
@@ -357,6 +407,7 @@ struct HostedPerformance {
     cold_start_p95_ms: f64,
     idle_rss_samples_bytes: Vec<u64>,
     idle_rss_maximum_bytes: u64,
+    base_compressed_bytes: u64,
     wiki_bm25_p95_ms: f64,
 }
 
@@ -410,6 +461,14 @@ pub fn validate_cutover_evidence(
     public_contract: &PublicContractManifest,
 ) -> Result<(), BaselineError> {
     validate_hosted_release_gate(root)?;
+    validate_cutover_candidate(root, public_contract)
+}
+
+pub fn validate_cutover_strict_precondition(
+    root: &Path,
+    public_contract: &PublicContractManifest,
+) -> Result<(), BaselineError> {
+    validate_hosted_candidate_gate(root)?;
     validate_cutover_candidate(root, public_contract)
 }
 
@@ -507,10 +566,39 @@ pub fn validate_hosted_release_gate(root: &Path) -> Result<(), BaselineError> {
     validate_hosted_release_gate_document(root, &source)
 }
 
+pub fn validate_hosted_candidate_gate(root: &Path) -> Result<(), BaselineError> {
+    let source = std::fs::read_to_string(root.join("fixtures/compat/release/hosted-gates.v1.json"))
+        .map_err(|_| BaselineError::CutoverEvidence)?;
+    validate_hosted_candidate_gate_document(root, &source)
+}
+
 pub fn validate_hosted_release_gate_document(
     root: &Path,
     source: &str,
 ) -> Result<(), BaselineError> {
+    validate_hosted_gate_document(root, source, true)
+}
+
+pub fn validate_hosted_candidate_gate_document(
+    root: &Path,
+    source: &str,
+) -> Result<(), BaselineError> {
+    validate_hosted_gate_document(root, source, false)
+}
+
+fn validate_hosted_gate_document(
+    root: &Path,
+    source: &str,
+    require_strict: bool,
+) -> Result<(), BaselineError> {
+    let header: HostedReleaseHeader =
+        serde_json::from_str(source).map_err(|_| BaselineError::CutoverEvidence)?;
+    let (product_fingerprint, product_file_count) = compute_product_fingerprint(root)?;
+    if header.product_fingerprint != product_fingerprint
+        || header.product_file_count != product_file_count
+    {
+        return Err(BaselineError::HostedEvidenceFingerprintStale);
+    }
     let gate: HostedReleaseGate =
         serde_json::from_str(source).map_err(|_| BaselineError::CutoverEvidence)?;
     let thresholds: ReleaseThresholds = serde_json::from_str(
@@ -518,60 +606,108 @@ pub fn validate_hosted_release_gate_document(
             .map_err(|_| BaselineError::CutoverEvidence)?,
     )
     .map_err(|_| BaselineError::CutoverEvidence)?;
-    let (product_fingerprint, product_file_count) = compute_product_fingerprint(root)?;
-    if gate.schema_version != 1
+    if gate.schema_version != 2
         || gate.evidence_class != "hosted_release_gate"
         || gate.workflow != "CI"
-        || gate.run_id == 0
-        || gate.run_url
-            != format!(
-                "https://github.com/niuniu122/wiki-coding/actions/runs/{}",
-                gate.run_id
-            )
-        || gate.branch != "main"
-        || !valid_hex(&gate.head_sha, 40)
-        || !valid_hex(&gate.tree_sha, 40)
+        || !valid_branch(&gate.branch)
         || !valid_hex(&gate.product_fingerprint, 64)
-        || gate.conclusion != "success"
-        || gate.jobs.len() != 2
-        || gate.licenses.packages_checked == 0
-        || gate.licenses.invalid != 0
-        || gate.security.unsafe_files != 0
-        || gate.security.unsafe_workspace_lint != "forbid"
-        || gate.security.database_packages != 0
-        || gate.security.migration_network_or_credential_paths != 0
-        || !gate.offline
-        || gate.provider_calls != 0
-        || gate.credentials_read != 0
-        || gate.model_downloads != 0
+        || gate.product_file_count != product_file_count
         || thresholds.schema_version != 1
         || thresholds.target_contract_schema_version != 1
     {
         return Err(BaselineError::CutoverEvidence);
     }
-    if gate.product_fingerprint != product_fingerprint
-        || gate.product_file_count != product_file_count
+    validate_hosted_run(
+        &gate.candidate,
+        "workflow_dispatch",
+        &gate.branch,
+        &gate.product_fingerprint,
+        &thresholds,
+    )?;
+    match (gate.strict_status.as_str(), gate.strict.as_ref()) {
+        ("pending", None) if require_strict => Err(BaselineError::HostedEvidenceStrictPending),
+        ("pending", None) => Ok(()),
+        ("passed", Some(strict)) => {
+            validate_hosted_run(
+                strict,
+                "push",
+                &gate.branch,
+                &gate.product_fingerprint,
+                &thresholds,
+            )?;
+            validate_run_order_and_artifact_identity(&gate.candidate, strict)
+        }
+        _ => Err(BaselineError::CutoverEvidence),
+    }
+}
+
+fn validate_hosted_run(
+    run: &HostedRun,
+    expected_event: &str,
+    expected_branch: &str,
+    product_fingerprint: &str,
+    thresholds: &ReleaseThresholds,
+) -> Result<(), BaselineError> {
+    if run.run_id == 0
+        || run.run_url
+            != format!(
+                "https://github.com/niuniu122/wiki-coding/actions/runs/{}",
+                run.run_id
+            )
+        || run.event != expected_event
+        || run.branch != expected_branch
+        || !valid_hex(&run.head_sha, 40)
+        || !valid_hex(&run.tree_sha, 40)
+        || run.conclusion != "success"
+        || run.jobs.len() != 2
     {
-        return Err(BaselineError::HostedEvidenceFingerprintStale);
+        return Err(BaselineError::CutoverEvidence);
     }
     let mut platforms = BTreeMap::new();
-    for job in &gate.jobs {
+    for job in &run.jobs {
         if platforms
             .insert(job.platform.as_str(), job.job_id)
             .is_some()
             || job.job_id == 0
+            || job.job_url
+                != format!(
+                    "https://github.com/niuniu122/wiki-coding/actions/runs/{}/job/{}",
+                    run.run_id, job.job_id
+                )
             || job.conclusion != "success"
             || job.environment.architecture != "x64"
             || job.environment.os_release.trim().is_empty()
             || job.environment.cpu_model.trim().is_empty()
             || job.environment.logical_cpu_count == 0
+            || job.environment.total_memory_bytes == 0
             || !job.environment.node.starts_with('v')
             || job.environment.rustc_release != "1.97.0"
-            || !valid_hex(&job.package.archive_sha256, 64)
+            || !valid_hex(&job.evidence_file_sha256, 64)
+            || !valid_hex(&job.package.native_archive_sha256, 64)
+            || !valid_hex(&job.package.npm_archive_sha256, 64)
             || !valid_hex(&job.package.binary_sha256, 64)
-            || job.package.compressed_bytes > thresholds.base_compressed_bytes
+            || job.package.native_compressed_bytes > thresholds.base_compressed_bytes
+            || job.package.npm_compressed_bytes > thresholds.base_compressed_bytes
             || job.package.embedding_included
             || job.package.support_tier != "hosted_release"
+            || !valid_installed_identity(
+                &job.installed_native,
+                &job.package,
+                product_fingerprint,
+                false,
+            )
+            || !valid_installed_identity(
+                &job.installed_npm,
+                &job.package,
+                product_fingerprint,
+                true,
+            )
+            || job.licenses.packages_checked == 0
+            || job.licenses.invalid != 0
+            || job.security.unsafe_files != 0
+            || job.security.unsafe_workspace_lint != "forbid"
+            || job.security.database_packages != 0
+            || job.security.migration_network_or_credential_paths != 0
             || job.performance.cold_start_samples_ms.len() != 9
             || job.performance.idle_rss_samples_bytes.len() != 5
             || !job
@@ -581,6 +717,8 @@ pub fn validate_hosted_release_gate_document(
                 .all(|sample| sample.is_finite() && *sample > 0.0)
             || job.performance.cold_start_p95_ms > thresholds.cold_start_ms
             || job.performance.idle_rss_maximum_bytes > thresholds.idle_rss_bytes
+            || job.performance.base_compressed_bytes != job.package.native_compressed_bytes
+            || job.performance.base_compressed_bytes > thresholds.base_compressed_bytes
             || job.performance.wiki_bm25_p95_ms > thresholds.wiki_bm25_p95_ms
             || job.performance.idle_rss_samples_bytes.iter().max().copied()
                 != Some(job.performance.idle_rss_maximum_bytes)
@@ -591,6 +729,10 @@ pub fn validate_hosted_release_gate_document(
                 .copied()
                 .reduce(f64::max)
                 != Some(job.performance.cold_start_p95_ms)
+            || !job.offline
+            || job.provider_calls != 0
+            || job.credentials_read != 0
+            || job.model_downloads != 0
         {
             return Err(BaselineError::CutoverEvidence);
         }
@@ -598,10 +740,16 @@ pub fn validate_hosted_release_gate_document(
             "windows-x86_64-msvc" => {
                 job.environment.os == "win32"
                     && job.environment.rustc_host == "x86_64-pc-windows-msvc"
+                    && job.job_name == "verify (windows-latest)"
+                    && job.artifact_name == "hosted-release-evidence-Windows"
+                    && !job.linux_sandbox_canary
             }
             "linux-x86_64-gnu" => {
                 job.environment.os == "linux"
                     && job.environment.rustc_host == "x86_64-unknown-linux-gnu"
+                    && job.job_name == "verify (ubuntu-latest)"
+                    && job.artifact_name == "hosted-release-evidence-Linux"
+                    && job.linux_sandbox_canary
             }
             _ => false,
         };
@@ -614,6 +762,79 @@ pub fn validate_hosted_release_gate_document(
         return Err(BaselineError::CutoverEvidence);
     }
     Ok(())
+}
+
+fn valid_installed_identity(
+    identity: &HostedInstalledIdentity,
+    package: &HostedPackage,
+    product_fingerprint: &str,
+    npm: bool,
+) -> bool {
+    identity.installed_version_output == "minimax-codex-rust 0.1.0"
+        && identity.packaged_binary_sha256 == package.binary_sha256
+        && identity.capability_status_smoke
+        && valid_hex(&identity.capability_status_output_sha256, 64)
+        && identity.product_fingerprint == product_fingerprint
+        && identity.offline
+        && identity.provider_calls == 0
+        && identity.credentials_read == 0
+        && identity.model_downloads == 0
+        && identity.credentials_excluded
+        && identity.path_lookup_excluded
+        && !identity.development_runtime_augmented
+        && if npm {
+            identity.missing_sibling_rejected == Some(true)
+                && identity.unsafe_sibling_rejected == Some(true)
+        } else {
+            identity.missing_sibling_rejected.is_none()
+                && identity.unsafe_sibling_rejected.is_none()
+        }
+}
+
+fn validate_run_order_and_artifact_identity(
+    candidate: &HostedRun,
+    strict: &HostedRun,
+) -> Result<(), BaselineError> {
+    if strict.run_id <= candidate.run_id
+        || strict.head_sha == candidate.head_sha
+        || strict.tree_sha == candidate.tree_sha
+    {
+        return Err(BaselineError::CutoverEvidence);
+    }
+    for candidate_job in &candidate.jobs {
+        let Some(strict_job) = strict
+            .jobs
+            .iter()
+            .find(|job| job.platform == candidate_job.platform)
+        else {
+            return Err(BaselineError::CutoverEvidence);
+        };
+        if strict_job.job_id == candidate_job.job_id
+            || strict_job.package.native_archive_sha256
+                != candidate_job.package.native_archive_sha256
+            || strict_job.package.npm_archive_sha256 != candidate_job.package.npm_archive_sha256
+            || strict_job.package.binary_sha256 != candidate_job.package.binary_sha256
+            || strict_job.installed_native.capability_status_output_sha256
+                != candidate_job
+                    .installed_native
+                    .capability_status_output_sha256
+            || strict_job.installed_npm.capability_status_output_sha256
+                != candidate_job.installed_npm.capability_status_output_sha256
+        {
+            return Err(BaselineError::CutoverEvidence);
+        }
+    }
+    Ok(())
+}
+
+fn valid_branch(branch: &str) -> bool {
+    !branch.is_empty()
+        && branch.len() <= 100
+        && !branch.contains(char::is_whitespace)
+        && !branch.contains("..")
+        && !branch.contains('\\')
+        && !branch.starts_with('/')
+        && !branch.ends_with('/')
 }
 
 pub fn compute_product_fingerprint(root: &Path) -> Result<(String, u64), BaselineError> {

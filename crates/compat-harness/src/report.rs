@@ -10,8 +10,8 @@ use crate::architecture::{
     validate_retrieval_source_boundary, validate_vault_source_boundary,
 };
 use crate::baseline::{
-    validate_cutover_candidate, validate_cutover_evidence, validate_product_entry,
-    validate_rust_command_surface, validate_rust_provider_profiles,
+    validate_cutover_candidate, validate_cutover_evidence, validate_cutover_strict_precondition,
+    validate_product_entry, validate_rust_command_surface, validate_rust_provider_profiles,
     validate_rust_retrieval_evidence, validate_rust_tool_evidence, validate_rust_vault_evidence,
 };
 use crate::manifest::{CompatManifests, ManifestError, ParityStatus};
@@ -889,6 +889,29 @@ pub fn verify_fixture_compatibility(
     root: &Path,
     require_hosted_evidence: bool,
 ) -> Result<(), String> {
+    let mode = if require_hosted_evidence {
+        HostedEvidenceMode::Final
+    } else {
+        HostedEvidenceMode::None
+    };
+    verify_fixture_compatibility_mode(root, mode)
+}
+
+pub fn verify_fixture_compatibility_strict_precondition(root: &Path) -> Result<(), String> {
+    verify_fixture_compatibility_mode(root, HostedEvidenceMode::CandidatePrecondition)
+}
+
+#[derive(Clone, Copy)]
+enum HostedEvidenceMode {
+    None,
+    CandidatePrecondition,
+    Final,
+}
+
+fn verify_fixture_compatibility_mode(
+    root: &Path,
+    hosted_evidence_mode: HostedEvidenceMode,
+) -> Result<(), String> {
     validate_compatibility_source_boundary(root).map_err(|error| error.to_string())?;
     verify_provider_evaluation(root).map_err(|error| error.to_string())?;
     verify_retrieval_evaluation(root).map_err(|error| error.to_string())?;
@@ -902,12 +925,19 @@ pub fn verify_fixture_compatibility(
     validate_rust_retrieval_evidence(root).map_err(|error| error.to_string())?;
     validate_rust_provider_profiles(&manifests.providers).map_err(|error| error.to_string())?;
     validate_product_entry(root).map_err(|error| error.to_string())?;
-    if require_hosted_evidence {
-        validate_cutover_evidence(root, &manifests.public_contract)
-            .map_err(|error| error.to_string())?;
-    } else {
-        validate_cutover_candidate(root, &manifests.public_contract)
-            .map_err(|error| error.to_string())?;
+    match hosted_evidence_mode {
+        HostedEvidenceMode::None => {
+            validate_cutover_candidate(root, &manifests.public_contract)
+                .map_err(|error| error.to_string())?;
+        }
+        HostedEvidenceMode::CandidatePrecondition => {
+            validate_cutover_strict_precondition(root, &manifests.public_contract)
+                .map_err(|error| error.to_string())?;
+        }
+        HostedEvidenceMode::Final => {
+            validate_cutover_evidence(root, &manifests.public_contract)
+                .map_err(|error| error.to_string())?;
+        }
     }
 
     let architecture = load_cargo_architecture(root).map_err(|error| error.to_string())?;

@@ -23,8 +23,10 @@ pub use architecture::{
 };
 pub use baseline::{
     BaselineError, compute_product_fingerprint, validate_cutover_candidate,
-    validate_cutover_evidence, validate_hosted_release_gate, validate_hosted_release_gate_document,
-    validate_product_entry, validate_rust_command_surface, validate_rust_provider_profiles,
+    validate_cutover_evidence, validate_cutover_strict_precondition,
+    validate_hosted_candidate_gate, validate_hosted_candidate_gate_document,
+    validate_hosted_release_gate, validate_hosted_release_gate_document, validate_product_entry,
+    validate_rust_command_surface, validate_rust_provider_profiles,
     validate_rust_retrieval_evidence, validate_rust_tool_evidence, validate_rust_vault_evidence,
 };
 pub use coverage::{
@@ -48,6 +50,7 @@ pub use provider_eval::{
 pub use report::{
     ApprovedDifference, CompatReport, ReportEntry, build_report, report_json,
     validate_compatibility_source_boundary, validate_report, verify_fixture_compatibility,
+    verify_fixture_compatibility_strict_precondition,
 };
 pub use retrieval_eval::{
     CandidateBoundaryReport, CorpusReport, DegradationReport, DisabledPathReport, ProjectReport,

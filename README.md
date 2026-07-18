@@ -204,12 +204,17 @@ npm run test:package
 npm run build:rust:release
 ```
 
-Strict `npm run test:rust` and `npm run verify:rust-contracts` additionally
-require the checked-in hosted record to match the current product fingerprint.
+After candidate evidence is committed with `strictStatus: pending`, ordinary
+push CI uses `npm run test:rust:strict-precondition` and
+`npm run verify:rust-contracts:strict-precondition` to validate that exact
+candidate record without pretending the later strict run already exists. Final
+`npm run test:rust` and `npm run verify:rust-contracts` require the combined
+candidate-plus-strict record to match the current product fingerprint.
 CI has read-only repository permissions, no Provider credentials, and no live
 Provider command. Candidate and strict jobs both run Rust checks, evaluations,
 compatibility, migration, corruption tests, packaging, installed smoke,
-checksums, licenses, security, and performance gates.
+checksums, licenses, security, and performance gates, then upload their exact
+per-target evidence artifacts.
 
 Product fingerprint v3 hashes current tracked and untracked product bytes,
 including source, configuration, fixtures, launcher, release scripts, and docs.

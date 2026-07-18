@@ -9,7 +9,8 @@ use minimax_compat_harness::{
     load_compat_manifests, report_json, repository_root, validate_architecture,
     validate_cli_tui_markdown_boundary, validate_core_source_boundary,
     validate_core_source_directory, validate_core_source_text, validate_cutover_candidate,
-    validate_cutover_evidence, validate_hosted_release_gate_document,
+    validate_cutover_evidence, validate_hosted_candidate_gate,
+    validate_hosted_candidate_gate_document, validate_hosted_release_gate_document,
     validate_migration_source_boundary, validate_migration_source_text, validate_product_entry,
     validate_report, validate_retrieval_source_boundary, validate_retrieval_source_text,
     validate_rust_command_surface, validate_rust_provider_profiles,
@@ -422,11 +423,13 @@ fn thin_npm_manifest_and_lock_are_distribution_only() {
         serde_json::json!({
             "check:rust": "cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked -- -D warnings",
             "test:rust": "cargo test --workspace --locked",
-            "test:rust:candidate": "cargo test --workspace --locked -- --skip hosted_cutover_evidence_matches_current_product",
+            "test:rust:strict-precondition": "cargo test --workspace --locked -- --skip hosted_cutover_evidence_matches_current_product",
+            "test:rust:candidate": "cargo test --workspace --locked -- --skip hosted_cutover_evidence_matches_current_product --skip hosted_candidate_evidence_matches_current_product",
             "eval:retrieval": "cargo run -p minimax-compat-harness --locked -- retrieval-eval --format json",
             "eval:provider": "cargo run -p minimax-compat-harness --locked -- provider-eval --format json",
             "verify:agent": "npm run verify:rust-contracts && npm run eval:provider && npm run eval:retrieval",
             "verify:rust-contracts": "cargo run -p minimax-compat-harness --locked -- verify",
+            "verify:rust-contracts:strict-precondition": "cargo run -p minimax-compat-harness --locked -- verify-strict-precondition",
             "verify:rust-contracts:candidate": "cargo run -p minimax-compat-harness --locked -- verify-candidate",
             "build:rust:release": "cargo build -p minimax-cli --release --locked",
             "package:rust": "node scripts/release/package-rust.mjs",
@@ -504,17 +507,15 @@ fn hosted_cutover_evidence_matches_current_product() {
 }
 
 #[test]
+fn hosted_candidate_evidence_matches_current_product() {
+    validate_hosted_candidate_gate(&repository_root()).expect("hosted candidate evidence");
+}
+
+#[test]
 fn stale_hosted_evidence_is_rejected_for_freshness_or_fingerprint() {
     let root = repository_root();
-    let (_, file_count) =
-        compute_product_fingerprint(&root).expect("current product fingerprint should compute");
-    let mut gate: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(root.join("fixtures/compat/release/hosted-gates.v1.json"))
-            .expect("hosted release gate"),
-    )
-    .expect("hosted release gate JSON");
+    let mut gate = synthetic_hosted_gate(&root, "pending");
     gate["productFingerprint"] = serde_json::json!("0".repeat(64));
-    gate["productFileCount"] = serde_json::json!(file_count);
     let source = serde_json::to_string(&gate).expect("serialize stale hosted evidence");
 
     assert_eq!(
@@ -526,16 +527,8 @@ fn stale_hosted_evidence_is_rejected_for_freshness_or_fingerprint() {
 #[test]
 fn gnullvm_development_evidence_cannot_satisfy_hosted_msvc() {
     let root = repository_root();
-    let (fingerprint, file_count) =
-        compute_product_fingerprint(&root).expect("current product fingerprint should compute");
-    let mut gate: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(root.join("fixtures/compat/release/hosted-gates.v1.json"))
-            .expect("hosted release gate"),
-    )
-    .expect("hosted release gate JSON");
-    gate["productFingerprint"] = serde_json::json!(fingerprint);
-    gate["productFileCount"] = serde_json::json!(file_count);
-    let windows = gate["jobs"]
+    let mut gate = synthetic_hosted_gate(&root, "passed");
+    let windows = gate["candidate"]["jobs"]
         .as_array_mut()
         .expect("hosted jobs")
         .iter_mut()
@@ -548,6 +541,194 @@ fn gnullvm_development_evidence_cannot_satisfy_hosted_msvc() {
         validate_hosted_release_gate_document(&root, &source),
         Err(BaselineError::CutoverEvidence)
     );
+}
+
+#[test]
+fn pending_candidate_is_a_strict_precondition_but_not_final_closure() {
+    let root = repository_root();
+    let pending = serde_json::to_string(&synthetic_hosted_gate(&root, "pending"))
+        .expect("serialize pending hosted evidence");
+    assert_eq!(
+        validate_hosted_candidate_gate_document(&root, &pending),
+        Ok(())
+    );
+    assert_eq!(
+        validate_hosted_release_gate_document(&root, &pending),
+        Err(BaselineError::HostedEvidenceStrictPending)
+    );
+
+    let passed = serde_json::to_string(&synthetic_hosted_gate(&root, "passed"))
+        .expect("serialize combined hosted evidence");
+    assert_eq!(
+        validate_hosted_release_gate_document(&root, &passed),
+        Ok(())
+    );
+}
+
+#[test]
+fn combined_hosted_evidence_rejects_wrong_job_urls_and_unordered_runs() {
+    let root = repository_root();
+    let mut wrong_url = synthetic_hosted_gate(&root, "passed");
+    wrong_url["strict"]["jobs"][0]["jobUrl"] =
+        serde_json::json!("https://github.com/niuniu122/wiki-coding/actions/runs/202/job/9999");
+    assert_eq!(
+        validate_hosted_release_gate_document(
+            &root,
+            &serde_json::to_string(&wrong_url).expect("wrong URL evidence")
+        ),
+        Err(BaselineError::CutoverEvidence)
+    );
+
+    let mut unordered = synthetic_hosted_gate(&root, "passed");
+    unordered["strict"]["runId"] = serde_json::json!(99);
+    unordered["strict"]["runUrl"] =
+        serde_json::json!("https://github.com/niuniu122/wiki-coding/actions/runs/99");
+    assert_eq!(
+        validate_hosted_release_gate_document(
+            &root,
+            &serde_json::to_string(&unordered).expect("unordered evidence")
+        ),
+        Err(BaselineError::CutoverEvidence)
+    );
+}
+
+fn synthetic_hosted_gate(root: &Path, strict_status: &str) -> serde_json::Value {
+    let (fingerprint, file_count) =
+        compute_product_fingerprint(root).expect("current product fingerprint should compute");
+    let candidate = synthetic_hosted_run(101, "workflow_dispatch", '1', '2', &fingerprint);
+    let strict = (strict_status == "passed")
+        .then(|| synthetic_hosted_run(202, "push", '3', '4', &fingerprint));
+    serde_json::json!({
+        "schemaVersion": 2,
+        "evidenceClass": "hosted_release_gate",
+        "workflow": "CI",
+        "branch": "codex/rust-convergence-v3",
+        "productFingerprint": fingerprint,
+        "productFileCount": file_count,
+        "candidate": candidate,
+        "strictStatus": strict_status,
+        "strict": strict
+    })
+}
+
+fn synthetic_hosted_run(
+    run_id: u64,
+    event: &str,
+    head: char,
+    tree: char,
+    fingerprint: &str,
+) -> serde_json::Value {
+    serde_json::json!({
+        "runId": run_id,
+        "runUrl": format!("https://github.com/niuniu122/wiki-coding/actions/runs/{run_id}"),
+        "event": event,
+        "branch": "codex/rust-convergence-v3",
+        "headSha": head.to_string().repeat(40),
+        "treeSha": tree.to_string().repeat(40),
+        "conclusion": "success",
+        "jobs": [
+            synthetic_hosted_job(run_id, run_id * 10 + 1, "windows-x86_64-msvc", fingerprint),
+            synthetic_hosted_job(run_id, run_id * 10 + 2, "linux-x86_64-gnu", fingerprint)
+        ]
+    })
+}
+
+fn synthetic_hosted_job(
+    run_id: u64,
+    job_id: u64,
+    platform: &str,
+    fingerprint: &str,
+) -> serde_json::Value {
+    let windows = platform == "windows-x86_64-msvc";
+    let (os, rustc_host, job_name, artifact_name, native_hash, npm_hash, binary_hash) = if windows {
+        (
+            "win32",
+            "x86_64-pc-windows-msvc",
+            "verify (windows-latest)",
+            "hosted-release-evidence-Windows",
+            "a".repeat(64),
+            "b".repeat(64),
+            "c".repeat(64),
+        )
+    } else {
+        (
+            "linux",
+            "x86_64-unknown-linux-gnu",
+            "verify (ubuntu-latest)",
+            "hosted-release-evidence-Linux",
+            "d".repeat(64),
+            "e".repeat(64),
+            "f".repeat(64),
+        )
+    };
+    let native = serde_json::json!({
+        "installedVersionOutput": "minimax-codex-rust 0.1.0",
+        "packagedBinarySha256": binary_hash,
+        "capabilityStatusSmoke": true,
+        "capabilityStatusOutputSha256": "7".repeat(64),
+        "productFingerprint": fingerprint,
+        "offline": true,
+        "providerCalls": 0,
+        "credentialsRead": 0,
+        "modelDownloads": 0,
+        "credentialsExcluded": true,
+        "pathLookupExcluded": true,
+        "developmentRuntimeAugmented": false
+    });
+    let mut npm = native.clone();
+    npm["missingSiblingRejected"] = serde_json::json!(true);
+    npm["unsafeSiblingRejected"] = serde_json::json!(true);
+    serde_json::json!({
+        "jobId": job_id,
+        "jobUrl": format!("https://github.com/niuniu122/wiki-coding/actions/runs/{run_id}/job/{job_id}"),
+        "jobName": job_name,
+        "artifactName": artifact_name,
+        "evidenceFileSha256": "9".repeat(64),
+        "platform": platform,
+        "conclusion": "success",
+        "linuxSandboxCanary": !windows,
+        "environment": {
+            "os": os,
+            "osRelease": "test-release",
+            "architecture": "x64",
+            "cpuModel": "test cpu",
+            "logicalCpuCount": 4,
+            "totalMemoryBytes": 16_000_000_000_u64,
+            "node": "v20.20.2",
+            "rustcRelease": "1.97.0",
+            "rustcHost": rustc_host
+        },
+        "package": {
+            "nativeArchiveSha256": native_hash,
+            "npmArchiveSha256": npm_hash,
+            "binarySha256": binary_hash,
+            "nativeCompressedBytes": 4_000_000,
+            "npmCompressedBytes": 4_100_000,
+            "embeddingIncluded": false,
+            "supportTier": "hosted_release"
+        },
+        "installedNative": native,
+        "installedNpm": npm,
+        "licenses": {"packagesChecked": 234, "invalid": 0},
+        "security": {
+            "unsafeFiles": 0,
+            "unsafeWorkspaceLint": "forbid",
+            "databasePackages": 0,
+            "migrationNetworkOrCredentialPaths": 0
+        },
+        "performance": {
+            "coldStartSamplesMs": vec![10.0; 9],
+            "coldStartP95Ms": 10.0,
+            "idleRssSamplesBytes": vec![5_000_000_u64; 5],
+            "idleRssMaximumBytes": 5_000_000,
+            "baseCompressedBytes": 4_000_000,
+            "wikiBm25P95Ms": 1.0
+        },
+        "offline": true,
+        "providerCalls": 0,
+        "credentialsRead": 0,
+        "modelDownloads": 0
+    })
 }
 
 #[test]

@@ -80,7 +80,9 @@ The auditable refresh order is:
    fingerprint and hashes.
 5. Write and push an interim candidate-only evidence record with strict status
    pending.
-6. Allow the ordinary push-triggered strict run to validate that exact record.
+6. Allow the ordinary push-triggered strict run to validate that exact pending
+   candidate record through the strict-precondition test and contract routes;
+   it must not require its own not-yet-produced strict evidence.
 7. Download strict artifacts, validate run/job/head/tree/target/hash fields, and
    complete the combined hosted record.
 8. Run local strict verification against the unchanged frozen local root.

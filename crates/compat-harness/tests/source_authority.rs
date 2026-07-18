@@ -434,7 +434,7 @@ fn repository_source_inventory() {
 fn repository_product_scripts_are_rust_owned() {
     let root = repository_root();
     let scripts = package_scripts(&root);
-    assert_eq!(scripts.len(), 14, "only Rust distribution scripts remain");
+    assert_eq!(scripts.len(), 16, "only Rust distribution scripts remain");
     for legacy in ["dev", "start", "build", "check", "test", "test:launcher"] {
         assert!(
             scripts.get(legacy).is_none(),
@@ -723,7 +723,7 @@ fn rejects_windows_and_posix_absolute_authority_paths() {
 }
 
 #[test]
-fn source_authority_gate_precedes_compat_loading_for_both_verify_commands() {
+fn source_authority_gate_precedes_compat_loading_for_all_verify_commands() {
     let main_source =
         fs::read_to_string(repository_root().join("crates/compat-harness/src/main.rs"))
             .expect("compat harness main source should be readable");
@@ -735,7 +735,7 @@ fn source_authority_gate_precedes_compat_loading_for_both_verify_commands() {
         .find("validate_source_authority(root, &source_authority)")
         .expect("source authority gate should run in the shared verifier");
     let compat_load = verify_repository
-        .find("verify_fixture_compatibility(root, require_hosted_evidence)")
+        .find("match hosted_evidence_mode")
         .expect("compatibility verification should run in the shared verifier");
 
     assert!(
@@ -743,9 +743,13 @@ fn source_authority_gate_precedes_compat_loading_for_both_verify_commands() {
         "source authority must be validated before compatibility manifests load"
     );
     assert!(main_source.contains(r#"command == "verify""#));
-    assert!(main_source.contains("verify_repository(&root, true)"));
+    assert!(main_source.contains("verify_repository(&root, HostedEvidenceMode::Final)"));
+    assert!(main_source.contains(r#"command == "verify-strict-precondition""#));
+    assert!(
+        main_source.contains("verify_repository(&root, HostedEvidenceMode::CandidatePrecondition)")
+    );
     assert!(main_source.contains(r#"command == "verify-candidate""#));
-    assert!(main_source.contains("verify_repository(&root, false)"));
+    assert!(main_source.contains("verify_repository(&root, HostedEvidenceMode::None)"));
 }
 
 #[test]
@@ -755,10 +759,13 @@ fn ci_keeps_rust_authority_ahead_of_packaging_and_fails_closed() {
     validate_ci_workflow_text(&source).expect("committed CI workflow should preserve authority");
 
     let skipped_contract = source.replace(
-        "run: npm run verify:rust-contracts\n",
+        "run: npm run verify:rust-contracts:strict-precondition\n",
         "run: npm run verify:rust-contracts:candidate\n",
     );
-    assert_ci_rejected(&skipped_contract, "verify:rust-contracts exactly once");
+    assert_ci_rejected(
+        &skipped_contract,
+        "verify:rust-contracts:strict-precondition exactly once",
+    );
 
     let package_line = r#"      - run: npm run package:rust -- --binary "target/phase14-ci/cargo/release/minimax-cli${{ runner.os == 'Windows' && '.exe' || '' }}" --output target/phase14-ci/artifacts --fingerprint-file target/phase14-ci/fingerprint.json
 "#;
@@ -821,6 +828,12 @@ fn ci_keeps_rust_authority_ahead_of_packaging_and_fails_closed() {
         .replace(upload, "")
         .replace(milestone, &format!("{upload}{milestone}"));
     assert_ci_rejected(&upload_before_milestone, "upload must follow");
+
+    let candidate_only_upload = source.replace(
+        "      - name: Upload hosted release evidence\n        uses: actions/upload-artifact@v4\n",
+        "      - name: Upload hosted release evidence\n        if: github.event_name == 'workflow_dispatch'\n        uses: actions/upload-artifact@v4\n",
+    );
+    assert_ci_rejected(&candidate_only_upload, "candidate and strict runs");
 }
 
 fn assert_ci_rejected(source: &str, expected: &str) {

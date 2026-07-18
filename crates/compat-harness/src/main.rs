@@ -9,7 +9,7 @@ use minimax_compat_harness::{
     retrieval_report_json, run_provider_evaluation, run_retrieval_evaluation,
     validate_coverage_matrix, validate_migration_fixture_manifest,
     validate_migration_support_window, validate_report, validate_source_authority,
-    verify_fixture_compatibility,
+    verify_fixture_compatibility, verify_fixture_compatibility_strict_precondition,
 };
 use minimax_protocol::{ProtocolErrorCode, ProviderProtocolKind, StreamEvent};
 use minimax_provider::{CompatibilityEvent, replay_fixture};
@@ -52,11 +52,15 @@ fn run(arguments: Vec<String>) -> Result<CommandResult, String> {
     let root = repository_root();
     match arguments.as_slice() {
         [command] if command == "verify" => {
-            verify_repository(&root, true)?;
+            verify_repository(&root, HostedEvidenceMode::Final)?;
+            Ok(CommandResult::passed(None))
+        }
+        [command] if command == "verify-strict-precondition" => {
+            verify_repository(&root, HostedEvidenceMode::CandidatePrecondition)?;
             Ok(CommandResult::passed(None))
         }
         [command] if command == "verify-candidate" => {
-            verify_repository(&root, false)?;
+            verify_repository(&root, HostedEvidenceMode::None)?;
             Ok(CommandResult::passed(None))
         }
         [command, format_flag, format]
@@ -91,12 +95,19 @@ fn run(arguments: Vec<String>) -> Result<CommandResult, String> {
             })
         }
         _ => Err(
-            "usage: minimax-compat-harness <verify|verify-candidate|report --format json|provider-eval --format json|retrieval-eval --format json>".to_owned(),
+            "usage: minimax-compat-harness <verify|verify-strict-precondition|verify-candidate|report --format json|provider-eval --format json|retrieval-eval --format json>".to_owned(),
         ),
     }
 }
 
-fn verify_repository(root: &Path, require_hosted_evidence: bool) -> Result<(), String> {
+#[derive(Clone, Copy)]
+enum HostedEvidenceMode {
+    None,
+    CandidatePrecondition,
+    Final,
+}
+
+fn verify_repository(root: &Path, hosted_evidence_mode: HostedEvidenceMode) -> Result<(), String> {
     let source_authority = load_source_authority(root).map_err(|error| error.to_string())?;
     validate_source_authority(root, &source_authority).map_err(|error| error.to_string())?;
     let coverage = load_coverage_matrix(root).map_err(|error| error.to_string())?;
@@ -104,7 +115,13 @@ fn verify_repository(root: &Path, require_hosted_evidence: bool) -> Result<(), S
         .map_err(|error| error.to_string())?;
     validate_migration_fixture_manifest(root).map_err(|error| error.to_string())?;
     validate_migration_support_window(root).map_err(|error| error.to_string())?;
-    verify_fixture_compatibility(root, require_hosted_evidence)?;
+    match hosted_evidence_mode {
+        HostedEvidenceMode::None => verify_fixture_compatibility(root, false)?,
+        HostedEvidenceMode::CandidatePrecondition => {
+            verify_fixture_compatibility_strict_precondition(root)?;
+        }
+        HostedEvidenceMode::Final => verify_fixture_compatibility(root, true)?,
+    }
     verify_provider_fixtures(root)?;
     Ok(())
 }

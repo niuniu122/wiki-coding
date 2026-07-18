@@ -46,8 +46,9 @@ const PACKAGE_FILES: [&str; 7] = [
 const RUST_CHECK_SCRIPT: &str =
     "cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked -- -D warnings";
 const RUST_TEST_SCRIPT: &str = "cargo test --workspace --locked";
-const RUST_CANDIDATE_TEST_SCRIPT: &str =
+const RUST_STRICT_PRECONDITION_TEST_SCRIPT: &str =
     "cargo test --workspace --locked -- --skip hosted_cutover_evidence_matches_current_product";
+const RUST_CANDIDATE_TEST_SCRIPT: &str = "cargo test --workspace --locked -- --skip hosted_cutover_evidence_matches_current_product --skip hosted_candidate_evidence_matches_current_product";
 const RUST_PROVIDER_EVAL_SCRIPT: &str =
     "cargo run -p minimax-compat-harness --locked -- provider-eval --format json";
 const RUST_RETRIEVAL_EVAL_SCRIPT: &str =
@@ -56,6 +57,8 @@ const RUST_EVALUATION_AGGREGATE_SCRIPT: &str =
     "npm run verify:rust-contracts && npm run eval:provider && npm run eval:retrieval";
 const RUST_CONTRACT_VERIFICATION_SCRIPT: &str =
     "cargo run -p minimax-compat-harness --locked -- verify";
+const RUST_STRICT_PRECONDITION_CONTRACT_VERIFICATION_SCRIPT: &str =
+    "cargo run -p minimax-compat-harness --locked -- verify-strict-precondition";
 const RUST_CANDIDATE_CONTRACT_VERIFICATION_SCRIPT: &str =
     "cargo run -p minimax-compat-harness --locked -- verify-candidate";
 const RUST_RELEASE_BUILD_SCRIPT: &str = "cargo build -p minimax-cli --release --locked";
@@ -65,7 +68,7 @@ const RUST_PACKAGE_VERIFICATION_SCRIPT: &str = "node scripts/release/verify-rust
 const RUST_MILESTONE_VERIFICATION_SCRIPT: &str = "node scripts/release/verify-milestone-flow.mjs";
 const RUST_RELEASE_VERIFICATION_SCRIPT: &str =
     "npm run check:rust && npm run test:rust && npm run verify:agent && npm run test:package";
-const PACKAGE_SCRIPTS: [(&str, &str); 14] = [
+const PACKAGE_SCRIPTS: [(&str, &str); 16] = [
     ("build:rust:release", RUST_RELEASE_BUILD_SCRIPT),
     ("check:rust", RUST_CHECK_SCRIPT),
     ("eval:provider", RUST_PROVIDER_EVAL_SCRIPT),
@@ -74,6 +77,10 @@ const PACKAGE_SCRIPTS: [(&str, &str); 14] = [
     ("test:package", PACKAGE_TEST_SCRIPT),
     ("test:rust", RUST_TEST_SCRIPT),
     ("test:rust:candidate", RUST_CANDIDATE_TEST_SCRIPT),
+    (
+        "test:rust:strict-precondition",
+        RUST_STRICT_PRECONDITION_TEST_SCRIPT,
+    ),
     ("verify:agent", RUST_EVALUATION_AGGREGATE_SCRIPT),
     ("verify:milestone-flow", RUST_MILESTONE_VERIFICATION_SCRIPT),
     ("verify:release", RUST_RELEASE_VERIFICATION_SCRIPT),
@@ -81,6 +88,10 @@ const PACKAGE_SCRIPTS: [(&str, &str); 14] = [
     (
         "verify:rust-contracts:candidate",
         RUST_CANDIDATE_CONTRACT_VERIFICATION_SCRIPT,
+    ),
+    (
+        "verify:rust-contracts:strict-precondition",
+        RUST_STRICT_PRECONDITION_CONTRACT_VERIFICATION_SCRIPT,
     ),
     ("verify:rust-release", RUST_PACKAGE_VERIFICATION_SCRIPT),
 ];
@@ -501,11 +512,11 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
 
     let required_commands = [
         "npm run check:rust",
-        "npm run test:rust",
+        "npm run test:rust:strict-precondition",
         "npm run test:rust:candidate",
         "npm run eval:provider",
         "npm run eval:retrieval",
-        "npm run verify:rust-contracts",
+        "npm run verify:rust-contracts:strict-precondition",
         "npm run verify:rust-contracts:candidate",
         "npm run test:package",
         "mkdir -p target/phase14-ci && node scripts/release/product-fingerprint.mjs > target/phase14-ci/fingerprint.json",
@@ -550,15 +561,20 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
         .map(|(index, _)| index)
         .collect::<Vec<_>>();
     let [upload] = uploads.as_slice() else {
-        return violation("CI must retain exactly one hosted evidence candidate upload");
+        return violation("CI must retain exactly one hosted evidence upload");
     };
     if *upload <= command_lines[12] {
         return violation("CI evidence upload must follow every installed and milestone gate");
     }
+    if !normalized.contains(
+        "- name: Upload hosted release evidence\n        uses: actions/upload-artifact@v4\n        with:\n          name: hosted-release-evidence-${{ runner.os }}",
+    ) {
+        return violation("CI evidence upload must cover both candidate and strict runs");
+    }
     for branch in [
-        "- name: Verify strict Rust source authority and contracts\n        if: github.event_name != 'workflow_dispatch'\n        run: npm run verify:rust-contracts",
+        "- name: Verify strict-precondition Rust source authority and contracts\n        if: github.event_name != 'workflow_dispatch'\n        run: npm run verify:rust-contracts:strict-precondition",
         "- name: Verify hosted evidence candidate Rust source authority and contracts\n        if: github.event_name == 'workflow_dispatch'\n        run: npm run verify:rust-contracts:candidate",
-        "- name: Run strict Rust tests\n        if: github.event_name != 'workflow_dispatch'\n        run: npm run test:rust",
+        "- name: Run strict-precondition Rust tests\n        if: github.event_name != 'workflow_dispatch'\n        run: npm run test:rust:strict-precondition",
         "- name: Run hosted evidence candidate Rust tests\n        if: github.event_name == 'workflow_dispatch'\n        run: npm run test:rust:candidate",
     ] {
         if !normalized.contains(branch) {
