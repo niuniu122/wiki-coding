@@ -152,18 +152,24 @@ fn retrieval_eval_command_is_json_only_and_deterministic() {
 }
 
 #[test]
-fn repository_verification_runs_retrieval_evaluation_before_compatibility_decision() {
-    let main = fs::read_to_string(repository_root().join("crates/compat-harness/src/main.rs"))
-        .expect("compatibility harness main");
-    let verification = &main[main
-        .find("fn verify_repository")
-        .expect("repository verification function")..];
-    let retrieval_gate = verification
-        .find("verify_retrieval_evaluation")
+fn ci_runs_retrieval_evaluation_before_compatibility_decision() {
+    let root = repository_root();
+    let package: Value = serde_json::from_str(
+        &fs::read_to_string(root.join("package.json")).expect("package metadata"),
+    )
+    .expect("package JSON");
+    assert_eq!(
+        package["scripts"]["eval:retrieval"],
+        "cargo run -p minimax-compat-harness --locked -- retrieval-eval --format json"
+    );
+    let workflow =
+        fs::read_to_string(root.join(".github/workflows/ci.yml")).expect("CI workflow source");
+    let retrieval_gate = workflow
+        .find("run: npm run eval:retrieval")
         .expect("retrieval evaluation gate");
-    let compatibility = verification
-        .find("load_compat_manifests")
-        .expect("compatibility manifest gate");
+    let compatibility = workflow
+        .find("run: npm run verify:rust-contracts")
+        .expect("compatibility gate");
     assert!(retrieval_gate < compatibility);
 }
 
