@@ -389,6 +389,123 @@ fn rust_command_permission_provider_and_product_baselines_are_executable() {
 }
 
 #[test]
+fn thin_npm_manifest_and_lock_are_distribution_only() {
+    let root = repository_root();
+    let package: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(root.join("package.json")).expect("package manifest"),
+    )
+    .expect("package JSON");
+    let object = package.as_object().expect("package object");
+    let actual_keys = object.keys().map(String::as_str).collect::<Vec<_>>();
+    assert_eq!(
+        actual_keys,
+        [
+            "name",
+            "version",
+            "description",
+            "type",
+            "bin",
+            "files",
+            "scripts",
+            "engines",
+        ],
+        "package metadata must contain only the distribution contract"
+    );
+    assert_eq!(
+        package["bin"],
+        serde_json::json!({"minimax-codex": "bin/minimax-codex.cjs"})
+    );
+    assert_eq!(
+        package["files"],
+        serde_json::json!([
+            "bin/minimax-codex.cjs",
+            "docs/release",
+            "LICENSE-APACHE",
+            "LICENSE-MIT",
+            "README.md",
+            "minimax-codex",
+            "minimax-codex.exe"
+        ])
+    );
+    assert_eq!(
+        package["scripts"],
+        serde_json::json!({
+            "check:rust": "cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked -- -D warnings",
+            "test:rust": "cargo test --workspace --locked",
+            "test:rust:candidate": "cargo test --workspace --locked -- --skip hosted_cutover_evidence_matches_current_product",
+            "eval:retrieval": "cargo run -p minimax-compat-harness --locked -- retrieval-eval --format json",
+            "eval:provider": "cargo run -p minimax-compat-harness --locked -- provider-eval --format json",
+            "verify:agent": "npm run verify:rust-contracts && npm run eval:provider && npm run eval:retrieval",
+            "verify:rust-contracts": "cargo run -p minimax-compat-harness --locked -- verify",
+            "verify:rust-contracts:candidate": "cargo run -p minimax-compat-harness --locked -- verify-candidate",
+            "build:rust:release": "cargo build -p minimax-cli --release --locked",
+            "package:rust": "node scripts/release/package-rust.mjs",
+            "verify:rust-release": "node scripts/release/verify-rust-release.mjs",
+            "verify:milestone-flow": "node scripts/release/verify-milestone-flow.mjs",
+            "verify:release": "npm run check:rust && npm run test:rust && npm run verify:agent && npm run build:rust:release && npm run package:rust && npm run verify:rust-release && npm run verify:milestone-flow"
+        })
+    );
+    for dependency_class in ["dependencies", "devDependencies", "optionalDependencies"] {
+        assert!(
+            package.get(dependency_class).is_none(),
+            "{dependency_class} must be absent"
+        );
+    }
+
+    let lock: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(root.join("package-lock.json")).expect("package lock"),
+    )
+    .expect("package-lock JSON");
+    assert_eq!(lock["lockfileVersion"], 3);
+    assert_eq!(
+        lock["packages"]
+            .as_object()
+            .expect("lock packages")
+            .keys()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        [""],
+        "dependency-free package lock must contain only the root package"
+    );
+    let lock_root = &lock["packages"][""];
+    assert_eq!(lock_root["bin"], package["bin"]);
+    for dependency_class in ["dependencies", "devDependencies", "optionalDependencies"] {
+        assert!(
+            lock_root.get(dependency_class).is_none(),
+            "lock root {dependency_class} must be absent"
+        );
+    }
+
+    let legacy_file = HermeticCompatibilityFixture::new(&root);
+    legacy_file.rewrite_json("package.json", |value| {
+        value["files"]
+            .as_array_mut()
+            .expect("package files")
+            .push(serde_json::json!("dist"));
+    });
+    assert!(validate_product_entry(&legacy_file.root).is_err());
+
+    let runtime_dependency = HermeticCompatibilityFixture::new(&root);
+    runtime_dependency.rewrite_json("package.json", |value| {
+        value["dependencies"] = serde_json::json!({"react": "^18.3.1"});
+    });
+    assert!(validate_product_entry(&runtime_dependency.root).is_err());
+
+    let install_download = HermeticCompatibilityFixture::new(&root);
+    install_download.rewrite_json("package.json", |value| {
+        value["scripts"]["install"] =
+            serde_json::json!("node -e \"fetch('https://example.invalid/runtime')\"");
+    });
+    assert!(validate_product_entry(&install_download.root).is_err());
+
+    let stale_lock = HermeticCompatibilityFixture::new(&root);
+    stale_lock.rewrite_json("package-lock.json", |value| {
+        value["packages"][""]["bin"]["minimax-codex-legacy"] = serde_json::json!("dist/cli.js");
+    });
+    assert!(validate_product_entry(&stale_lock.root).is_err());
+}
+
+#[test]
 fn hosted_cutover_evidence_matches_current_product() {
     let root = repository_root();
     let manifests = load_compat_manifests(&root).expect("strict manifests");
@@ -777,6 +894,7 @@ impl HermeticCompatibilityFixture {
             "Cargo.lock",
             "rust-toolchain.toml",
             "package.json",
+            "package-lock.json",
             "bin",
             "capabilities",
             "crates",
