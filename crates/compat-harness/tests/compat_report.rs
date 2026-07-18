@@ -428,9 +428,10 @@ fn thin_npm_manifest_and_lock_are_distribution_only() {
             "verify:rust-contracts:candidate": "cargo run -p minimax-compat-harness --locked -- verify-candidate",
             "build:rust:release": "cargo build -p minimax-cli --release --locked",
             "package:rust": "node scripts/release/package-rust.mjs",
+            "test:package": "node --test scripts/release/package-contract.test.mjs",
             "verify:rust-release": "node scripts/release/verify-rust-release.mjs",
             "verify:milestone-flow": "node scripts/release/verify-milestone-flow.mjs",
-            "verify:release": "npm run check:rust && npm run test:rust && npm run verify:agent && npm run build:rust:release && npm run package:rust && npm run verify:rust-release && npm run verify:milestone-flow"
+            "verify:release": "npm run check:rust && npm run test:rust && npm run verify:agent && npm run test:package"
         })
     );
     for dependency_class in ["dependencies", "devDependencies", "optionalDependencies"] {
