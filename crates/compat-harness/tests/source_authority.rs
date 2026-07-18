@@ -82,23 +82,8 @@ impl SyntheticRepository {
         write_file(
             &root,
             "package.json",
-            r#"{
-  "bin": {"minimax-codex": "bin/minimax-codex.cjs"},
-  "scripts": {
-    "dev": "cargo run -p minimax-cli --locked --",
-    "start": "node bin/minimax-codex.cjs",
-    "build": "tsc -p tsconfig.json",
-    "check": "tsc -p tsconfig.json --noEmit",
-    "test": "tsx test/run-tests.ts",
-    "test:launcher": "tsx --test test/launcher.test.ts",
-    "eval:retrieval": "cargo run -p minimax-compat-harness --locked -- retrieval-eval --format json",
-    "eval:provider": "cargo run -p minimax-compat-harness --locked -- provider-eval --format json",
-    "verify:rust-contracts": "cargo run -p minimax-compat-harness --locked -- verify",
-    "verify:agent": "npm run verify:rust-contracts && npm run eval:provider && npm run eval:retrieval",
-    "verify:release": "npm run check && npm test && npm run check:rust && npm run test:rust && npm run verify:agent && npm run build && npm run build:rust:release && npm run package:rust && npm run verify:rust-release && npm run verify:milestone-flow",
-    "smoke:provider": "tsx src/smoke/provider-smoke.ts"
-  }
-}"#,
+            &fs::read_to_string(repository_root().join("package.json"))
+                .expect("committed package manifest should be readable"),
         );
         for path in [
             "bin/minimax-codex.cjs",
@@ -395,16 +380,13 @@ fn repository_source_inventory() {
 fn repository_product_scripts_are_rust_owned() {
     let root = repository_root();
     let scripts = package_scripts(&root);
-    assert_eq!(
-        scripts.get("dev").and_then(Value::as_str),
-        Some("cargo run -p minimax-cli --locked --"),
-        "package dev route must execute the Rust CLI source with npm argv forwarding"
-    );
-    assert_eq!(
-        scripts.get("start").and_then(Value::as_str),
-        Some("node bin/minimax-codex.cjs"),
-        "package start route must remain the thin Rust launcher"
-    );
+    assert_eq!(scripts.len(), 13, "only Rust distribution scripts remain");
+    for legacy in ["dev", "start", "build", "check", "test", "test:launcher"] {
+        assert!(
+            scripts.get(legacy).is_none(),
+            "legacy script survived: {legacy}"
+        );
+    }
 }
 
 #[test]
@@ -427,27 +409,24 @@ fn rejects_typescript_and_legacy_product_script_routes() {
         assert_validation_rejected(
             label,
             |repository| repository.set_package_script(script, command),
-            "TypeScript/legacy product entry",
+            "only Rust verification and packaging commands",
         );
     }
 }
 
 #[test]
-fn transitional_tests_static_checks_build_and_smoke_remain_allowed() {
+fn typescript_build_test_and_smoke_scripts_are_absent() {
     let repository = SyntheticRepository::new();
     let manifest = repository.load();
     validate_source_authority(&repository.root, &manifest)
-        .expect("tests, static checks, build, and smoke remain transitional through Phase 11");
+        .expect("the thin Rust distribution package should satisfy source authority");
 
     let scripts = package_scripts(&repository.root);
-    for (name, expected) in [
-        ("build", "tsc -p tsconfig.json"),
-        ("check", "tsc -p tsconfig.json --noEmit"),
-        ("test", "tsx test/run-tests.ts"),
-        ("test:launcher", "tsx --test test/launcher.test.ts"),
-        ("smoke:provider", "tsx src/smoke/provider-smoke.ts"),
-    ] {
-        assert_eq!(scripts.get(name).and_then(Value::as_str), Some(expected));
+    for name in ["build", "check", "test", "test:launcher", "smoke:provider"] {
+        assert!(
+            scripts.get(name).is_none(),
+            "legacy script survived: {name}"
+        );
     }
 }
 
@@ -675,7 +654,7 @@ fn rejects_transitional_typescript_evaluator_routes() {
         assert_validation_rejected(
             label,
             |repository| repository.set_package_script(script, command),
-            "evaluation authority",
+            "distribution authority",
         );
     }
 }
@@ -793,8 +772,8 @@ fn source_authority_gate_precedes_compat_loading_for_both_verify_commands() {
         .find("validate_source_authority(root, &source_authority)")
         .expect("source authority gate should run in the shared verifier");
     let compat_load = verify_repository
-        .find("load_compat_manifests(root)")
-        .expect("compat manifests should load in the shared verifier");
+        .find("verify_fixture_compatibility(root, require_hosted_evidence)")
+        .expect("compatibility verification should run in the shared verifier");
 
     assert!(
         authority_gate < compat_load,
