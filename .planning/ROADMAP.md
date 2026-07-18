@@ -18,7 +18,7 @@ The product proceeds through fourteen vertical, verifiable boundaries. Eight com
 - [x] **Phase 10: Rust Authority and Source Boundaries** - Make Rust the sole executable and writable product authority while constraining JavaScript to an explicit distribution allowlist. (completed 2026-07-17)
 - [x] **Phase 11: Rust Verification and Evaluation Authority** - Replace still-required TypeScript behavioral, Provider, and retrieval verification with deterministic Rust-owned gates. (completed 2026-07-17)
 - [x] **Phase 12: Fixture Compatibility and Rust Migration** - Verify compatibility and TypeScript-era upgrades from immutable fixtures without building or executing the legacy runtime. (completed 2026-07-18)
-- [ ] **Phase 13: Thin npm and Native Release** - Ship one no-fallback npm command that launches a verified platform Rust binary and rejects invalid packages before release.
+- [x] **Phase 13: Thin npm and Native Release** - Ship one no-fallback npm command that launches a verified platform Rust binary and rejects invalid packages before release. (completed 2026-07-18)
 - [ ] **Phase 14: TypeScript Removal and Hosted Closure** - Delete the inert TypeScript implementation, converge CI and documentation, and bind final Windows/Linux evidence to one product fingerprint.
 
 ## Phase Details
@@ -212,7 +212,7 @@ Plans:
 | 10. Rust Authority and Source Boundaries | 4/4 | Complete    | 2026-07-17 |
 | 11. Rust Verification and Evaluation Authority | 6/6 | Complete   | 2026-07-17 |
 | 12. Fixture Compatibility and Rust Migration | 4/4 | Complete    | 2026-07-18 |
-| 13. Thin npm and Native Release | 2/3 | In Progress|  |
+| 13. Thin npm and Native Release | 3/3 | Complete    | 2026-07-18 |
 | 14. TypeScript Removal and Hosted Closure | 0/3 | Not started | - |
 
 ### Phase 7: Close milestone integration gaps
@@ -393,17 +393,17 @@ Plans:
   3. Package verification rejects missing, wrong-platform, renamed, non-executable, or hash-mismatched binaries with a stable actionable non-zero error and never tries another runtime.
   4. Offline installed-package smoke proves the npm and native release paths use the expected checksummed Rust artifact without a runtime download.
 
-**Plans:** 2/3 plans executed
+**Plans:** 3/3 plans complete
 
 Plans:
 
 - [x] 13-01-PLAN.md
 - [x] 13-02-PLAN.md
-- [ ] 13-03-PLAN.md
+- [x] 13-03-PLAN.md
 
 - [x] 13-01: Reduce package metadata and the launcher to one Rust-only command path
-- [ ] 13-02: Assemble checksummed Windows/Linux native and npm artifacts
-- [ ] 13-03: Add offline installed smoke and fail-closed package corruption tests
+- [x] 13-02: Assemble checksummed Windows/Linux native and npm artifacts
+- [x] 13-03: Add offline installed smoke and fail-closed package corruption tests
 
 ### Phase 14: TypeScript Removal and Hosted Closure
 

@@ -2,35 +2,35 @@
 gsd_state_version: 1.0
 milestone: v3.0
 milestone_name: Rust Convergence
-current_phase: 13
-current_phase_name: Thin npm and Native Release
-status: executing
-stopped_at: Completed 13-02-PLAN.md
-last_updated: "2026-07-18T02:02:10.777Z"
+current_phase: 14
+current_phase_name: TypeScript Removal and Hosted Closure
+status: awaiting_authorization
+stopped_at: Phase 13 complete; Phase 14 awaiting explicit authorization
+last_updated: "2026-07-18T02:59:40.330Z"
 last_activity: 2026-07-18
-last_activity_desc: Phase 13 Plan 02 completed deterministic native and npm candidate packaging
+last_activity_desc: Phase 13 complete; Phase 14 awaits explicit authorization
 progress:
   total_phases: 14
-  completed_phases: 12
+  completed_phases: 13
   total_plans: 48
-  completed_plans: 44
-  percent: 92
+  completed_plans: 45
+  percent: 94
 ---
 
 # Project State
 
 ## Project Reference
 
-See: `.planning/PROJECT.md` (updated 2026-07-15)
+See: `.planning/PROJECT.md` (updated 2026-07-18)
 
 **Core value:** A non-programmer can safely find the right open-source capability or project and complete work in one recoverable local CLI.
 
 ## Current Position
 
-Phase: 13 — Thin npm and Native Release
-Plan: 2 of 3 complete
-Status: In progress
-Last activity: 2026-07-18 — Deterministic native and npm candidate packaging completed
+Phase: 14 — TypeScript Removal and Hosted Closure
+Plan: Not started
+Status: Awaiting explicit authorization
+Last activity: 2026-07-18 — Phase 13 complete, transitioned to Phase 14
 
 ## Previous Phase 7 Hosted Baseline (superseded)
 
@@ -59,6 +59,14 @@ Last activity: 2026-07-18 — Deterministic native and npm candidate packaging c
 - The previous hosted evidence is intentionally stale after product changes. A manual candidate CI run and subsequent strict push are required before release; no local evidence fixture was forged.
 - The current pre-hosted product fingerprint is `f599aa324e135d30db744d86c497d67196d5d170d469aaa03941aed64d0a74f7` across 414 product files.
 - A fallback GNU-LLVM release archive was built, but its installed smoke exited `0xC0000135`; it was not represented as Windows MSVC release evidence.
+
+## Phase 13 Local Evidence
+
+- npm now exposes one dependency-free `minimax-codex` command that resolves only the fixed packaged Rust sibling and fails closed without search, fallback, or download.
+- Deterministic native and npm candidates share product fingerprint `39bbe83352d1be482ecdca59482855732683505112fa23a1cdcc5337f5a1eaee` across 438 files and binary SHA-256 `942adad08597801f037b8dfc1be49937963c12d7c5337055cf669c6ed0c5ffee`.
+- Both independently extracted installed paths report `minimax-codex-rust 0.1.0`, the same read-only capability output, offline true, and zero Provider, credential, or model-download activity.
+- All eleven package corruption categories, 19 package tests, full Rust workspace/doc tests, strict Clippy, Provider 20/20, 175-case retrieval evaluation, milestone flow, and candidate verification pass locally.
+- This is GNU-LLVM `development_only` evidence. Fresh hosted Windows MSVC/Linux GNU evidence and TypeScript deletion remain Phase 14 work and are not authorized by this result.
 
 ## Locked Decisions
 
@@ -146,6 +154,10 @@ No package publication, tag, PR, merge, live Provider request, credential read, 
 - [Phase 13]: Select release target and support tier only from the active exact rustc host. — Removing caller-controlled platform labels prevents GNU-LLVM development artifacts from being represented as MSVC hosted evidence.
 - [Phase 13]: Emit the strict release manifest beside the two archives. — An external manifest can bind both whole-archive hashes without a self-referential hash cycle.
 - [Phase 13]: Classify package contract tests as hash-pinned package-test-only authority. — Fixture and assertion literals remain reviewable without being mistaken for executable production fallback behavior.
+- [Phase 13]: Reject all packed-artifact corruption before installation using stable ARTIFACT_* categories. — Package bytes and metadata must fail closed before any command can run or evidence can be emitted.
+- [Phase 13]: Require explicit current fingerprint, binary, artifact, and evidence paths for every release command. — A healthy source tree or stale default target output cannot substitute for the packed candidate being verified.
+- [Phase 13]: Bind separate native and npm installed identities to one exact Rust binary and capability output. — Both supported distribution paths must independently prove the same product without fallback, network, credentials, or downloads.
+- [Phase 13]: Keep Phase 13 CI read-only and defer hosted MSVC/Linux refresh to Phase 14. — Local GNU-LLVM development evidence cannot satisfy hosted release authority.
 
 ## Performance Metrics
 
@@ -167,9 +179,10 @@ No package publication, tag, PR, merge, live Provider request, credential read, 
 | Phase 12 P04 | 2h 46m | 2 tasks | 2 files |
 | Phase 13 P01 | 12min | 2 tasks | 9 files |
 | Phase 13 P02 | 24min | 2 tasks | 9 files |
+| Phase 13 P03 | 49min | 3 tasks | 16 files |
 
 ## Session
 
-**Last session:** 2026-07-18T02:02:10.754Z
-**Stopped at:** Completed 13-02-PLAN.md
+**Last session:** 2026-07-18T02:59:40.309Z
+**Stopped at:** Phase 13 complete; Phase 14 awaiting explicit authorization
 **Resume file:** None
