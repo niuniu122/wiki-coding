@@ -124,8 +124,8 @@
 
 ### npm and Native Release
 
-- [ ] **RNPM-01**: `npm install -g minimax-codex` and `npx minimax-codex` launch the packaged Rust binary on supported hosts through one no-fallback command entry.
-- [ ] **RNPM-02**: The npm package has no `minimax-codex-legacy`, `dist/cli.js`, TypeScript compiler/runtime, React/Ink runtime, or TypeScript-only production/build dependency.
+- [x] **RNPM-01**: `npm install -g minimax-codex` and `npx minimax-codex` launch the packaged Rust binary on supported hosts through one no-fallback command entry.
+- [x] **RNPM-02**: The npm package has no `minimax-codex-legacy`, `dist/cli.js`, TypeScript compiler/runtime, React/Ink runtime, or TypeScript-only production/build dependency.
 - [ ] **RNPM-03**: Packed-package verification rejects missing, wrong-platform, renamed, non-executable, or hash-mismatched Rust binaries with actionable errors before release.
 
 ### Final Cutover
@@ -225,8 +225,8 @@
 | RVE-03 | Phase 11 | Complete |
 | RCMP-01 | Phase 12 | Complete |
 | RCMP-02 | Phase 12 | Complete |
-| RNPM-01 | Phase 13 | Pending |
-| RNPM-02 | Phase 13 | Pending |
+| RNPM-01 | Phase 13 | Complete |
+| RNPM-02 | Phase 13 | Complete |
 | RNPM-03 | Phase 13 | Pending |
 | RCUT-01 | Phase 14 | Pending |
 | RCUT-02 | Phase 14 | Pending |

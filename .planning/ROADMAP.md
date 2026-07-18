@@ -212,7 +212,7 @@ Plans:
 | 10. Rust Authority and Source Boundaries | 4/4 | Complete    | 2026-07-17 |
 | 11. Rust Verification and Evaluation Authority | 6/6 | Complete   | 2026-07-17 |
 | 12. Fixture Compatibility and Rust Migration | 4/4 | Complete    | 2026-07-18 |
-| 13. Thin npm and Native Release | 0/3 | Not started | - |
+| 13. Thin npm and Native Release | 1/3 | In Progress|  |
 | 14. TypeScript Removal and Hosted Closure | 0/3 | Not started | - |
 
 ### Phase 7: Close milestone integration gaps
@@ -393,11 +393,15 @@ Plans:
   3. Package verification rejects missing, wrong-platform, renamed, non-executable, or hash-mismatched binaries with a stable actionable non-zero error and never tries another runtime.
   4. Offline installed-package smoke proves the npm and native release paths use the expected checksummed Rust artifact without a runtime download.
 
-**Plans:** 3 plans planned
+**Plans:** 1/3 plans executed
 
 Plans:
 
-- [ ] 13-01: Reduce package metadata and the launcher to one Rust-only command path
+- [x] 13-01-PLAN.md
+- [ ] 13-02-PLAN.md
+- [ ] 13-03-PLAN.md
+
+- [x] 13-01: Reduce package metadata and the launcher to one Rust-only command path
 - [ ] 13-02: Assemble checksummed Windows/Linux native and npm artifacts
 - [ ] 13-03: Add offline installed smoke and fail-closed package corruption tests
 

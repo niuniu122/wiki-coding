@@ -5,16 +5,16 @@ milestone_name: Rust Convergence
 current_phase: 13
 current_phase_name: Thin npm and Native Release
 status: executing
-stopped_at: Completed 12-04-PLAN.md
-last_updated: "2026-07-18T01:16:20.558Z"
+stopped_at: Completed 13-01-PLAN.md
+last_updated: "2026-07-18T01:35:45.438Z"
 last_activity: 2026-07-18
-last_activity_desc: Phase 12 complete, transitioned to Phase 13
+last_activity_desc: Phase 13 Plan 01 completed the dependency-free npm shell and fail-closed launcher
 progress:
   total_phases: 14
   completed_phases: 12
   total_plans: 48
-  completed_plans: 42
-  percent: 86
+  completed_plans: 43
+  percent: 90
 ---
 
 # Project State
@@ -28,9 +28,9 @@ See: `.planning/PROJECT.md` (updated 2026-07-15)
 ## Current Position
 
 Phase: 13 — Thin npm and Native Release
-Plan: Not started
-Status: Ready to execute
-Last activity: 2026-07-18 — Phase 12 complete, transitioned to Phase 13
+Plan: 1 of 3 complete
+Status: In progress
+Last activity: 2026-07-18 — Thin npm metadata and launcher completed
 
 ## Previous Phase 7 Hosted Baseline (superseded)
 
@@ -140,6 +140,9 @@ No package publication, tag, PR, merge, live Provider request, credential read, 
 - [Phase 12]: Compute fixture removal eligibility from two distinct ordered public releases after 3.0.0. — Prevents elapsed-time guesses duplicate evidence and premature fixture deletion.
 - [Phase 12]: Bind recovery and rollback ownership to exact Rust migration targets. — Forged operation manifests or recomputed receipts must not claim arbitrary project files.
 - [Phase 12]: Derive compatibility authority from lib.rs/main.rs and exact recursive source-inventory equality; classify legacy references only when they flow through executable read, include, process, or shell contexts. — This prevents omitted or orphaned Rust modules from escaping the gate without turning inert historical fixture and authority literals into false positives.
+- [Phase 13]: Keep npm as a dependency-free distribution shell with exact metadata and one Rust launcher. — Exact allowlists make legacy dependencies, scripts, lifecycle hooks, and bins fail closed.
+- [Phase 13]: Use stable E_* launcher categories with expected-path or supported-target guidance. — Failures remain actionable while never searching, downloading, or falling back to another runtime.
+- [Phase 13]: Keep GNU-LLVM verification development-only and defer hosted fingerprint refresh to Phase 14. — Local artifacts cannot satisfy Windows MSVC and Linux GNU hosted evidence identity.
 
 ## Performance Metrics
 
@@ -159,9 +162,10 @@ No package publication, tag, PR, merge, live Provider request, credential read, 
 | Phase 12 P02 | 23min | 2 tasks | 8 files |
 | Phase 12 P03 | 29min | 2 tasks | 2 files |
 | Phase 12 P04 | 2h 46m | 2 tasks | 2 files |
+| Phase 13 P01 | 12min | 2 tasks | 9 files |
 
 ## Session
 
-**Last session:** 2026-07-18T01:11:59.101Z
-**Stopped at:** Completed 12-04-PLAN.md
+**Last session:** 2026-07-18T01:35:45.422Z
+**Stopped at:** Completed 13-01-PLAN.md
 **Resume file:** None
