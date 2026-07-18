@@ -406,6 +406,26 @@ fn package_contract_sources_have_non_product_authority_classes() {
         .expect("package-test-only assertion strings must not become executable fallback findings");
 
     assert_validation_rejected(
+        "production package product import",
+        |repository| {
+            repository.write_javascript(
+                "scripts/release/package-contract.mjs",
+                "import product from '../../src/runtime/application-kernel.ts';\n",
+            );
+        },
+        "product source import",
+    );
+    assert_validation_rejected(
+        "production package fallback spawn",
+        |repository| {
+            repository.write_javascript(
+                "scripts/release/package-contract.mjs",
+                "spawnSync('node', ['dist/cli.js']);\n",
+            );
+        },
+        "fallback",
+    );
+    assert_validation_rejected(
         "production package runtime download",
         |repository| {
             repository.write_javascript(
@@ -429,7 +449,7 @@ fn repository_source_inventory() {
 fn repository_product_scripts_are_rust_owned() {
     let root = repository_root();
     let scripts = package_scripts(&root);
-    assert_eq!(scripts.len(), 13, "only Rust distribution scripts remain");
+    assert_eq!(scripts.len(), 14, "only Rust distribution scripts remain");
     for legacy in ["dev", "start", "build", "check", "test", "test:launcher"] {
         assert!(
             scripts.get(legacy).is_none(),

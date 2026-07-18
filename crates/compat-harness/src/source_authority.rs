@@ -49,15 +49,17 @@ const RUST_CANDIDATE_CONTRACT_VERIFICATION_SCRIPT: &str =
     "cargo run -p minimax-compat-harness --locked -- verify-candidate";
 const RUST_RELEASE_BUILD_SCRIPT: &str = "cargo build -p minimax-cli --release --locked";
 const RUST_PACKAGE_SCRIPT: &str = "node scripts/release/package-rust.mjs";
+const PACKAGE_TEST_SCRIPT: &str = "node --test scripts/release/package-contract.test.mjs";
 const RUST_PACKAGE_VERIFICATION_SCRIPT: &str = "node scripts/release/verify-rust-release.mjs";
 const RUST_MILESTONE_VERIFICATION_SCRIPT: &str = "node scripts/release/verify-milestone-flow.mjs";
 const RUST_RELEASE_VERIFICATION_SCRIPT: &str = "npm run check:rust && npm run test:rust && npm run verify:agent && npm run build:rust:release && npm run package:rust && npm run verify:rust-release && npm run verify:milestone-flow";
-const PACKAGE_SCRIPTS: [(&str, &str); 13] = [
+const PACKAGE_SCRIPTS: [(&str, &str); 14] = [
     ("build:rust:release", RUST_RELEASE_BUILD_SCRIPT),
     ("check:rust", RUST_CHECK_SCRIPT),
     ("eval:provider", RUST_PROVIDER_EVAL_SCRIPT),
     ("eval:retrieval", RUST_RETRIEVAL_EVAL_SCRIPT),
     ("package:rust", RUST_PACKAGE_SCRIPT),
+    ("test:package", PACKAGE_TEST_SCRIPT),
     ("test:rust", RUST_TEST_SCRIPT),
     ("test:rust:candidate", RUST_CANDIDATE_TEST_SCRIPT),
     ("verify:agent", RUST_EVALUATION_AGGREGATE_SCRIPT),

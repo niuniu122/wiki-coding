@@ -31,14 +31,14 @@
     {
       "id": "package-contract",
       "path": "scripts/release/package-contract.mjs",
-      "sha256": "1a4f67c25ca0fa39f2460797c40c93c24083d680f9a12baf5beac81135bc8f8e",
+      "sha256": "c5954dfd3aab45b212833800d9ec12bd0b97df04286cdd65740191b13d756c71",
       "purpose": "releaseOrchestration",
       "forbiddenCapabilities": ["fallback", "migration", "provider", "retrieval", "runtimeDownload", "session", "tool", "vault", "wiki"]
     },
     {
       "id": "package-contract-tests",
       "path": "scripts/release/package-contract.test.mjs",
-      "sha256": "dd8418535a5058c807e07aa9403e3fb9cdb6913940916dfde82ba1d1ef4f0b53",
+      "sha256": "e5b824ab7f5be5221c6eff339c304356f0410d6f1e3c614fea3c8f8b708dbf84",
       "purpose": "packageTestOnly",
       "forbiddenCapabilities": ["fallback", "migration", "provider", "retrieval", "runtimeDownload", "session", "tool", "vault", "wiki"]
     },

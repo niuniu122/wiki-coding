@@ -1,6 +1,8 @@
+import {createHash} from "node:crypto";
 import {readFileSync} from "node:fs";
 import {dirname, resolve} from "node:path";
 import {fileURLToPath} from "node:url";
+import {gunzipSync, gzipSync} from "node:zlib";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const defaultTargetContract = resolve(root, "fixtures/compat/release/targets.v1.json");
@@ -163,6 +165,245 @@ export function validateReleaseManifest(manifest, contract = loadTargetContract(
   bindPayload(manifest.npmPackage.entries, `package/${manifest.launcher.path}`, manifest.launcher, "launcher");
   bindSharedContent(manifest.nativeArchive.entries, nativeRoot, manifest.npmPackage.entries);
   return manifest;
+}
+
+export function createDeterministicTarGzip(entries) {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    contractFail("ARTIFACT_ARCHIVE_CORRUPT", "archive entries must be a non-empty array");
+  }
+  const blocks = [];
+  for (const entry of [...entries].sort((left, right) => left.name.localeCompare(right.name, "en"))) {
+    const bytes = Buffer.from(entry.bytes ?? Buffer.alloc(0));
+    blocks.push(tarHeader({...entry, bytes}), bytes);
+    const padding = (512 - (bytes.length % 512)) % 512;
+    if (padding > 0) blocks.push(Buffer.alloc(padding));
+  }
+  blocks.push(Buffer.alloc(1024));
+  const archive = gzipSync(Buffer.concat(blocks), {level: 9, mtime: 0});
+  archive.fill(0, 4, 8);
+  archive[9] = 255;
+  return archive;
+}
+
+export function validateArtifactCandidate({manifest, contract, expectedTargetId, expectedProduct, artifacts}) {
+  if (!isPlainObject(manifest) || !isPlainObject(expectedProduct) || !(artifacts instanceof Map)) {
+    contractFail("ARTIFACT_CONTRACT_INVALID", "artifact candidate inputs are malformed");
+  }
+  if (manifest.target?.id !== expectedTargetId) {
+    contractFail("ARTIFACT_TARGET_MISMATCH", `candidate target ${manifest.target?.id ?? "unknown"} does not match ${expectedTargetId}`);
+  }
+  if (manifest.product?.fingerprint !== expectedProduct.fingerprint || manifest.product?.fileCount !== expectedProduct.fileCount) {
+    contractFail("ARTIFACT_PRODUCT_FINGERPRINT_MISMATCH", "candidate product fingerprint does not match the current product");
+  }
+  validateReleaseManifest(manifest, contract);
+
+  const expectedNames = [
+    manifest.nativeArchive.name,
+    `${manifest.nativeArchive.name}.sha256`,
+    manifest.npmPackage.name,
+    `${manifest.npmPackage.name}.sha256`
+  ];
+  if (!sameJson([...artifacts.keys()].sort(), [...expectedNames].sort())) {
+    contractFail("ARTIFACT_FILE_SET", "candidate must contain exactly two archives and their checksum sidecars");
+  }
+  for (const name of expectedNames) {
+    const artifact = artifacts.get(name);
+    if (!isPlainObject(artifact) || artifact.kind !== "file" || !Buffer.isBuffer(artifact.bytes)) {
+      contractFail("ARTIFACT_UNSAFE_TYPE", `candidate artifact is not a safe regular file: ${name}`);
+    }
+  }
+
+  validateArtifactArchive(manifest.nativeArchive, manifest, artifacts, "native");
+  validateArtifactArchive(manifest.npmPackage, manifest, artifacts, "npm");
+  return manifest;
+}
+
+function validateArtifactArchive(archive, manifest, artifacts, channel) {
+  const archiveBytes = artifacts.get(archive.name).bytes;
+  const sidecarBytes = artifacts.get(`${archive.name}.sha256`).bytes;
+  const sidecarHash = parseSidecar(sidecarBytes, archive.name);
+  const actualEntries = parseTarGzip(archiveBytes, archive.name);
+  const rootPath = channel === "native"
+    ? `minimax-codex-v${manifest.version}-${manifest.target.id}`
+    : "package";
+  const binaryPath = `${rootPath}/${manifest.binary.path}`;
+  const launcherPath = `${rootPath}/${manifest.launcher.path}`;
+  const binary = actualEntries.find((entry) => entry.name === binaryPath);
+  if (!binary) {
+    const renamed = actualEntries.find((entry) => entry.type === "0"
+      && sha256(entry.bytes) === manifest.binary.sha256
+      && entry.mode === manifest.binary.mode);
+    if (renamed) {
+      contractFail("ARTIFACT_BINARY_RENAMED", `${channel} binary was renamed to ${renamed.name}`);
+    }
+    contractFail("ARTIFACT_BINARY_MISSING", `${channel} archive is missing ${binaryPath}`);
+  }
+  if (binary.type !== "0") {
+    contractFail("ARTIFACT_UNSAFE_TYPE", `${channel} binary must be a regular archive entry`);
+  }
+  if (binary.mode !== manifest.binary.mode || (binary.mode & 0o111) === 0) {
+    contractFail("ARTIFACT_BINARY_NOT_EXECUTABLE", `${channel} binary must retain executable mode 0755`);
+  }
+
+  const launcher = actualEntries.find((entry) => entry.name === launcherPath);
+  if (!launcher || launcher.type !== "0") {
+    contractFail("ARTIFACT_LAUNCHER_MISMATCH", `${channel} launcher is missing or not a regular file`);
+  }
+  if (launcher.mode !== manifest.launcher.mode
+      || launcher.bytes.length !== manifest.launcher.bytes
+      || sha256(launcher.bytes) !== manifest.launcher.sha256) {
+    contractFail("ARTIFACT_LAUNCHER_MISMATCH", `${channel} launcher does not match the locked launcher`);
+  }
+
+  const expectedPaths = new Set(archive.entries.map((entry) => entry.path));
+  const unexpectedExecutable = actualEntries.find((entry) => !expectedPaths.has(entry.name)
+    && entry.type === "0"
+    && (entry.mode & 0o111) !== 0);
+  if (unexpectedExecutable) {
+    contractFail("ARTIFACT_EXTRA_EXECUTABLE", `${channel} archive contains extra executable ${unexpectedExecutable.name}`);
+  }
+
+  if (actualEntries.length !== archive.entries.length) {
+    contractFail("ARTIFACT_CHECKSUM_MISMATCH", `${channel} archive entry count does not match its manifest`);
+  }
+  for (let index = 0; index < archive.entries.length; index += 1) {
+    const expected = archive.entries[index];
+    const actual = actualEntries[index];
+    const expectedType = expected.type === "directory" ? "5" : "0";
+    if (!actual || actual.name !== expected.path || actual.type !== expectedType || actual.mode !== expected.mode) {
+      contractFail("ARTIFACT_CHECKSUM_MISMATCH", `${channel} archive metadata drifted at ${expected.path}`);
+    }
+    if (expected.type === "file"
+        && (actual.bytes.length !== expected.bytes || sha256(actual.bytes) !== expected.sha256)) {
+      contractFail("ARTIFACT_CHECKSUM_MISMATCH", `${channel} archive content drifted at ${expected.path}`);
+    }
+  }
+
+  const archiveHash = sha256(archiveBytes);
+  if (archiveBytes.length !== archive.bytes || archiveHash !== archive.sha256 || sidecarHash !== archiveHash) {
+    contractFail("ARTIFACT_CHECKSUM_MISMATCH", `${channel} archive checksum does not match its manifest and sidecar`);
+  }
+}
+
+function parseSidecar(bytes, expectedName) {
+  const text = bytes.toString("utf8");
+  const match = /^([0-9a-f]{64})  ([0-9A-Za-z][0-9A-Za-z._+-]{0,95})\n$/u.exec(text);
+  if (!match || match[2] !== expectedName) {
+    contractFail("ARTIFACT_SIDECAR_INVALID", `checksum sidecar is invalid for ${expectedName}`);
+  }
+  return match[1];
+}
+
+function parseTarGzip(bytes, label) {
+  let tar;
+  try {
+    tar = gunzipSync(bytes);
+  } catch {
+    contractFail("ARTIFACT_ARCHIVE_CORRUPT", `${label} is not a valid gzip archive`);
+  }
+  if (tar.length < 1024 || tar.length % 512 !== 0) {
+    contractFail("ARTIFACT_ARCHIVE_CORRUPT", `${label} has an invalid tar length`);
+  }
+  const entries = [];
+  const names = new Set();
+  let offset = 0;
+  let zeroBlocks = 0;
+  while (offset < tar.length) {
+    const header = tar.subarray(offset, offset + 512);
+    if (header.every((byte) => byte === 0)) {
+      zeroBlocks += 1;
+      offset += 512;
+      if (zeroBlocks === 2) break;
+      continue;
+    }
+    if (zeroBlocks !== 0) contractFail("ARTIFACT_ARCHIVE_CORRUPT", `${label} has data after a zero tar block`);
+    const storedChecksum = parseTarOctal(header, 148, 8, label);
+    const checksumHeader = Buffer.from(header);
+    checksumHeader.fill(0x20, 148, 156);
+    const actualChecksum = checksumHeader.reduce((sum, value) => sum + value, 0);
+    if (storedChecksum !== actualChecksum) {
+      contractFail("ARTIFACT_ARCHIVE_CORRUPT", `${label} contains a tar header checksum mismatch`);
+    }
+    const name = readTarString(header, 0, 100);
+    const mode = parseTarOctal(header, 100, 8, label);
+    const size = parseTarOctal(header, 124, 12, label);
+    const type = readTarString(header, 156, 1) || "0";
+    if (!safeArchivePath(name) || names.has(name)) {
+      contractFail("ARTIFACT_UNSAFE_TYPE", `${label} contains an unsafe or duplicate archive path`);
+    }
+    if (type !== "0" && type !== "5") {
+      contractFail("ARTIFACT_UNSAFE_TYPE", `${label} contains unsupported archive entry type ${type}`);
+    }
+    if ((type === "5" && size !== 0) || offset + 512 + size > tar.length) {
+      contractFail("ARTIFACT_ARCHIVE_CORRUPT", `${label} contains an invalid archive entry size`);
+    }
+    names.add(name);
+    const contentStart = offset + 512;
+    entries.push({name, mode, type, bytes: Buffer.from(tar.subarray(contentStart, contentStart + size))});
+    offset = contentStart + Math.ceil(size / 512) * 512;
+  }
+  if (zeroBlocks !== 2 || tar.subarray(offset).some((byte) => byte !== 0)) {
+    contractFail("ARTIFACT_ARCHIVE_CORRUPT", `${label} lacks a canonical two-block tar terminator`);
+  }
+  return entries;
+}
+
+function tarHeader(entry) {
+  if (!safeArchivePath(entry.name) || Buffer.byteLength(entry.name, "utf8") > 100) {
+    contractFail("ARTIFACT_UNSAFE_TYPE", `archive path is unsafe or too long: ${entry.name}`);
+  }
+  if (!Number.isInteger(entry.mode) || entry.mode < 0 || entry.mode > 0o7777 || !["0", "2", "5"].includes(entry.type)) {
+    contractFail("ARTIFACT_UNSAFE_TYPE", `archive entry metadata is unsafe: ${entry.name}`);
+  }
+  const header = Buffer.alloc(512);
+  writeTarString(header, 0, 100, entry.name);
+  writeTarOctal(header, 100, 8, entry.mode);
+  writeTarOctal(header, 108, 8, 0);
+  writeTarOctal(header, 116, 8, 0);
+  writeTarOctal(header, 124, 12, entry.bytes.length);
+  writeTarOctal(header, 136, 12, 0);
+  header.fill(0x20, 148, 156);
+  writeTarString(header, 156, 1, entry.type);
+  writeTarString(header, 257, 6, "ustar\0");
+  writeTarString(header, 263, 2, "00");
+  writeTarString(header, 265, 32, "root");
+  writeTarString(header, 297, 32, "root");
+  writeTarOctal(header, 329, 8, 0);
+  writeTarOctal(header, 337, 8, 0);
+  const checksum = header.reduce((sum, value) => sum + value, 0);
+  writeTarString(header, 148, 6, checksum.toString(8).padStart(6, "0"));
+  header[154] = 0;
+  header[155] = 0x20;
+  return header;
+}
+
+function writeTarString(buffer, offset, length, value) {
+  const bytes = Buffer.from(value, "utf8");
+  if (bytes.length > length) contractFail("ARTIFACT_ARCHIVE_CORRUPT", "archive metadata field overflow");
+  bytes.copy(buffer, offset);
+}
+
+function writeTarOctal(buffer, offset, length, value) {
+  const encoded = value.toString(8).padStart(length - 1, "0");
+  if (encoded.length >= length) contractFail("ARTIFACT_ARCHIVE_CORRUPT", "archive numeric field overflow");
+  writeTarString(buffer, offset, length - 1, encoded);
+  buffer[offset + length - 1] = 0;
+}
+
+function readTarString(buffer, offset, length) {
+  const field = buffer.subarray(offset, offset + length);
+  const zero = field.indexOf(0);
+  return field.subarray(0, zero === -1 ? field.length : zero).toString("utf8");
+}
+
+function parseTarOctal(buffer, offset, length, label) {
+  const value = readTarString(buffer, offset, length).trim();
+  if (!/^[0-7]+$/u.test(value)) contractFail("ARTIFACT_ARCHIVE_CORRUPT", `${label} contains invalid tar numeric metadata`);
+  return Number.parseInt(value, 8);
+}
+
+function sha256(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
 }
 
 function validateTargetFields(target) {
