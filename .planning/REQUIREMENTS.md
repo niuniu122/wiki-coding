@@ -130,7 +130,7 @@
 
 ### Final Cutover
 
-- [ ] **RCUT-01**: The repository contains no TypeScript/TSX product or test source, and CI blocks reintroduction outside static migration data fixtures.
+- [x] **RCUT-01**: The repository contains no TypeScript/TSX product or test source, and CI blocks reintroduction outside static migration data fixtures.
 - [ ] **RCUT-02**: Windows x64 MSVC and Linux x64 GNU pass Rust tests, evaluations, packaging, installed smoke, checksum, upgrade/rollback, security, license, and performance gates against one final product fingerprint.
 - [ ] **RCUT-03**: User and maintainer documentation describes Rust-only architecture, npm/native installation, supported platforms, no-fallback failures, migration/rollback, and the two-release compatibility window.
 
@@ -228,7 +228,7 @@
 | RNPM-01 | Phase 13 | Complete |
 | RNPM-02 | Phase 13 | Complete |
 | RNPM-03 | Phase 13 | Complete |
-| RCUT-01 | Phase 14 | Pending |
+| RCUT-01 | Phase 14 | Complete |
 | RCUT-02 | Phase 14 | Pending |
 | RCUT-03 | Phase 14 | Pending |
 

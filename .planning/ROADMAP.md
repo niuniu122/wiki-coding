@@ -213,7 +213,7 @@ Plans:
 | 11. Rust Verification and Evaluation Authority | 6/6 | Complete   | 2026-07-17 |
 | 12. Fixture Compatibility and Rust Migration | 4/4 | Complete    | 2026-07-18 |
 | 13. Thin npm and Native Release | 3/3 | Complete    | 2026-07-18 |
-| 14. TypeScript Removal and Hosted Closure | 0/3 | Not started | - |
+| 14. TypeScript Removal and Hosted Closure | 1/3 | In Progress | - |
 
 ### Phase 7: Close milestone integration gaps
 
@@ -417,10 +417,14 @@ Plans:
   3. Hosted Windows x64 MSVC and Linux x64 GNU jobs pass tests, evaluations, checksums, install, upgrade/rollback, security, license, and performance gates against one final product fingerprint; stale v2/Phase 9 or local GNU-LLVM evidence cannot satisfy the gate.
   4. User and maintainer documentation explains the Rust-only architecture, npm/native installation, supported platforms, actionable no-fallback failures, migration/rollback, and the two-release compatibility window.
 
-**Plans:** 3 plans planned
+**Plans:** 1/3 plans executed
 
 Plans:
 
-- [ ] 14-01: Delete replaced TypeScript source, tests, configuration, and legacy references
+- [x] 14-01-PLAN.md
+- [ ] 14-02-PLAN.md
+- [ ] 14-03-PLAN.md
+
+- [x] 14-01: Delete replaced TypeScript source, tests, configuration, and legacy references
 - [ ] 14-02: Make permanent source, CI, release, and product-fingerprint gates enforce the Rust-only tree
 - [ ] 14-03: Finalize Rust-only docs, freeze the final fingerprint/intake, collect hosted Windows/Linux evidence, and close v3.0
