@@ -1,46 +1,184 @@
-# Rust Default-Entry Cutover
+# Rust-Only Cutover and Hosted Closure
 
-## Current contract
+## Current authority contract
 
-The public `minimax-codex` npm command is the shell-free launcher in `bin/minimax-codex.cjs`. It accepts only Windows x64 or Linux x64 and starts the fixed sibling binary `minimax-codex.exe` or `minimax-codex`. It does not search `PATH`, read an override environment variable, invoke a shell, download a binary or model, read credentials, or fall back to TypeScript.
+Rust is the sole product, test, compatibility, Provider-evaluation, and
+retrieval-evaluation authority. The public npm surface contains exactly one bin:
 
-`minimax-codex-legacy` remains an explicit command for `dist/cli.js`. A missing, non-executable, linked, or unsupported Rust artifact produces a nonzero error that names the legacy command; choosing it is always the operator's decision.
+```text
+minimax-codex -> bin/minimax-codex.cjs -> fixed sibling Rust binary
+```
 
-## Evidence that authorized the switch
+The CJS launcher and MJS release scripts are distribution orchestration only.
+They do not implement Provider, retrieval, session, Vault, Wiki, tool,
+migration, or fallback behavior. Static TypeScript-era files under
+`fixtures/compat/` are immutable compatibility/migration data and are never
+built or executed.
 
-The prerequisite release gate is GitHub Actions run `29474558013`, tree `b4c19d5f776850808d138cf51a694789eb67be38`. Both hosted jobs passed the complete offline matrix:
+The launcher accepts only `win32/x64` or `linux/x64` and starts
+`minimax-codex.exe` or `minimax-codex` beside the package. It does not search
+`PATH`, read a binary override, invoke a shell, download a binary/model, read
+credentials, or fall back to another runtime.
 
-- Windows x64 MSVC: 27.905 ms cold-start p95, 7,213,056-byte maximum idle RSS, 4,000,125-byte compressed archive, and 1.366 ms 10k-Wiki BM25 p95.
-- Linux x64 GNU: 4.113 ms cold-start p95, 5,664,768-byte maximum idle RSS, 4,745,674-byte compressed archive, and 2.099 ms 10k-Wiki BM25 p95.
+## Release target identity
 
-Both stayed below the 500 ms, 150 MiB, 50 MiB, and 100 ms limits. They checked 234 dependency packages and recorded zero invalid licenses, unsafe Rust files, database packages, migration network/credential paths, credentials read, Provider calls, or model downloads. The machine-readable record is `fixtures/compat/release/hosted-gates.v1.json`; the final cutover tree must pass the same matrix again.
+Final hosted release authority requires both exact targets:
 
-## Refreshing hosted evidence
+- `windows-x86_64-msvc` with Rust host `x86_64-pc-windows-msvc`;
+- `linux-x86_64-gnu` with Rust host `x86_64-unknown-linux-gnu`.
 
-An ordinary push or pull request always runs the strict gate and rejects stale hosted evidence. To refresh evidence after an intentional product change, manually dispatch the `CI` workflow. Manual dispatch is the only candidate mode: it skips only comparison with the previous hosted record, while retaining the complete Windows/Linux matrix, offline compatibility and architecture checks, release packaging, performance/security budgets, and the Linux malicious-sandbox canary. Each matrix job uploads its release-evidence JSON for seven days.
-
-After both candidate jobs succeed, bind `fixtures/compat/release/hosted-gates.v1.json` to that run, its two job IDs, the current tree, and the identical product fingerprint from both artifacts. Commit the record, then require a subsequent ordinary push run to pass in strict mode. Candidate mode is never selected for push or pull-request events and cannot make the final strict gate optional.
-
-## Fresh install and first migration
-
-1. Verify the release archive against its `.sha256` sidecar and inspect `RELEASE-MANIFEST.json`.
-2. Extract into a new versioned directory. Keep the prior release and all `.mini-codex` source data.
-3. Run the Rust `doctor` command and a normal read-only status command.
-4. If TypeScript state must move, run `migrate inventory`, save `migrate dry-run --json`, review every inclusion/exclusion/collision, then use only the exact printed `MIGRATE:<hash>` confirmation.
-5. Run `migrate verify` against the immutable receipt before making the new version the stable command.
-
-Inventory and dry-run write nothing. Apply never changes, renames, truncates, or deletes the TypeScript source. Secrets, private reasoning, summaries, caches, locks, databases, and unknown records are excluded.
-
-## Upgrade and rollback
-
-Install each upgrade beside the active version, verify it, and change the stable launcher only after `doctor` and migration verification pass. Binary rollback points the stable command back to the prior version; it does not touch Vault content, migrated files, or receipts.
-
-Data rollback requires the exact `ROLLBACK:<receipt-hash>` confirmation and removes only unchanged targets marked `created` by that receipt. Reused or modified files and the immutable receipt remain. There is no force path.
-
-## Legacy support window and removal rule
-
-The explicit TypeScript command is supported throughout the v0.1 release line and for at least 90 days after the first published Rust-default build. Removal requires a separately approved milestone, a fresh compatibility and migration audit, and a documented user notice. This cutover does not delete TypeScript source or user data.
+Local `windows-x86_64-gnullvm-dev` evidence is `development_only`. It can prove
+local package behavior but can never substitute for hosted Windows MSVC.
 
 ## Distribution boundary
 
-The base archive contains the launcher, one native Rust binary, documentation, both licenses, and the release manifest; it never contains an embedding resource. The platform npm package contains that exact verified launcher/binary plus the built TypeScript legacy entry, so one install preserves both explicit commands. Verification extracts and starts the packaged Rust default and checks both bin mappings. Hosted evidence also records a deterministic fingerprint of every tracked product input except planning documents and the evidence record itself; any product change therefore invalidates the old gate. Publishing, tagging, opening or merging a PR, and deleting the legacy implementation are separate operator actions and were not performed by this phase.
+The native archive contains one Rust binary, `bin/minimax-codex.cjs`, release
+documentation, both licenses, and the release manifest. The platform npm package
+contains the same launcher and Rust binary plus npm metadata. Neither archive
+contains TypeScript/TSX source, `dist/`, a legacy bin, runtime dependencies,
+install hooks, an embedding resource, or a downloader.
+
+Release verification checks:
+
+- exact target ID, Rust host, support tier, product fingerprint, and file count;
+- archive, npm, binary, launcher, and entry hashes/modes;
+- independently extracted native and npm installed Rust identities;
+- missing/unsafe sibling rejection with no alternate child process;
+- Rust tests, Provider/retrieval evaluation, compatibility, and migration;
+- package corruption, licenses, unsafe-code/database/migration boundaries;
+- cold-start, idle RSS, compressed-size, and 10k-Wiki BM25 thresholds;
+- offline execution with zero Provider calls, credential reads, and model
+  downloads.
+
+## Product fingerprint v3
+
+Fingerprint v3 hashes the current bytes of every tracked and untracked product
+input together with its canonical path and authority mode. Source,
+configuration, fixtures, launcher, release scripts, and user/maintainer docs are
+included. Only `.planning/**` and
+`fixtures/compat/release/hosted-gates.v1.json` are excluded to avoid planning
+noise and a self-referential evidence hash.
+
+Any product edit invalidates an older fingerprint, package, intake, and hosted
+record. The final fingerprint is frozen only after documentation is complete.
+
+## Candidate and strict hosted evidence
+
+The checked-in hosted record is not trusted merely because it is well-formed.
+It must match the final fingerprint/file count and exact successful Windows MSVC
+and Linux GNU jobs.
+
+The auditable refresh order is:
+
+1. Complete all tracked product/docs edits and generate the local final intake.
+2. Obtain fresh, explicit authorization for the bounded Git/hosted-CI actions.
+3. Manually dispatch one `CI` workflow candidate run. Candidate mode skips only
+   comparison with the prior hosted record; all other Rust, sandbox,
+   evaluation, compatibility, package, install, security, license, and
+   performance gates remain mandatory.
+4. Download and validate both exact target artifacts against the frozen
+   fingerprint and hashes.
+5. Write and push an interim candidate-only evidence record with strict status
+   pending.
+6. Allow the ordinary push-triggered strict run to validate that exact record.
+7. Download strict artifacts, validate run/job/head/tree/target/hash fields, and
+   complete the combined hosted record.
+8. Run local strict verification against the unchanged frozen local root.
+
+Strict mode rejects stale, pre-deletion, mixed-run, missing-target,
+development-tier, or hash-mismatched evidence. A candidate run never makes the
+subsequent strict run optional.
+
+Push, workflow dispatch, publication, tagging, PR creation, and merge are
+external actions. They require fresh authorization and are not implied by local
+verification. npm publication, tagging, PR creation, merge, and real user-data
+migration are outside this closure workflow.
+
+## Actionable no-fallback failures
+
+Launcher errors are nonzero and stable:
+
+- `E_UNSUPPORTED_HOST`: use a supported Windows x64 or Linux x64 package;
+- `E_BINARY_MISSING`: reinstall the complete matching package;
+- `E_BINARY_UNSAFE`: reject a symlink, directory, or non-regular sibling;
+- `E_BINARY_NOT_EXECUTABLE`: restore the packaged Linux executable mode;
+- `E_START_FAILED`: verify target compatibility and authentic package bytes;
+- `E_SIGNAL_TERMINATION`: investigate the host/runtime termination.
+
+None of these errors starts TypeScript, searches `PATH`, downloads a runtime, or
+tries an alternate command.
+
+## Fresh install
+
+Choose the native archive or platform npm tarball for the exact supported
+target. Verify its `.sha256` sidecar and `RELEASE-MANIFEST.json`, install into a
+new versioned location, then run:
+
+```bash
+minimax-codex --version
+minimax-codex doctor
+```
+
+For native extraction, also verify `node bin/minimax-codex.cjs doctor` reaches
+the same Rust binary. For global/npm and one-time `npx` examples, see
+[installation, upgrade, and rollback](install-upgrade-rollback.md).
+
+## TypeScript-era state migration
+
+Keep the previous release and all `.mini-codex` source data. Migration is
+explicit and source-preserving:
+
+```bash
+minimax-codex migrate inventory
+minimax-codex migrate dry-run --json
+minimax-codex migrate apply --plan <plan> --confirmation <printed-value>
+minimax-codex migrate verify --receipt <receipt>
+```
+
+Inventory and dry-run write nothing. Review every inclusion, exclusion, and
+collision before using the exact printed `MIGRATE:<hash>` confirmation. Apply
+stages and validates allowlisted targets, never modifies `.mini-codex`, and
+writes an immutable receipt. Credentials, private reasoning, summaries, caches,
+locks, databases, and unknown records are excluded.
+
+## Upgrade and rollback
+
+Install upgrades beside the active version. Verify hashes/manifest, run
+`--version` and `doctor`, and complete migration verification before switching
+the stable command. Binary rollback points the command back to the previous
+verified version without touching Vault content, imported files, receipts, or
+source data.
+
+Data rollback requires:
+
+```bash
+minimax-codex migrate rollback --receipt <receipt> --confirmation ROLLBACK:<receipt-hash>
+```
+
+Only unchanged targets marked `created` by that receipt are removed. Reused or
+modified targets, the receipt, and `.mini-codex` remain. There is no force path.
+
+## Two-subsequent-public-release support window
+
+Migration fixture retention is machine-checkable in
+`fixtures/compat/migration/typescript-v1/support-window.v1.json`:
+
+- cutover release: `3.0.0`;
+- minimum: two distinct, ordered subsequent public releases;
+- removal eligibility remains false until both releases are recorded and the
+  fixture fingerprint still matches.
+
+This rule preserves TypeScript-era data compatibility without retaining an
+executable TypeScript product. Fixture removal, when eligible, is a separate
+reviewed action; this cutover never modifies real user source data.
+
+## Sandbox truthfulness
+
+Linux confirm-mode process tools require the enforced Bubblewrap-plus-seccomp
+backend and run the malicious build-script canary in hosted CI. Windows remains
+a supported product/release target, but confirm-mode process diagnostics fail
+closed until a native Windows sandbox backend exists. `full-access` explicitly
+uses ordinary host access and is appropriate only for trusted projects.
+
+See [Subprocess Sandbox and Network Boundary](subprocess-sandbox.md) for the
+complete platform and trust model.
