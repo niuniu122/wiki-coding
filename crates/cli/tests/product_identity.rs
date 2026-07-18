@@ -58,6 +58,32 @@ fn installed_smoke_uses_an_isolated_environment_and_fixed_sibling() {
     assert!(!launcher.contains("dist/cli.js"));
 }
 
+#[test]
+fn npm_launcher_defines_the_stable_fail_closed_error_taxonomy() {
+    let launcher = std::fs::read_to_string(repo_root().join("bin/minimax-codex.cjs"))
+        .expect("launcher source");
+
+    for code in [
+        "E_UNSUPPORTED_HOST",
+        "E_BINARY_MISSING",
+        "E_BINARY_UNSAFE",
+        "E_BINARY_NOT_EXECUTABLE",
+        "E_START_FAILED",
+        "E_SIGNAL_TERMINATION",
+    ] {
+        assert!(
+            launcher.contains(code),
+            "launcher must define stable error code {code}"
+        );
+    }
+    for forbidden in ["http://", "https://", "fetch(", "process.env", "download"] {
+        assert!(
+            !launcher.to_ascii_lowercase().contains(forbidden),
+            "launcher must not contain fallback/download capability: {forbidden}"
+        );
+    }
+}
+
 fn repo_root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()

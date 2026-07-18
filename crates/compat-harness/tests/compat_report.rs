@@ -766,18 +766,33 @@ fn normalize_golden_newlines(value: &str) -> String {
 
 fn assert_launcher_contract(repository_root: &Path) {
     let missing = LauncherFixture::new(repository_root);
-    assert_launcher_failure(&missing.run(&["--version"]), "missing");
+    assert_launcher_failure(
+        &missing.run(&["--version"]),
+        "E_BINARY_MISSING",
+        "missing",
+        Some(&missing.binary_path()),
+    );
 
     let unsafe_entry = LauncherFixture::new(repository_root);
     fs::create_dir_all(unsafe_entry.binary_path()).expect("unsafe binary directory");
-    assert_launcher_failure(&unsafe_entry.run(&["--version"]), "safe regular file");
+    assert_launcher_failure(
+        &unsafe_entry.run(&["--version"]),
+        "E_BINARY_UNSAFE",
+        "safe regular file",
+        Some(&unsafe_entry.binary_path()),
+    );
 
     let non_executable = LauncherFixture::new(repository_root);
     non_executable.write_binary(b"not executable", false);
     non_executable.rewrite_launcher(|source| {
         source.replace("if (process.platform !== \"win32\" &&", "if (true &&")
     });
-    assert_launcher_failure(&non_executable.run(&["--version"]), "not executable");
+    assert_launcher_failure(
+        &non_executable.run(&["--version"]),
+        "E_BINARY_NOT_EXECUTABLE",
+        "not executable",
+        Some(&non_executable.binary_path()),
+    );
 
     let unsupported = LauncherFixture::new(repository_root);
     unsupported.rewrite_launcher(|source| {
@@ -785,11 +800,21 @@ fn assert_launcher_contract(repository_root: &Path) {
             .replace("\"win32:x64\"", "\"fixture-win32:x64\"")
             .replace("\"linux:x64\"", "\"fixture-linux:x64\"")
     });
-    assert_launcher_failure(&unsupported.run(&["--version"]), "unsupported platform");
+    assert_launcher_failure(
+        &unsupported.run(&["--version"]),
+        "E_UNSUPPORTED_HOST",
+        "unsupported host",
+        None,
+    );
 
     let cannot_start = LauncherFixture::new(repository_root);
     cannot_start.write_binary(b"not an executable image", true);
-    assert_launcher_failure(&cannot_start.run(&["--version"]), "could not start");
+    assert_launcher_failure(
+        &cannot_start.run(&["--version"]),
+        "E_START_FAILED",
+        "could not start",
+        Some(&cannot_start.binary_path()),
+    );
 
     let forwarding = LauncherFixture::new(repository_root);
     forwarding.install_node_binary();
@@ -823,23 +848,54 @@ fn assert_launcher_contract(repository_root: &Path) {
         );
         assert_launcher_failure(
             &forwarding.run(&[signal_probe.to_str().expect("UTF-8 signal probe path")]),
+            "E_SIGNAL_TERMINATION",
             "ended by signal",
+            Some(&forwarding.binary_path()),
         );
     }
 }
 
-fn assert_launcher_failure(output: &Output, expected: &str) {
+fn assert_launcher_failure(
+    output: &Output,
+    expected_code: &str,
+    expected_detail: &str,
+    expected_path: Option<&Path>,
+) {
     assert_eq!(output.status.code(), Some(1), "{}", stderr(output));
     assert!(output.stdout.is_empty());
     let stderr = stderr(output).to_ascii_lowercase();
     assert!(
-        stderr.contains(expected),
+        stderr.contains(&format!("minimax-codex [{expected_code}]:").to_ascii_lowercase()),
+        "missing stable launcher error code: {stderr}"
+    );
+    assert!(
+        stderr.contains(expected_detail),
         "unexpected launcher error: {stderr}"
     );
+    if let Some(path) = expected_path {
+        assert!(
+            stderr.contains("expected path:"),
+            "missing expected path: {stderr}"
+        );
+        assert!(
+            stderr.contains(&path.to_string_lossy().to_ascii_lowercase()),
+            "missing concrete expected path: {stderr}"
+        );
+    } else {
+        assert!(
+            stderr.contains("expected packaged targets: win32/x64, linux/x64"),
+            "missing supported target guidance: {stderr}"
+        );
+    }
     for guidance in ["reinstall", "supported", "windows x64", "linux x64"] {
         assert!(stderr.contains(guidance), "missing {guidance}: {stderr}");
     }
-    for fallback in ["minimax-codex-legacy", "dist/cli.js", "src/cli.tsx"] {
+    for fallback in [
+        "minimax-codex-legacy",
+        "dist/cli.js",
+        "src/cli.tsx",
+        "download",
+    ] {
         assert!(
             !stderr.contains(fallback),
             "fallback guidance leaked: {stderr}"
