@@ -449,6 +449,11 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
     if !normalized.contains("os: [ubuntu-latest, windows-latest]") {
         return violation("CI matrix must remain Ubuntu and Windows x64 hosted jobs");
     }
+    let reproducible_msvc_link =
+        "RUSTFLAGS: ${{ runner.os == 'Windows' && '-C link-arg=/Brepro' || '' }}";
+    if normalized.matches(reproducible_msvc_link).count() != 1 {
+        return violation("CI Windows MSVC builds must retain reproducible /Brepro linking");
+    }
     if !normalized.contains("run: bash scripts/ci-linux-sandbox-canary.sh") {
         return violation("CI must retain the Linux adversarial sandbox canary");
     }

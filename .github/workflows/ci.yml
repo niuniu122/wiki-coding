@@ -14,6 +14,7 @@ jobs:
     timeout-minutes: 15
     env:
       CARGO_TARGET_DIR: target/phase14-ci/cargo
+      RUSTFLAGS: ${{ runner.os == 'Windows' && '-C link-arg=/Brepro' || '' }}
     strategy:
       fail-fast: false
       matrix:
