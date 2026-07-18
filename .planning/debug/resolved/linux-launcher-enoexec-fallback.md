@@ -2,7 +2,7 @@
 
 ## Status
 
-Resolved locally on 2026-07-18. A fresh hosted candidate run is still required.
+Resolved locally and verified on hosted Linux on 2026-07-18. The second candidate run advanced past the launcher regression before failing later on an independent migration-fixture byte drift.
 
 ## Evidence
 
@@ -36,4 +36,4 @@ On Linux, Node's `spawnSync` handling for an executable file with an invalid nat
 
 ## Remaining proof
 
-The Linux behavior cannot be promoted from local Windows GNU-LLVM evidence. A new hosted Linux GNU plus Windows MSVC candidate run must pass before candidate evidence can be recorded.
+Hosted run `29634802180`, Linux job `88055149591`, passed the launcher compatibility regression. A complete dual-platform candidate is still required before candidate evidence can be recorded.
