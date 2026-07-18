@@ -218,12 +218,12 @@ fn package_alias_and_repository_verification_use_the_rust_provider_gate() {
         .find("fn verify_repository")
         .expect("repository verification function")..];
     let provider_gate = verification
-        .find("verify_provider_evaluation")
-        .expect("Provider evaluation gate");
+        .find("verify_provider_fixtures")
+        .expect("Rust Provider fixture gate");
     let compatibility = verification
-        .find("load_compat_manifests")
-        .expect("compatibility manifest gate");
-    assert!(provider_gate < compatibility);
+        .find("verify_fixture_compatibility")
+        .expect("fixture compatibility gate");
+    assert!(compatibility < provider_gate);
 }
 
 #[test]
@@ -338,16 +338,16 @@ fn immutable_retrieval_corpus_preserves_transitional_175_case_contract() {
             .expect("retrieval evidence")
             .iter()
             .any(|evidence| {
-                evidence["path"] == "crates/compat-harness/tests/provider_eval.rs"
+                evidence["path"] == "crates/compat-harness/tests/retrieval_eval.rs"
                     && evidence["test"]
-                        == "immutable_retrieval_corpus_preserves_transitional_175_case_contract"
+                        == "retrieval_evaluation_matches_committed_golden_and_is_repeatable"
             })
     );
     assert!(
         retrieval["responsibilities"][0]["rationale"]
             .as_str()
             .expect("retrieval rationale")
-            .contains(target_path)
+            .contains("Rust retrieval evaluation")
     );
 }
 
@@ -418,6 +418,27 @@ impl FixtureRepository {
             fs::create_dir_all(destination.parent().expect("fixture parent"))
                 .expect("create fixture parent");
             fs::copy(repository.join(relative), destination).expect("copy evaluation fixture");
+        }
+        let public_contract: Value = serde_json::from_str(
+            &fs::read_to_string(repository.join("fixtures/compat/public-contract.v1.json"))
+                .expect("public contract fixture"),
+        )
+        .expect("public contract JSON");
+        for evidence in public_contract["items"]
+            .as_array()
+            .expect("public contract items")
+            .iter()
+            .flat_map(|item| item["evidence"].as_array().expect("item evidence"))
+        {
+            let relative = evidence.as_str().expect("evidence path");
+            let destination = root.join(relative);
+            if destination.exists() {
+                continue;
+            }
+            fs::create_dir_all(destination.parent().expect("evidence parent"))
+                .expect("create evidence parent");
+            fs::copy(repository.join(relative), destination)
+                .expect("copy public contract evidence");
         }
         Self { root }
     }
