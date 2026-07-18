@@ -93,11 +93,21 @@ const EXPECTED_RUST_ROOTS: [(&str, RustRootKind); 9] = [
     ("crates/tui", RustRootKind::Product),
     ("crates/vault", RustRootKind::Product),
 ];
-const EXPECTED_JAVASCRIPT: [(&str, &str, JavascriptPurpose); 5] = [
+const EXPECTED_JAVASCRIPT: [(&str, &str, JavascriptPurpose); 7] = [
     (
         "npm-launcher",
         "bin/minimax-codex.cjs",
         JavascriptPurpose::RustBinaryLauncher,
+    ),
+    (
+        "package-contract",
+        "scripts/release/package-contract.mjs",
+        JavascriptPurpose::ReleaseOrchestration,
+    ),
+    (
+        "package-contract-tests",
+        "scripts/release/package-contract.test.mjs",
+        JavascriptPurpose::PackageTestOnly,
     ),
     (
         "release-package",
@@ -197,6 +207,8 @@ pub struct JavascriptAuthority {
 #[serde(rename_all = "camelCase")]
 pub enum JavascriptPurpose {
     RustBinaryLauncher,
+    ReleaseOrchestration,
+    PackageTestOnly,
     RustReleasePackaging,
     ProductFingerprinting,
     MilestoneVerification,
@@ -377,6 +389,9 @@ pub fn validate_source_authority(
         return violation("legacy JavaScript fixture entered executable JavaScript authority");
     }
     for entry in &manifest.javascript_allowlist {
+        if entry.purpose == JavascriptPurpose::PackageTestOnly {
+            continue;
+        }
         let contents = fs::read_to_string(root.join(&entry.path))
             .map_err(|_| SourceAuthorityError::PathRead(entry.path.clone()))?;
         validate_javascript_source_text(&entry.path, &contents)?;

@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import {readFileSync} from "node:fs";
 import test from "node:test";
+import {dirname, resolve} from "node:path";
+import {fileURLToPath} from "node:url";
 
 import {
   expectedArchiveEntries,
@@ -16,6 +19,7 @@ const HASHES = Object.freeze({
   archive: "e".repeat(64),
   npm: "f".repeat(64)
 });
+const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 
 test("healthy target and release manifest controls pass", () => {
   const contract = loadTargetContract();
@@ -30,6 +34,22 @@ test("healthy target and release manifest controls pass", () => {
   );
   assert.equal(contract.targets.filter((target) => target.supportTier === "hosted_release").length, 2);
   assert.doesNotThrow(() => validateReleaseManifest(healthyManifest(contract), contract));
+});
+
+test("target contract links the unchanged release threshold budgets", () => {
+  const contract = loadTargetContract();
+  const thresholds = JSON.parse(readFileSync(resolve(root, "fixtures/compat/release/thresholds.v1.json"), "utf8"));
+  assert.equal(thresholds.schemaVersion, contract.thresholdSchemaVersion);
+  assert.equal(thresholds.targetContractSchemaVersion, contract.schemaVersion);
+  assert.deepEqual(
+    {
+      coldStartMs: thresholds.coldStartMs,
+      idleRssBytes: thresholds.idleRssBytes,
+      baseCompressedBytes: thresholds.baseCompressedBytes,
+      wikiBm25P95Ms: thresholds.wikiBm25P95Ms
+    },
+    {coldStartMs: 500, idleRssBytes: 157286400, baseCompressedBytes: 52428800, wikiBm25P95Ms: 100}
+  );
 });
 
 test("target contract rejects malformed and tier-confused identities by category", () => {
@@ -80,10 +100,22 @@ function healthyManifest(contract) {
   const version = "0.1.0";
   const nativeEntries = evidenceEntries(expectedArchiveEntries(target, version, "native"));
   const npmEntries = evidenceEntries(expectedArchiveEntries(target, version, "npm"));
-  setContentHash(nativeEntries, `minimax-codex-v${version}-${target.id}/${target.binaryName}`, HASHES.binary);
-  setContentHash(nativeEntries, `minimax-codex-v${version}-${target.id}/bin/minimax-codex.cjs`, HASHES.launcher);
-  setContentHash(npmEntries, `package/${target.binaryName}`, HASHES.binary);
-  setContentHash(npmEntries, "package/bin/minimax-codex.cjs", HASHES.launcher);
+  setContentEvidence(nativeEntries, `minimax-codex-v${version}-${target.id}/${target.binaryName}`, HASHES.binary, 1024);
+  setContentEvidence(nativeEntries, `minimax-codex-v${version}-${target.id}/bin/minimax-codex.cjs`, HASHES.launcher, 512);
+  setContentEvidence(npmEntries, `package/${target.binaryName}`, HASHES.binary, 1024);
+  setContentEvidence(npmEntries, "package/bin/minimax-codex.cjs", HASHES.launcher, 512);
+  for (const [index, relative] of [
+    "README.md",
+    "LICENSE-APACHE",
+    "LICENSE-MIT",
+    "docs/release/cutover.md",
+    "docs/release/embedding-package.md",
+    "docs/release/install-upgrade-rollback.md",
+    "docs/release/subprocess-sandbox.md"
+  ].entries()) {
+    setContentEvidence(nativeEntries, `minimax-codex-v${version}-${target.id}/${relative}`, HASHES.content, 100 + index);
+    setContentEvidence(npmEntries, `package/${relative}`, HASHES.content, 100 + index);
+  }
   return {
     schemaVersion: 2,
     name: "minimax-codex",
@@ -120,10 +152,11 @@ function evidenceEntries(entries) {
     : {...entry, bytes: index + 1, sha256: HASHES.content});
 }
 
-function setContentHash(entries, path, hash) {
+function setContentEvidence(entries, path, hash, bytes) {
   const entry = entries.find((candidate) => candidate.path === path);
   assert.ok(entry, `expected canonical entry ${path}`);
   entry.sha256 = hash;
+  entry.bytes = bytes;
 }
 
 function assertContractError(operation, expectedCode, label) {

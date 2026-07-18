@@ -87,6 +87,8 @@ impl SyntheticRepository {
         );
         for path in [
             "bin/minimax-codex.cjs",
+            "scripts/release/package-contract.mjs",
+            "scripts/release/package-contract.test.mjs",
             "scripts/release/package-rust.mjs",
             "scripts/release/product-fingerprint.mjs",
             "scripts/release/verify-milestone-flow.mjs",
@@ -284,7 +286,7 @@ fn manifest_schema() {
 
     assert_eq!(manifest.schema_version, 1);
     assert_eq!(manifest.executable_entries.len(), 1);
-    assert_eq!(manifest.javascript_allowlist.len(), 5);
+    assert_eq!(manifest.javascript_allowlist.len(), 7);
     assert_eq!(manifest.transitional_legacy_test_fixtures.entries.len(), 3);
     assert_eq!(manifest.state_authority.writable_roots.len(), 1);
     assert_eq!(manifest.state_authority.writable_roots[0].path, ".minimax");
@@ -377,7 +379,10 @@ fn package_contract_sources_have_non_product_authority_classes() {
         .as_array()
         .expect("JavaScript allowlist should be an array");
     for (path, purpose) in [
-        ("scripts/release/package-contract.mjs", "releaseOrchestration"),
+        (
+            "scripts/release/package-contract.mjs",
+            "releaseOrchestration",
+        ),
         (
             "scripts/release/package-contract.test.mjs",
             "packageTestOnly",
@@ -390,6 +395,26 @@ fn package_contract_sources_have_non_product_authority_classes() {
         assert_eq!(entry["purpose"], purpose);
         assert_ne!(entry["id"], "npm-launcher");
     }
+
+    let package_test = SyntheticRepository::new();
+    package_test.write_javascript(
+        "scripts/release/package-contract.test.mjs",
+        "const assertionFixture = \"fetch('https://example.invalid/runtime') and spawnSync('node', ['dist/cli.js'])\";\n",
+    );
+    let manifest = package_test.load();
+    validate_source_authority(&package_test.root, &manifest)
+        .expect("package-test-only assertion strings must not become executable fallback findings");
+
+    assert_validation_rejected(
+        "production package runtime download",
+        |repository| {
+            repository.write_javascript(
+                "scripts/release/package-contract.mjs",
+                "const runtime = await fetch('https://example.invalid/runtime');\n",
+            );
+        },
+        "runtime download",
+    );
 }
 
 #[test]

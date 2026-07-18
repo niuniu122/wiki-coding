@@ -29,6 +29,20 @@
       "forbiddenCapabilities": ["fallback", "migration", "provider", "retrieval", "runtimeDownload", "session", "tool", "vault", "wiki"]
     },
     {
+      "id": "package-contract",
+      "path": "scripts/release/package-contract.mjs",
+      "sha256": "1a4f67c25ca0fa39f2460797c40c93c24083d680f9a12baf5beac81135bc8f8e",
+      "purpose": "releaseOrchestration",
+      "forbiddenCapabilities": ["fallback", "migration", "provider", "retrieval", "runtimeDownload", "session", "tool", "vault", "wiki"]
+    },
+    {
+      "id": "package-contract-tests",
+      "path": "scripts/release/package-contract.test.mjs",
+      "sha256": "57be3387c8d36360ba2c3df152569e3aadb51ae5886c38128f93de1b99cfaade",
+      "purpose": "packageTestOnly",
+      "forbiddenCapabilities": ["fallback", "migration", "provider", "retrieval", "runtimeDownload", "session", "tool", "vault", "wiki"]
+    },
+    {
       "id": "release-package",
       "path": "scripts/release/package-rust.mjs",
       "sha256": "f7185235bdf7ade8c760ef2217897115c7bd9dc869cec9ff7f8a0b77df835900",

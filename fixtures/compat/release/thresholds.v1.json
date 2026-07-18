@@ -1,5 +1,6 @@
 {
   "schemaVersion": 1,
+  "targetContractSchemaVersion": 1,
   "coldStartMs": 500,
   "idleRssBytes": 157286400,
   "baseCompressedBytes": 52428800,

@@ -1,0 +1,37 @@
+{
+  "schemaVersion": 1,
+  "manifestSchemaVersion": 2,
+  "thresholdSchemaVersion": 1,
+  "targets": [
+    {
+      "id": "linux-x86_64-gnu",
+      "rustcHost": "x86_64-unknown-linux-gnu",
+      "os": "linux",
+      "arch": "x64",
+      "binaryName": "minimax-codex",
+      "binaryMode": 493,
+      "archiveSuffix": ".tar.gz",
+      "supportTier": "hosted_release"
+    },
+    {
+      "id": "windows-x86_64-gnullvm-dev",
+      "rustcHost": "x86_64-pc-windows-gnullvm",
+      "os": "win32",
+      "arch": "x64",
+      "binaryName": "minimax-codex.exe",
+      "binaryMode": 493,
+      "archiveSuffix": ".tar.gz",
+      "supportTier": "development_only"
+    },
+    {
+      "id": "windows-x86_64-msvc",
+      "rustcHost": "x86_64-pc-windows-msvc",
+      "os": "win32",
+      "arch": "x64",
+      "binaryName": "minimax-codex.exe",
+      "binaryMode": 493,
+      "archiveSuffix": ".tar.gz",
+      "supportTier": "hosted_release"
+    }
+  ]
+}
