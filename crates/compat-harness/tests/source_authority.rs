@@ -369,6 +369,30 @@ fn manifest_schema() {
 }
 
 #[test]
+fn package_contract_sources_have_non_product_authority_classes() {
+    let root = repository_root();
+    let manifest: Value = serde_json::from_str(&manifest_json(&root))
+        .expect("source authority manifest should parse");
+    let entries = manifest["javascriptAllowlist"]
+        .as_array()
+        .expect("JavaScript allowlist should be an array");
+    for (path, purpose) in [
+        ("scripts/release/package-contract.mjs", "releaseOrchestration"),
+        (
+            "scripts/release/package-contract.test.mjs",
+            "packageTestOnly",
+        ),
+    ] {
+        let entry = entries
+            .iter()
+            .find(|entry| entry["path"] == path)
+            .unwrap_or_else(|| panic!("missing package authority path: {path}"));
+        assert_eq!(entry["purpose"], purpose);
+        assert_ne!(entry["id"], "npm-launcher");
+    }
+}
+
+#[test]
 fn repository_source_inventory() {
     let root = repository_root();
     let manifest = load_source_authority(&root).expect("committed source authority should load");
