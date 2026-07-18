@@ -23,6 +23,7 @@ import {
   validateReleaseManifest,
   validateTargetContract
 } from "./package-contract.mjs";
+import {computeProductFingerprint} from "./product-fingerprint.mjs";
 
 const HASHES = Object.freeze({
   product: "a".repeat(64),
@@ -117,8 +118,10 @@ test("package assembly is byte-identical and emits one strict external manifest"
     if (process.platform !== "win32") chmodSync(binary, 0o755);
     const first = resolve(workspace, "first");
     const second = resolve(workspace, "second");
-    runPackage(binary, first);
-    runPackage(binary, second);
+    const fingerprintFile = resolve(workspace, "fingerprint.json");
+    writeFileSync(fingerprintFile, `${JSON.stringify(computeProductFingerprint(root))}\n`, "utf8");
+    runPackage(binary, first, fingerprintFile);
+    runPackage(binary, second, fingerprintFile);
 
     const contract = loadTargetContract();
     const rustc = spawnSync("rustc", ["-vV"], {cwd: root, encoding: "utf8", shell: false, windowsHide: true});
@@ -184,6 +187,63 @@ test("corrupt package candidates fail closed by stable category before any alter
 test("package.json exposes the package-only corruption gate", () => {
   const packageJson = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
   assert.equal(packageJson.scripts["test:package"], "node --test scripts/release/package-contract.test.mjs");
+});
+
+test("release CLIs require one explicit current fingerprint and bind artifacts to it", () => {
+  mkdirSync(resolve(root, "target"), {recursive: true});
+  const workspace = mkdtempSync(resolve(root, "target/fingerprint-contract-test-"));
+  try {
+    const binary = resolve(workspace, process.platform === "win32" ? "minimax-cli.exe" : "minimax-cli");
+    const artifacts = resolve(workspace, "artifacts");
+    const evidence = resolve(workspace, "evidence");
+    const fingerprintFile = resolve(workspace, "fingerprint.json");
+    const malformedFile = resolve(workspace, "malformed.json");
+    const staleFile = resolve(workspace, "stale.json");
+    const current = computeProductFingerprint(root);
+    writeFileSync(binary, Buffer.from("synthetic-rust-binary-v2\n", "utf8"));
+    if (process.platform !== "win32") chmodSync(binary, 0o755);
+    writeFileSync(fingerprintFile, `${JSON.stringify(current)}\n`, "utf8");
+    writeFileSync(malformedFile, "{\n", "utf8");
+    writeFileSync(staleFile, `${JSON.stringify({...current, fingerprint: "0".repeat(64)})}\n`, "utf8");
+
+    const packaged = runPackage(binary, artifacts, fingerprintFile);
+    const packageOutput = JSON.parse(packaged.stdout);
+    assert.equal(packageOutput.productFingerprint, current.fingerprint);
+    assert.equal(packageOutput.fingerprintFile.replaceAll("\\", "/"), fingerprintFile.replaceAll("\\", "/"));
+
+    for (const [label, values, code] of [
+      ["missing package fingerprint", ["--binary", binary, "--output", resolve(workspace, "missing")], "E_FINGERPRINT_REQUIRED"],
+      ["malformed package fingerprint", ["--binary", binary, "--output", resolve(workspace, "malformed"), "--fingerprint-file", malformedFile], "E_FINGERPRINT_INVALID"],
+      ["stale package fingerprint", ["--binary", binary, "--output", resolve(workspace, "stale"), "--fingerprint-file", staleFile], "E_FINGERPRINT_STALE"]
+    ]) {
+      const result = spawnReleaseScript("package-rust.mjs", values);
+      assert.notEqual(result.status, 0, label);
+      assert.match(result.stderr, new RegExp(code, "u"), label);
+    }
+
+    const missingMilestone = spawnReleaseScript("verify-milestone-flow.mjs", [
+      "--artifacts", artifacts,
+      "--evidence-dir", evidence
+    ]);
+    assert.notEqual(missingMilestone.status, 0);
+    assert.match(missingMilestone.stderr, /E_FINGERPRINT_REQUIRED/u);
+
+    const manifestName = readdirSync(artifacts).find((name) => name.endsWith("-RELEASE-MANIFEST.json"));
+    assert.ok(manifestName);
+    const manifestPath = resolve(artifacts, manifestName);
+    const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+    manifest.product.fingerprint = "1".repeat(64);
+    writeFileSync(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+    const mismatch = spawnReleaseScript("verify-milestone-flow.mjs", [
+      "--artifacts", artifacts,
+      "--evidence-dir", evidence,
+      "--fingerprint-file", fingerprintFile
+    ]);
+    assert.notEqual(mismatch.status, 0);
+    assert.match(mismatch.stderr, /E_FINGERPRINT_ARTIFACT_MISMATCH/u);
+  } finally {
+    rmSync(workspace, {recursive: true, force: true});
+  }
 });
 
 function healthyManifest(contract) {
@@ -413,18 +473,23 @@ function assertContractError(operation, expectedCode, label) {
   });
 }
 
-function runPackage(binary, output) {
-  const result = spawnSync(
-    process.execPath,
-    [resolve(root, "scripts/release/package-rust.mjs"), "--binary", binary, "--output", output],
-    {
-      cwd: root,
-      encoding: "utf8",
-      env: {...process.env, CARGO_NET_OFFLINE: "true"},
-      shell: false,
-      windowsHide: true,
-      timeout: 30_000
-    }
-  );
+function runPackage(binary, output, fingerprintFile) {
+  const result = spawnReleaseScript("package-rust.mjs", [
+    "--binary", binary,
+    "--output", output,
+    "--fingerprint-file", fingerprintFile
+  ]);
   assert.equal(result.status, 0, result.stderr || result.stdout);
+  return result;
+}
+
+function spawnReleaseScript(name, values) {
+  return spawnSync(process.execPath, [resolve(root, "scripts/release", name), ...values], {
+    cwd: root,
+    encoding: "utf8",
+    env: {...process.env, CARGO_NET_OFFLINE: "true"},
+    shell: false,
+    windowsHide: true,
+    timeout: 30_000
+  });
 }
