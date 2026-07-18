@@ -8,7 +8,6 @@
   },
   "files": [
     "bin/minimax-codex.cjs",
-    "dist",
     "docs/release",
     "LICENSE-APACHE",
     "LICENSE-MIT",
@@ -17,13 +16,7 @@
     "minimax-codex.exe"
   ],
   "scripts": {
-    "dev": "cargo run -p minimax-cli --locked --",
-    "build": "tsc -p tsconfig.json",
-    "start": "node bin/minimax-codex.cjs",
-    "check": "tsc -p tsconfig.json --noEmit",
     "check:rust": "cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked -- -D warnings",
-    "test": "tsx test/run-tests.ts",
-    "test:launcher": "tsx --test test/launcher.test.ts",
     "test:rust": "cargo test --workspace --locked",
     "test:rust:candidate": "cargo test --workspace --locked -- --skip hosted_cutover_evidence_matches_current_product",
     "eval:retrieval": "cargo run -p minimax-compat-harness --locked -- retrieval-eval --format json",
@@ -35,23 +28,9 @@
     "package:rust": "node scripts/release/package-rust.mjs",
     "verify:rust-release": "node scripts/release/verify-rust-release.mjs",
     "verify:milestone-flow": "node scripts/release/verify-milestone-flow.mjs",
-    "verify:release": "npm run check && npm test && npm run check:rust && npm run test:rust && npm run verify:agent && npm run build && npm run build:rust:release && npm run package:rust && npm run verify:rust-release && npm run verify:milestone-flow",
-    "smoke:provider": "tsx src/smoke/provider-smoke.ts"
-  },
-  "dependencies": {
-    "ink": "^5.2.1",
-    "react": "^18.3.1"
-  },
-  "devDependencies": {
-    "@types/node": "^24.0.15",
-    "@types/react": "^18.3.23",
-    "tsx": "^4.20.3",
-    "typescript": "^5.8.3"
+    "verify:release": "npm run check:rust && npm run test:rust && npm run verify:agent && npm run build:rust:release && npm run package:rust && npm run verify:rust-release && npm run verify:milestone-flow"
   },
   "engines": {
     "node": ">=20"
-  },
-  "optionalDependencies": {
-    "@napi-rs/keyring": "^1.3.0"
   }
 }

@@ -13,15 +13,63 @@ pub const LEGACY_FIXTURE_PHASE_11_DISPOSITION: &str =
 pub const LEGACY_FIXTURE_PHASE_14_ZERO_CONTRACT: &str =
     "delete-all-entries-and-set-the-class-count-to-zero";
 
-const RUST_DEV_SCRIPT: &str = "cargo run -p minimax-cli --locked --";
-const RUST_START_SCRIPT: &str = "node bin/minimax-codex.cjs";
+const PACKAGE_TOP_LEVEL_KEYS: [&str; 8] = [
+    "bin",
+    "description",
+    "engines",
+    "files",
+    "name",
+    "scripts",
+    "type",
+    "version",
+];
+const PACKAGE_FILES: [&str; 7] = [
+    "bin/minimax-codex.cjs",
+    "docs/release",
+    "LICENSE-APACHE",
+    "LICENSE-MIT",
+    "README.md",
+    "minimax-codex",
+    "minimax-codex.exe",
+];
+const RUST_CHECK_SCRIPT: &str =
+    "cargo fmt --all -- --check && cargo clippy --workspace --all-targets --locked -- -D warnings";
+const RUST_TEST_SCRIPT: &str = "cargo test --workspace --locked";
+const RUST_CANDIDATE_TEST_SCRIPT: &str =
+    "cargo test --workspace --locked -- --skip hosted_cutover_evidence_matches_current_product";
 const RUST_PROVIDER_EVAL_SCRIPT: &str =
     "cargo run -p minimax-compat-harness --locked -- provider-eval --format json";
 const RUST_RETRIEVAL_EVAL_SCRIPT: &str =
     "cargo run -p minimax-compat-harness --locked -- retrieval-eval --format json";
 const RUST_EVALUATION_AGGREGATE_SCRIPT: &str =
     "npm run verify:rust-contracts && npm run eval:provider && npm run eval:retrieval";
-const RUST_RELEASE_VERIFICATION_SCRIPT: &str = "npm run check && npm test && npm run check:rust && npm run test:rust && npm run verify:agent && npm run build && npm run build:rust:release && npm run package:rust && npm run verify:rust-release && npm run verify:milestone-flow";
+const RUST_CONTRACT_VERIFICATION_SCRIPT: &str =
+    "cargo run -p minimax-compat-harness --locked -- verify";
+const RUST_CANDIDATE_CONTRACT_VERIFICATION_SCRIPT: &str =
+    "cargo run -p minimax-compat-harness --locked -- verify-candidate";
+const RUST_RELEASE_BUILD_SCRIPT: &str = "cargo build -p minimax-cli --release --locked";
+const RUST_PACKAGE_SCRIPT: &str = "node scripts/release/package-rust.mjs";
+const RUST_PACKAGE_VERIFICATION_SCRIPT: &str = "node scripts/release/verify-rust-release.mjs";
+const RUST_MILESTONE_VERIFICATION_SCRIPT: &str = "node scripts/release/verify-milestone-flow.mjs";
+const RUST_RELEASE_VERIFICATION_SCRIPT: &str = "npm run check:rust && npm run test:rust && npm run verify:agent && npm run build:rust:release && npm run package:rust && npm run verify:rust-release && npm run verify:milestone-flow";
+const PACKAGE_SCRIPTS: [(&str, &str); 13] = [
+    ("build:rust:release", RUST_RELEASE_BUILD_SCRIPT),
+    ("check:rust", RUST_CHECK_SCRIPT),
+    ("eval:provider", RUST_PROVIDER_EVAL_SCRIPT),
+    ("eval:retrieval", RUST_RETRIEVAL_EVAL_SCRIPT),
+    ("package:rust", RUST_PACKAGE_SCRIPT),
+    ("test:rust", RUST_TEST_SCRIPT),
+    ("test:rust:candidate", RUST_CANDIDATE_TEST_SCRIPT),
+    ("verify:agent", RUST_EVALUATION_AGGREGATE_SCRIPT),
+    ("verify:milestone-flow", RUST_MILESTONE_VERIFICATION_SCRIPT),
+    ("verify:release", RUST_RELEASE_VERIFICATION_SCRIPT),
+    ("verify:rust-contracts", RUST_CONTRACT_VERIFICATION_SCRIPT),
+    (
+        "verify:rust-contracts:candidate",
+        RUST_CANDIDATE_CONTRACT_VERIFICATION_SCRIPT,
+    ),
+    ("verify:rust-release", RUST_PACKAGE_VERIFICATION_SCRIPT),
+];
 
 const FORBIDDEN_JAVASCRIPT_CAPABILITIES: [&str; 9] = [
     "fallback",
@@ -1046,6 +1094,25 @@ fn validate_executable_links(
 }
 
 pub(crate) fn validate_package_product_scripts(package: &serde_json::Value) -> Result<(), String> {
+    let object = package
+        .as_object()
+        .ok_or_else(|| "package metadata must be an object".to_owned())?;
+    let keys = object.keys().map(String::as_str).collect::<Vec<_>>();
+    if keys != PACKAGE_TOP_LEVEL_KEYS {
+        return Err("package metadata must contain only the Rust distribution contract".to_owned());
+    }
+    if package.get("name").and_then(serde_json::Value::as_str) != Some("minimax-codex")
+        || package.get("version").and_then(serde_json::Value::as_str) != Some("0.1.0")
+        || package.get("type").and_then(serde_json::Value::as_str) != Some("module")
+        || package
+            .get("engines")
+            .and_then(|engines| engines.get("node"))
+            .and_then(serde_json::Value::as_str)
+            != Some(">=20")
+    {
+        return Err("package identity and engine contract must remain fixed".to_owned());
+    }
+
     let bins = package
         .get("bin")
         .and_then(serde_json::Value::as_object)
@@ -1059,31 +1126,32 @@ pub(crate) fn validate_package_product_scripts(package: &serde_json::Value) -> R
         return Err("package bin must contain only the fixed Rust launcher".to_owned());
     }
 
+    let files = package
+        .get("files")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| "package files must contain only Rust distribution assets".to_owned())?;
+    let files = files
+        .iter()
+        .map(|value| value.as_str())
+        .collect::<Option<Vec<_>>>()
+        .ok_or_else(|| "package files must contain only string paths".to_owned())?;
+    if files != PACKAGE_FILES {
+        return Err("package files must contain only Rust distribution assets".to_owned());
+    }
+
     let scripts = package
         .get("scripts")
         .and_then(serde_json::Value::as_object)
         .ok_or_else(|| "package scripts must be an object".to_owned())?;
-    if scripts.get("dev").and_then(serde_json::Value::as_str) != Some(RUST_DEV_SCRIPT) {
+    if scripts.len() != PACKAGE_SCRIPTS.len() {
         return Err(
-            "package TypeScript/legacy product entry denied: dev must run the Rust CLI source"
-                .to_owned(),
+            "package scripts must contain only Rust verification and packaging commands".to_owned(),
         );
     }
-    if scripts.get("start").and_then(serde_json::Value::as_str) != Some(RUST_START_SCRIPT) {
-        return Err(
-            "package TypeScript/legacy product entry denied: start must use the fixed Rust launcher"
-                .to_owned(),
-        );
-    }
-    for (name, expected) in [
-        ("eval:provider", RUST_PROVIDER_EVAL_SCRIPT),
-        ("eval:retrieval", RUST_RETRIEVAL_EVAL_SCRIPT),
-        ("verify:agent", RUST_EVALUATION_AGGREGATE_SCRIPT),
-        ("verify:release", RUST_RELEASE_VERIFICATION_SCRIPT),
-    ] {
+    for (name, expected) in PACKAGE_SCRIPTS {
         if scripts.get(name).and_then(serde_json::Value::as_str) != Some(expected) {
             return Err(format!(
-                "package Rust evaluation authority denied: {name} must use the exact fail-closed command"
+                "package Rust distribution authority denied: {name} must use the exact fail-closed command"
             ));
         }
     }

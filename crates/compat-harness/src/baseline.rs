@@ -741,6 +741,33 @@ pub fn validate_product_entry(root: &Path) -> Result<(), BaselineError> {
     {
         return Err(BaselineError::ProductEntry);
     }
+    let lock_raw = std::fs::read_to_string(root.join("package-lock.json"))
+        .map_err(|_| BaselineError::PackageRead)?;
+    let lock: serde_json::Value =
+        serde_json::from_str(&lock_raw).map_err(|_| BaselineError::PackageParse)?;
+    let lock_packages = lock
+        .get("packages")
+        .and_then(serde_json::Value::as_object)
+        .ok_or(BaselineError::ProductEntry)?;
+    let lock_root = lock_packages
+        .get("")
+        .and_then(serde_json::Value::as_object)
+        .ok_or(BaselineError::ProductEntry)?;
+    if lock
+        .get("lockfileVersion")
+        .and_then(serde_json::Value::as_u64)
+        != Some(3)
+        || lock_packages.len() != 1
+        || lock_root.get("name") != package.get("name")
+        || lock_root.get("version") != package.get("version")
+        || lock_root.get("bin") != package.get("bin")
+        || lock_root.get("engines") != package.get("engines")
+        || ["dependencies", "devDependencies", "optionalDependencies"]
+            .iter()
+            .any(|key| lock_root.contains_key(*key))
+    {
+        return Err(BaselineError::ProductEntry);
+    }
     let launcher = std::fs::read_to_string(root.join("bin/minimax-codex.cjs"))
         .map_err(|_| BaselineError::ProductEntry)?;
     for required in [
