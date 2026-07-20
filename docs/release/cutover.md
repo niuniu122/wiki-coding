@@ -101,6 +101,31 @@ publishes that same tarball only through the protected `npm-production`
 environment. Real publication and user-data migration remain outside local
 closure verification.
 
+## npm publication handoff
+
+The release operator must complete this sequence; local implementation work is
+not permission to publish:
+
+1. Merge the reviewed release commit to `main` and refresh both hosted evidence
+   records for that exact product fingerprint.
+2. Verify npm ownership of `minimax-codex` and confirm the package version is
+   still absent from the public registry.
+3. Create the protected `npm-production` GitHub environment with required
+   reviewers and restrict deployment to approved version tags.
+4. For the first package publication only, create a short-lived granular token
+   scoped to publishing `minimax-codex`, store it as the environment-scoped
+   `NPM_TOKEN` secret, and approve the one tag run.
+5. After the first successful publication, configure npm trusted publisher for
+   repository `niuniu122/wiki-coding`, workflow `npm-release.yml`, and
+   environment `npm-production`.
+6. Prove a trusted-publisher release succeeds, then remove the `NPM_TOKEN` secret.
+   Do not leave a long-lived publication token in repository secrets.
+7. From clean Windows x64 and Linux x64 Node.js 20 environments, install the
+   exact registry version and run `--version` plus `doctor --json`.
+
+Only after steps 1-4 are ready should the operator create and push an exact
+`vMAJOR.MINOR.PATCH` tag. Any failed gate must leave npm `latest` unchanged.
+
 ## Actionable no-fallback failures
 
 Launcher errors are nonzero and stable:
@@ -151,7 +176,7 @@ locks, databases, and unknown records are excluded.
 
 ## Upgrade and rollback
 
-Use `npm update --global minimax-codex`, then run `--version` and `doctor`.
+Use `npm install --global minimax-codex@latest`, then run `--version` and `doctor`.
 Rollback with `npm install --global minimax-codex@<previous-version>`. Package
 upgrade and rollback do not touch Vault content, imported files, receipts, or
 source data.

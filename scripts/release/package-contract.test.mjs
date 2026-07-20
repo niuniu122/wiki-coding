@@ -516,12 +516,16 @@ test("npm release workflow is tag-only ordered and secret-isolated", () => {
   const publish = source.indexOf("  publish:");
   assert.ok(preflight < build && build < assemble && assemble < smoke && smoke < publish);
   const smokeText = source.slice(smoke, publish);
+  const buildText = source.slice(build, assemble);
+  assert.match(buildText, /npm run verify:rust-contracts\n/u);
   assert.match(smokeText, /--global --ignore-scripts/u);
   assert.match(smokeText, /npx --no-install minimax-codex --version/u);
   assert.doesNotMatch(smokeText, /cargo|rustup|rustc/u);
   assert.equal(source.match(/secrets\.NPM_TOKEN/gu)?.length, 1);
   assert.match(source.slice(publish), /environment: npm-production/u);
   assert.match(source.slice(publish), /id-token: write/u);
+  assert.match(source.slice(publish), /npm install --global npm@11\.5\.1/u);
+  assert.match(source.slice(publish), /manifest\.npmPackage\.sha256/u);
   assert.match(source.slice(publish), /npm publish "\$ARCHIVE" --dry-run --json --access public/u);
   assert.match(source.slice(publish), /npm publish "\$ARCHIVE" --access public --provenance/u);
 });
@@ -539,16 +543,18 @@ test("consumer docs lead with registry installs and keep Rust in source developm
   assert.match(readme, /npm install --save-dev minimax-codex/u);
   assert.match(readme, /npx minimax-codex --version/u);
   assert.match(readme, /Node\.js 20 or newer/u);
-  assert.match(installGuide, /npm update --global minimax-codex/u);
+  assert.match(installGuide, /npm install --global minimax-codex@latest/u);
   assert.match(installGuide, /npm install --global minimax-codex@<previous-version>/u);
+  assert.match(installGuide, /npm uninstall --global minimax-codex/u);
   assert.match(cutover, /one universal npm package/u);
+  assert.match(cutover, /verify npm ownership[\s\S]*npm-production[\s\S]*granular token[\s\S]*trusted publisher[\s\S]*remove the `NPM_TOKEN` secret/iu);
   assert.match(consumerText, /Windows x64/u);
   assert.match(consumerText, /Linux x64/u);
   assert.match(consumerText, /E_UNSUPPORTED_HOST/u);
   assert.match(readme, /## Source development and release verification[\s\S]*Rust 1\.97\.0/u);
   assert.doesNotMatch(
     readme.slice(readme.indexOf("## Install and run"), readme.indexOf("## Permission and subprocess boundaries")),
-    /cargo|rustup|Rust 1\.97\.0/u
+    /cargo|rustup|Rust 1\.97\.0|<target>-npm\.tgz|github\.com\/.+\.git|preinstall|postinstall/u
   );
 });
 

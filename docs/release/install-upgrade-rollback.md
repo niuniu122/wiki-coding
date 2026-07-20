@@ -136,14 +136,14 @@ See [the complete sandbox trust boundary](subprocess-sandbox.md).
 Upgrade a global installation, then verify it before normal work:
 
 ```bash
-npm update --global minimax-codex
+npm install --global minimax-codex@latest
 minimax-codex --version
 minimax-codex doctor
 ```
 
-For a project-local installation, use `npm update minimax-codex` and commit the
-updated lockfile. Before migrating TypeScript-era state, inspect and verify the
-plan:
+For a project-local installation, use
+`npm install --save-dev minimax-codex@latest` and commit the updated lockfile.
+Before migrating TypeScript-era state, inspect and verify the plan:
 
 ```bash
 minimax-codex migrate inventory
@@ -171,6 +171,21 @@ For a project-local rollback, run
 `npm install --save-dev minimax-codex@<previous-version>` and commit the lockfile.
 Migration receipts, imported files, the Vault, and `.mini-codex` source data are
 not modified by package rollback.
+
+For example, after a future upgrade beyond `0.1.0`, the explicit command to
+return to the first release is `npm install --global minimax-codex@0.1.0`.
+
+## Uninstall
+
+Remove a global installation with:
+
+```bash
+npm uninstall --global minimax-codex
+```
+
+For a project-local installation, use `npm uninstall minimax-codex` and commit
+the updated package manifest and lockfile. Uninstalling the package does not
+delete project Vaults, migration receipts, or `.mini-codex` source data.
 
 ## Data rollback
 

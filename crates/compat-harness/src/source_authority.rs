@@ -678,6 +678,7 @@ pub fn validate_npm_release_workflow_text(source: &str) -> Result<(), SourceAuth
         "npm run eval:provider",
         "npm run eval:retrieval",
         "npm run verify:rust-contracts:candidate",
+        "npm run verify:rust-contracts\n",
         "npm run test:package",
         "npm run build:rust:release",
         "node scripts/release/package-rust.mjs --binary",
@@ -731,7 +732,10 @@ pub fn validate_npm_release_workflow_text(source: &str) -> Result<(), SourceAuth
     for required in [
         "environment: npm-production",
         "node-version: 24",
+        "npm install --global npm@11.5.1",
         "sha256sum --check \"$(basename \"$SIDECAR\")\"",
+        "createHash(\"sha256\")",
+        "archiveSha256 !== manifest.npmPackage.sha256",
         "npm publish \"$ARCHIVE\" --dry-run --json --access public",
         "npm publish \"$ARCHIVE\" --access public --provenance",
         "npm view minimax-codex versions --json",

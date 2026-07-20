@@ -106,6 +106,7 @@ jobs:
       - run: npm run eval:provider
       - run: npm run eval:retrieval
       - run: npm run verify:rust-contracts:candidate
+      - run: npm run verify:rust-contracts
       - run: npm run test:package
       - name: Generate explicit release product fingerprint
         shell: bash
@@ -225,6 +226,8 @@ jobs:
         with:
           node-version: 24
           registry-url: https://registry.npmjs.org
+      - name: Pin the reviewed npm publication client
+        run: npm install --global npm@11.5.1
       - name: Download the smoke-tested universal npm candidate
         uses: actions/download-artifact@v4
         with:
@@ -241,17 +244,22 @@ jobs:
           cd "$GITHUB_WORKSPACE/target/npm-publish"
           sha256sum --check "$(basename "$SIDECAR")"
           npm publish "$ARCHIVE" --dry-run --json --access public > npm-dry-run.json
-          node - "$VERSION" "$MANIFEST" npm-dry-run.json <<'NODE'
+          node - "$VERSION" "$ARCHIVE" "$MANIFEST" npm-dry-run.json <<'NODE'
           const fs = require("node:fs");
-          const [version, manifestPath, dryRunPath] = process.argv.slice(2);
+          const {createHash} = require("node:crypto");
+          const [version, archivePath, manifestPath, dryRunPath] = process.argv.slice(2);
           const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
           const dryRun = JSON.parse(fs.readFileSync(dryRunPath, "utf8"));
+          const archiveSha256 = createHash("sha256")
+            .update(fs.readFileSync(archivePath))
+            .digest("hex");
           const expected = manifest.npmPackage.entries
             .filter((entry) => entry.type === "file")
             .map((entry) => entry.path.slice("package/".length))
             .sort();
           const actual = dryRun.files.map((entry) => entry.path).sort();
           if (dryRun.name !== "minimax-codex" || dryRun.version !== version
+              || archiveSha256 !== manifest.npmPackage.sha256
               || JSON.stringify(actual) !== JSON.stringify(expected)) process.exit(1);
           NODE
       - name: Recheck immutable npm version

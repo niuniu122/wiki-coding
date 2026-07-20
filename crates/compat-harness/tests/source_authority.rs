@@ -981,6 +981,11 @@ fn npm_release_workflow_is_tag_only_ordered_and_secret_isolated() {
             "preflight, build, assemble, smoke, then publish",
         ),
         (
+            "stale hosted evidence accepted",
+            source.replace("      - run: npm run verify:rust-contracts\n", ""),
+            "build must retain npm run verify:rust-contracts",
+        ),
+        (
             "consumer Rust install",
             source.replace(
                 "      - name: Smoke global and project-local installs without lifecycle scripts",
@@ -1013,6 +1018,22 @@ fn npm_release_workflow_is_tag_only_ordered_and_secret_isolated() {
                 "    timeout-minutes: 10\n    continue-on-error: true\n    outputs:",
             ),
             "gates must fail closed",
+        ),
+        (
+            "unpinned npm client",
+            source.replace(
+                "npm install --global npm@11.5.1",
+                "npm install --global npm@latest",
+            ),
+            "publish must retain npm install --global npm@11.5.1",
+        ),
+        (
+            "manifest digest bypass",
+            source.replace(
+                "archiveSha256 !== manifest.npmPackage.sha256",
+                "archiveSha256.length === 0",
+            ),
+            "publish must retain archiveSha256 !== manifest.npmPackage.sha256",
         ),
         (
             "rebuilt publish artifact",
