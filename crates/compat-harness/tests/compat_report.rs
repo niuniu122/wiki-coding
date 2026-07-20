@@ -392,10 +392,15 @@ fn thin_npm_manifest_and_lock_are_distribution_only() {
         actual_keys,
         [
             "bin",
+            "bugs",
             "description",
             "engines",
             "files",
+            "homepage",
+            "license",
             "name",
+            "publishConfig",
+            "repository",
             "scripts",
             "type",
             "version",
@@ -405,6 +410,26 @@ fn thin_npm_manifest_and_lock_are_distribution_only() {
     assert_eq!(
         package["bin"],
         serde_json::json!({"minimax-codex": "bin/minimax-codex.cjs"})
+    );
+    assert_eq!(package["license"], "MIT OR Apache-2.0");
+    assert_eq!(
+        package["repository"],
+        serde_json::json!({
+            "type": "git",
+            "url": "git+https://github.com/niuniu122/wiki-coding.git"
+        })
+    );
+    assert_eq!(
+        package["homepage"],
+        "https://github.com/niuniu122/wiki-coding#readme"
+    );
+    assert_eq!(
+        package["bugs"],
+        serde_json::json!({"url": "https://github.com/niuniu122/wiki-coding/issues"})
+    );
+    assert_eq!(
+        package["publishConfig"],
+        serde_json::json!({"access": "public"})
     );
     assert_eq!(
         package["files"],
@@ -463,6 +488,7 @@ fn thin_npm_manifest_and_lock_are_distribution_only() {
     );
     let lock_root = &lock["packages"][""];
     assert_eq!(lock_root["bin"], package["bin"]);
+    assert_eq!(lock_root["license"], package["license"]);
     for dependency_class in ["dependencies", "devDependencies", "optionalDependencies"] {
         assert!(
             lock_root.get(dependency_class).is_none(),
