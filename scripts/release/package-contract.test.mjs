@@ -16,12 +16,20 @@ import {spawnSync} from "node:child_process";
 import {fileURLToPath} from "node:url";
 
 import {
+  createPublishedPackageJson,
   createDeterministicTarGzip,
   expectedArchiveEntries,
+  expectedUniversalNpmEntries,
+  loadReleaseThresholds,
   loadTargetContract,
+  parseTarGzip,
+  sha256 as contractSha256,
   validateArtifactCandidate,
   validateReleaseManifest,
-  validateTargetContract
+  validateReleaseThresholds,
+  validateTargetContract,
+  validateUniversalNpmCandidate,
+  validateUniversalNpmManifest
 } from "./package-contract.mjs";
 import {computeProductFingerprint} from "./product-fingerprint.mjs";
 
@@ -34,6 +42,129 @@ const HASHES = Object.freeze({
   npm: "f".repeat(64)
 });
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+
+test("universal npm archive has one exact two-platform allowlist", () => {
+  const actual = expectedUniversalNpmEntries("0.1.0");
+  const directories = [
+    "package/",
+    "package/bin/",
+    "package/docs/",
+    "package/docs/release/"
+  ].map((path) => ({path, type: "directory", mode: 0o755}));
+  const files = [
+    ["package/bin/minimax-codex.cjs", 0o755],
+    ["package/minimax-codex", 0o755],
+    ["package/minimax-codex.exe", 0o755],
+    ["package/README.md", 0o644],
+    ["package/LICENSE-APACHE", 0o644],
+    ["package/LICENSE-MIT", 0o644],
+    ["package/docs/release/cutover.md", 0o644],
+    ["package/docs/release/embedding-package.md", 0o644],
+    ["package/docs/release/install-upgrade-rollback.md", 0o644],
+    ["package/docs/release/subprocess-sandbox.md", 0o644],
+    ["package/package.json", 0o644]
+  ].map(([path, mode]) => ({path, type: "file", mode}));
+  const expected = [...directories, ...files]
+    .sort((left, right) => left.path.localeCompare(right.path, "en"));
+
+  assert.deepEqual(actual, expected);
+});
+
+test("published package metadata excludes install-time code and dependencies", () => {
+  const healthy = healthySourcePackage();
+  assert.deepEqual(createPublishedPackageJson(healthy, "0.1.0"), {
+    name: "minimax-codex",
+    version: "0.1.0",
+    description: "A Codex-style interactive CLI shell for MiniMax.",
+    license: "MIT OR Apache-2.0",
+    type: "module",
+    bin: {"minimax-codex": "bin/minimax-codex.cjs"},
+    engines: {node: ">=20"},
+    repository: {type: "git", url: "git+https://github.com/niuniu122/wiki-coding.git"},
+    homepage: "https://github.com/niuniu122/wiki-coding#readme",
+    bugs: {url: "https://github.com/niuniu122/wiki-coding/issues"},
+    publishConfig: {access: "public"}
+  });
+
+  for (const lifecycle of ["preinstall", "install", "postinstall"]) {
+    const candidate = structuredClone(healthy);
+    candidate.scripts[lifecycle] = "node install.js";
+    assertContractError(
+      () => createPublishedPackageJson(candidate, "0.1.0"),
+      "PACKAGE_METADATA_FORBIDDEN",
+      lifecycle
+    );
+  }
+  for (const field of [
+    "dependencies",
+    "devDependencies",
+    "optionalDependencies",
+    "peerDependencies",
+    "bundledDependencies"
+  ]) {
+    const candidate = structuredClone(healthy);
+    candidate[field] = field === "bundledDependencies" ? [] : {};
+    assertContractError(
+      () => createPublishedPackageJson(candidate, "0.1.0"),
+      "PACKAGE_METADATA_FORBIDDEN",
+      field
+    );
+  }
+  for (const [label, mutate] of [
+    ["version drift", (value) => value.version = "0.1.1"],
+    ["license drift", (value) => value.license = "MIT"],
+    ["repository drift", (value) => value.repository.url = "https://example.invalid/repo.git"],
+    ["private access", (value) => value.publishConfig.access = "restricted"]
+  ]) {
+    const candidate = structuredClone(healthy);
+    mutate(candidate);
+    assertContractError(
+      () => createPublishedPackageJson(candidate, "0.1.0"),
+      "PACKAGE_METADATA_IDENTITY",
+      label
+    );
+  }
+});
+
+test("universal npm manifest and candidate bind both hosted binaries", () => {
+  const candidate = healthyUniversalCandidate();
+  assert.equal(
+    validateUniversalNpmManifest(candidate.manifest, candidate.contract, candidate.thresholds),
+    candidate.manifest
+  );
+  assert.equal(validateUniversalNpmCandidate(candidate.input), candidate.manifest);
+  assert.equal(contractSha256(candidate.archiveBytes), candidate.manifest.npmPackage.sha256);
+  assert.deepEqual(
+    parseTarGzip(candidate.archiveBytes, candidate.manifest.npmPackage.name).map((entry) => entry.name),
+    candidate.entries.map((entry) => entry.name).sort((left, right) => left.localeCompare(right, "en"))
+  );
+});
+
+test("universal npm manifest and candidate reject drift by stable category", () => {
+  for (const [label, mutate, code] of [
+    ["unknown manifest field", (value) => value.manifest.unexpected = true, "UNIVERSAL_MANIFEST_UNKNOWN_FIELD"],
+    ["binary target order", (value) => value.manifest.binaries.reverse(), "UNIVERSAL_TARGET_SET"],
+    ["development target", (value) => value.manifest.binaries[1].targetId = "windows-x86_64-gnullvm-dev", "UNIVERSAL_TARGET_SET"],
+    ["product fingerprint", (value) => value.expectedProduct.fingerprint = "0".repeat(64), "UNIVERSAL_PRODUCT_FINGERPRINT_MISMATCH"],
+    ["launcher mode", (value) => value.manifest.launcher.mode = 0o644, "UNIVERSAL_LAUNCHER_MISMATCH"],
+    ["Windows magic", (value) => mutateUniversalEntry(value, "package/minimax-codex.exe", Buffer.from("not-pe\n", "utf8")), "UNIVERSAL_BINARY_MAGIC"],
+    ["Linux magic", (value) => mutateUniversalEntry(value, "package/minimax-codex", Buffer.from("not-elf\n", "utf8")), "UNIVERSAL_BINARY_MAGIC"],
+    ["binary mode", (value) => setUniversalEntryMode(value, "package/minimax-codex", 0o644), "UNIVERSAL_BINARY_MODE"],
+    ["checksum", (value) => value.checksumBytes = Buffer.from(`${"0".repeat(64)}  ${value.manifest.npmPackage.name}\n`, "utf8"), "UNIVERSAL_CHECKSUM_MISMATCH"],
+    ["extra executable", (value) => addUniversalEntry(value, {name: "package/bin/alternate", bytes: Buffer.from("alternate\n", "utf8"), mode: 0o755, type: "0"}), "UNIVERSAL_EXTRA_EXECUTABLE"],
+    ["renamed Windows binary", (value) => renameUniversalEntry(value, "package/minimax-codex.exe", "package/renamed.exe"), "UNIVERSAL_BINARY_RENAMED"],
+    ["unsafe entry type", (value) => setUniversalEntryType(value, "package/minimax-codex", "2"), "ARTIFACT_UNSAFE_TYPE"],
+    ["archive size", (value) => value.thresholds = {...value.thresholds, baseCompressedBytes: value.archiveBytes.length - 1}, "UNIVERSAL_SIZE_LIMIT"]
+  ]) {
+    const candidate = healthyUniversalCandidate();
+    mutate(candidate);
+    assertContractError(
+      () => validateUniversalNpmCandidate(candidate.input ?? universalInput(candidate)),
+      code,
+      label
+    );
+  }
+});
 
 test("healthy target and release manifest controls pass", () => {
   const contract = loadTargetContract();
@@ -52,7 +183,8 @@ test("healthy target and release manifest controls pass", () => {
 
 test("target contract links the unchanged release threshold budgets", () => {
   const contract = loadTargetContract();
-  const thresholds = JSON.parse(readFileSync(resolve(root, "fixtures/compat/release/thresholds.v1.json"), "utf8"));
+  const thresholds = loadReleaseThresholds();
+  assert.equal(validateReleaseThresholds(thresholds, contract), thresholds);
   assert.equal(thresholds.schemaVersion, contract.thresholdSchemaVersion);
   assert.equal(thresholds.targetContractSchemaVersion, contract.schemaVersion);
   assert.deepEqual(
@@ -64,6 +196,18 @@ test("target contract links the unchanged release threshold budgets", () => {
     },
     {coldStartMs: 500, idleRssBytes: 157286400, baseCompressedBytes: 52428800, wikiBm25P95Ms: 100}
   );
+
+  for (const [label, mutate, code] of [
+    ["unknown field", (value) => value.unexpected = true, "THRESHOLD_SCHEMA_UNKNOWN_FIELD"],
+    ["schema drift", (value) => value.schemaVersion = 2, "THRESHOLD_SCHEMA_INVALID"],
+    ["target schema drift", (value) => value.targetContractSchemaVersion = 2, "THRESHOLD_CONTRACT_MISMATCH"],
+    ["zero package budget", (value) => value.baseCompressedBytes = 0, "THRESHOLD_SCHEMA_INVALID"],
+    ["fractional package budget", (value) => value.baseCompressedBytes = 1.5, "THRESHOLD_SCHEMA_INVALID"]
+  ]) {
+    const candidate = structuredClone(thresholds);
+    mutate(candidate);
+    assertContractError(() => validateReleaseThresholds(candidate, contract), code, label);
+  }
 });
 
 test("target contract rejects malformed and tier-confused identities by category", () => {
@@ -245,6 +389,159 @@ test("release CLIs require one explicit current fingerprint and bind artifacts t
     rmSync(workspace, {recursive: true, force: true});
   }
 });
+
+function healthySourcePackage() {
+  return {
+    name: "minimax-codex",
+    version: "0.1.0",
+    description: "A Codex-style interactive CLI shell for MiniMax.",
+    license: "MIT OR Apache-2.0",
+    type: "module",
+    bin: {"minimax-codex": "bin/minimax-codex.cjs"},
+    engines: {node: ">=20"},
+    repository: {type: "git", url: "git+https://github.com/niuniu122/wiki-coding.git"},
+    homepage: "https://github.com/niuniu122/wiki-coding#readme",
+    bugs: {url: "https://github.com/niuniu122/wiki-coding/issues"},
+    publishConfig: {access: "public"},
+    files: [],
+    scripts: {"test:package": "node --test scripts/release/package-contract.test.mjs"}
+  };
+}
+
+function healthyUniversalCandidate() {
+  const contract = loadTargetContract();
+  const thresholds = loadReleaseThresholds();
+  const version = "0.1.0";
+  const linuxBytes = Buffer.concat([
+    Buffer.from([0x7f, 0x45, 0x4c, 0x46]),
+    Buffer.from("synthetic-linux-binary\n", "utf8")
+  ]);
+  const windowsBytes = Buffer.concat([
+    Buffer.from([0x4d, 0x5a]),
+    Buffer.from("synthetic-windows-binary\n", "utf8")
+  ]);
+  const launcherBytes = Buffer.from("#!/usr/bin/env node\nfixture launcher\n", "utf8");
+  const packageJsonBytes = Buffer.from(
+    `${JSON.stringify(createPublishedPackageJson(healthySourcePackage(), version), null, 2)}\n`,
+    "utf8"
+  );
+  const sourceBytes = new Map([
+    ["package/bin/minimax-codex.cjs", launcherBytes],
+    ["package/minimax-codex", linuxBytes],
+    ["package/minimax-codex.exe", windowsBytes],
+    ["package/package.json", packageJsonBytes]
+  ]);
+  const entries = expectedUniversalNpmEntries(version).map((descriptor) => descriptor.type === "directory"
+    ? {name: descriptor.path, bytes: Buffer.alloc(0), mode: descriptor.mode, type: "5"}
+    : {
+        name: descriptor.path,
+        bytes: sourceBytes.get(descriptor.path) ?? fixtureBytes(descriptor.path.slice("package/".length)),
+        mode: descriptor.mode,
+        type: "0"
+      });
+  const archiveBytes = createDeterministicTarGzip(entries);
+  const archiveName = `minimax-codex-${version}.tgz`;
+  const product = {fingerprint: sha256(Buffer.from("universal-product", "utf8")), fileCount: 440};
+  const manifest = {
+    schemaVersion: 1,
+    name: "minimax-codex",
+    version,
+    product: {...product},
+    launcher: {
+      path: "bin/minimax-codex.cjs",
+      mode: 0o755,
+      bytes: launcherBytes.length,
+      sha256: sha256(launcherBytes)
+    },
+    binaries: [
+      {
+        targetId: "linux-x86_64-gnu",
+        path: "minimax-codex",
+        mode: 0o755,
+        bytes: linuxBytes.length,
+        sha256: sha256(linuxBytes)
+      },
+      {
+        targetId: "windows-x86_64-msvc",
+        path: "minimax-codex.exe",
+        mode: 0o755,
+        bytes: windowsBytes.length,
+        sha256: sha256(windowsBytes)
+      }
+    ],
+    npmPackage: {
+      name: archiveName,
+      bytes: archiveBytes.length,
+      sha256: sha256(archiveBytes),
+      entries: testEntryEvidence(entries)
+    }
+  };
+  const candidate = {
+    manifest,
+    contract,
+    thresholds,
+    expectedProduct: {...product},
+    entries,
+    archiveBytes,
+    checksumBytes: sidecar(archiveName, archiveBytes)
+  };
+  Object.defineProperty(candidate, "input", {
+    enumerable: true,
+    get() {
+      return universalInput(candidate);
+    }
+  });
+  return candidate;
+}
+
+function universalInput(candidate) {
+  return {
+    manifest: candidate.manifest,
+    contract: candidate.contract,
+    thresholds: candidate.thresholds,
+    expectedProduct: candidate.expectedProduct,
+    archiveBytes: candidate.archiveBytes,
+    checksumBytes: candidate.checksumBytes
+  };
+}
+
+function rebuildUniversalArchive(candidate) {
+  candidate.archiveBytes = createDeterministicTarGzip(candidate.entries);
+  candidate.manifest.npmPackage.bytes = candidate.archiveBytes.length;
+  candidate.manifest.npmPackage.sha256 = sha256(candidate.archiveBytes);
+  candidate.checksumBytes = sidecar(candidate.manifest.npmPackage.name, candidate.archiveBytes);
+}
+
+function universalEntry(candidate, path) {
+  const entry = candidate.entries.find((value) => value.name === path);
+  assert.ok(entry, `expected universal entry ${path}`);
+  return entry;
+}
+
+function mutateUniversalEntry(candidate, path, bytes) {
+  universalEntry(candidate, path).bytes = bytes;
+  rebuildUniversalArchive(candidate);
+}
+
+function setUniversalEntryMode(candidate, path, mode) {
+  universalEntry(candidate, path).mode = mode;
+  rebuildUniversalArchive(candidate);
+}
+
+function setUniversalEntryType(candidate, path, type) {
+  universalEntry(candidate, path).type = type;
+  rebuildUniversalArchive(candidate);
+}
+
+function addUniversalEntry(candidate, entry) {
+  candidate.entries.push(entry);
+  rebuildUniversalArchive(candidate);
+}
+
+function renameUniversalEntry(candidate, path, renamed) {
+  universalEntry(candidate, path).name = renamed;
+  rebuildUniversalArchive(candidate);
+}
 
 function healthyManifest(contract) {
   const target = contract.targets[0];

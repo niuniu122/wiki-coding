@@ -6,6 +6,7 @@ import {gunzipSync, gzipSync} from "node:zlib";
 
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
 const defaultTargetContract = resolve(root, "fixtures/compat/release/targets.v1.json");
+const defaultReleaseThresholds = resolve(root, "fixtures/compat/release/thresholds.v1.json");
 const directoryMode = 0o755;
 const fileMode = 0o644;
 const launcherMode = 0o755;
@@ -96,6 +97,38 @@ export function validateTargetContract(contract) {
   return contract;
 }
 
+export function loadReleaseThresholds(path = defaultReleaseThresholds) {
+  let value;
+  try {
+    value = JSON.parse(readFileSync(path, "utf8"));
+  } catch (error) {
+    contractFail("THRESHOLD_SCHEMA_INVALID", `cannot read release thresholds: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  return validateReleaseThresholds(value);
+}
+
+export function validateReleaseThresholds(thresholds, contract = loadTargetContract()) {
+  validateTargetContract(contract);
+  exactObject(
+    thresholds,
+    ["schemaVersion", "targetContractSchemaVersion", "coldStartMs", "idleRssBytes", "baseCompressedBytes", "wikiBm25P95Ms"],
+    "THRESHOLD_SCHEMA_UNKNOWN_FIELD",
+    "release thresholds"
+  );
+  if (thresholds.schemaVersion !== contract.thresholdSchemaVersion) {
+    contractFail("THRESHOLD_SCHEMA_INVALID", "release threshold schema version is invalid");
+  }
+  if (thresholds.targetContractSchemaVersion !== contract.schemaVersion) {
+    contractFail("THRESHOLD_CONTRACT_MISMATCH", "release thresholds do not bind the target contract schema");
+  }
+  for (const field of ["coldStartMs", "idleRssBytes", "baseCompressedBytes", "wikiBm25P95Ms"]) {
+    if (!Number.isSafeInteger(thresholds[field]) || thresholds[field] <= 0) {
+      contractFail("THRESHOLD_SCHEMA_INVALID", `${field} must be a positive safe integer`);
+    }
+  }
+  return thresholds;
+}
+
 export function expectedArchiveEntries(target, version, channel) {
   const canonical = canonicalTargets.find((candidate) => candidate.id === target?.id);
   if (!canonical || !sameJson(target, canonical)) {
@@ -122,6 +155,81 @@ export function expectedArchiveEntries(target, version, channel) {
   ];
   if (channel === "npm") entries.push(file(`${prefix}/package.json`, fileMode));
   return entries.sort((left, right) => left.path.localeCompare(right.path, "en"));
+}
+
+export function expectedUniversalNpmEntries(version) {
+  if (!/^[0-9A-Za-z][0-9A-Za-z.+-]{0,63}$/u.test(version)) {
+    contractFail("MANIFEST_UNSAFE_NAME", "release version is not archive-safe");
+  }
+  return [
+    directory("package/"),
+    directory("package/bin/"),
+    directory("package/docs/"),
+    directory("package/docs/release/"),
+    file("package/bin/minimax-codex.cjs", launcherMode),
+    file("package/minimax-codex", launcherMode),
+    file("package/minimax-codex.exe", launcherMode),
+    file("package/README.md", fileMode),
+    file("package/LICENSE-APACHE", fileMode),
+    file("package/LICENSE-MIT", fileMode),
+    ...releaseDocs.map((name) => file(`package/docs/release/${name}`, fileMode)),
+    file("package/package.json", fileMode)
+  ].sort((left, right) => left.path.localeCompare(right.path, "en"));
+}
+
+export function createPublishedPackageJson(sourcePackage, version) {
+  if (!isPlainObject(sourcePackage)
+      || !/^[0-9A-Za-z][0-9A-Za-z.+-]{0,63}$/u.test(version)
+      || sourcePackage.name !== "minimax-codex"
+      || sourcePackage.version !== version
+      || typeof sourcePackage.description !== "string"
+      || sourcePackage.description.length === 0
+      || sourcePackage.license !== "MIT OR Apache-2.0"
+      || sourcePackage.type !== "module"
+      || !sameJson(sourcePackage.bin, {"minimax-codex": "bin/minimax-codex.cjs"})
+      || !sameJson(sourcePackage.engines, {node: ">=20"})
+      || !sameJson(sourcePackage.repository, {
+        type: "git",
+        url: "git+https://github.com/niuniu122/wiki-coding.git"
+      })
+      || sourcePackage.homepage !== "https://github.com/niuniu122/wiki-coding#readme"
+      || !sameJson(sourcePackage.bugs, {url: "https://github.com/niuniu122/wiki-coding/issues"})
+      || !sameJson(sourcePackage.publishConfig, {access: "public"})
+      || Object.hasOwn(sourcePackage, "private")) {
+    contractFail("PACKAGE_METADATA_IDENTITY", "source package publication identity is invalid");
+  }
+
+  const dependencyFields = [
+    "dependencies",
+    "devDependencies",
+    "optionalDependencies",
+    "peerDependencies",
+    "bundledDependencies"
+  ];
+  if (dependencyFields.some((field) => Object.hasOwn(sourcePackage, field))) {
+    contractFail("PACKAGE_METADATA_FORBIDDEN", "source package must not declare dependency classes");
+  }
+  if (!isPlainObject(sourcePackage.scripts)
+      || ["preinstall", "install", "postinstall"].some((name) => Object.hasOwn(sourcePackage.scripts, name))) {
+    contractFail("PACKAGE_METADATA_FORBIDDEN", "source package must not declare npm lifecycle scripts");
+  }
+
+  return {
+    name: "minimax-codex",
+    version,
+    description: sourcePackage.description,
+    license: "MIT OR Apache-2.0",
+    type: "module",
+    bin: {"minimax-codex": "bin/minimax-codex.cjs"},
+    engines: {node: ">=20"},
+    repository: {
+      type: "git",
+      url: "git+https://github.com/niuniu122/wiki-coding.git"
+    },
+    homepage: "https://github.com/niuniu122/wiki-coding#readme",
+    bugs: {url: "https://github.com/niuniu122/wiki-coding/issues"},
+    publishConfig: {access: "public"}
+  };
 }
 
 export function validateReleaseManifest(manifest, contract = loadTargetContract()) {
@@ -164,6 +272,169 @@ export function validateReleaseManifest(manifest, contract = loadTargetContract(
   bindPayload(manifest.npmPackage.entries, `package/${manifest.binary.path}`, manifest.binary, "binary");
   bindPayload(manifest.npmPackage.entries, `package/${manifest.launcher.path}`, manifest.launcher, "launcher");
   bindSharedContent(manifest.nativeArchive.entries, nativeRoot, manifest.npmPackage.entries);
+  return manifest;
+}
+
+export function validateUniversalNpmManifest(
+  manifest,
+  contract = loadTargetContract(),
+  thresholds = loadReleaseThresholds()
+) {
+  validateTargetContract(contract);
+  validateReleaseThresholds(thresholds, contract);
+  exactObject(
+    manifest,
+    ["schemaVersion", "name", "version", "product", "launcher", "binaries", "npmPackage"],
+    "UNIVERSAL_MANIFEST_UNKNOWN_FIELD",
+    "universal npm manifest"
+  );
+  if (manifest.schemaVersion !== 1
+      || manifest.name !== "minimax-codex"
+      || !/^[0-9A-Za-z][0-9A-Za-z.+-]{0,63}$/u.test(manifest.version)) {
+    contractFail("UNIVERSAL_MANIFEST_INVALID", "universal npm manifest identity is invalid");
+  }
+  validateProduct(manifest.product);
+  validateUniversalPayload(manifest.launcher, ["path", "mode", "bytes", "sha256"], "launcher");
+  if (manifest.launcher.path !== "bin/minimax-codex.cjs" || manifest.launcher.mode !== launcherMode) {
+    contractFail("UNIVERSAL_LAUNCHER_MISMATCH", "universal npm launcher identity is invalid");
+  }
+
+  if (!Array.isArray(manifest.binaries) || manifest.binaries.length !== 2) {
+    contractFail("UNIVERSAL_TARGET_SET", "universal npm package requires exactly two hosted binaries");
+  }
+  const expectedBinaries = [
+    {targetId: "linux-x86_64-gnu", path: "minimax-codex"},
+    {targetId: "windows-x86_64-msvc", path: "minimax-codex.exe"}
+  ];
+  for (let index = 0; index < expectedBinaries.length; index += 1) {
+    const binary = manifest.binaries[index];
+    const expected = expectedBinaries[index];
+    validateUniversalPayload(binary, ["targetId", "path", "mode", "bytes", "sha256"], "binary");
+    const target = contract.targets.find((candidate) => candidate.id === binary.targetId);
+    if (!target
+        || target.supportTier !== "hosted_release"
+        || binary.targetId !== expected.targetId
+        || binary.path !== expected.path
+        || binary.mode !== launcherMode) {
+      contractFail("UNIVERSAL_TARGET_SET", "universal npm binary targets must remain Linux GNU then Windows MSVC");
+    }
+    if (binary.bytes > thresholds.baseCompressedBytes) {
+      contractFail("UNIVERSAL_SIZE_LIMIT", "universal npm binary exceeds the release size limit");
+    }
+  }
+
+  validateArchive(
+    manifest.npmPackage,
+    `minimax-codex-${manifest.version}.tgz`,
+    expectedUniversalNpmEntries(manifest.version),
+    "universal npm"
+  );
+  bindPayload(manifest.npmPackage.entries, `package/${manifest.launcher.path}`, manifest.launcher, "universal launcher");
+  for (const binary of manifest.binaries) {
+    bindPayload(manifest.npmPackage.entries, `package/${binary.path}`, binary, `universal ${binary.targetId} binary`);
+  }
+  const extractedBytes = manifest.npmPackage.entries
+    .filter((entry) => entry.type === "file")
+    .reduce((total, entry) => total + entry.bytes, 0);
+  if (manifest.npmPackage.bytes > thresholds.baseCompressedBytes
+      || extractedBytes > thresholds.baseCompressedBytes) {
+    contractFail("UNIVERSAL_SIZE_LIMIT", "universal npm package exceeds the release size limit");
+  }
+  return manifest;
+}
+
+export function validateUniversalNpmCandidate({
+  manifest,
+  contract = loadTargetContract(),
+  thresholds = loadReleaseThresholds(),
+  expectedProduct,
+  archiveBytes,
+  checksumBytes
+}) {
+  if (!isPlainObject(manifest)
+      || !isPlainObject(expectedProduct)
+      || !Buffer.isBuffer(archiveBytes)
+      || !Buffer.isBuffer(checksumBytes)) {
+    contractFail("UNIVERSAL_CANDIDATE_INVALID", "universal npm candidate inputs are malformed");
+  }
+  if (manifest.product?.fingerprint !== expectedProduct.fingerprint
+      || manifest.product?.fileCount !== expectedProduct.fileCount) {
+    contractFail("UNIVERSAL_PRODUCT_FINGERPRINT_MISMATCH", "universal npm candidate product fingerprint is stale");
+  }
+  validateUniversalNpmManifest(manifest, contract, thresholds);
+
+  const entries = parseTarGzip(archiveBytes, manifest.npmPackage.name);
+  const expectedPaths = new Set(manifest.npmPackage.entries.map((entry) => entry.path));
+  const binaryRecords = manifest.binaries.map((binary) => ({
+    binary,
+    entry: entries.find((entry) => entry.name === `package/${binary.path}`)
+  }));
+  for (const record of binaryRecords) {
+    if (!record.entry) {
+      const renamed = entries.find((entry) => entry.type === "0"
+        && sha256(entry.bytes) === record.binary.sha256
+        && entry.mode === record.binary.mode);
+      if (renamed) {
+        contractFail("UNIVERSAL_BINARY_RENAMED", `universal binary was renamed to ${renamed.name}`);
+      }
+      contractFail("UNIVERSAL_BINARY_MISSING", `universal npm archive is missing package/${record.binary.path}`);
+    }
+    if (record.entry.type !== "0" || record.entry.mode !== launcherMode) {
+      contractFail("UNIVERSAL_BINARY_MODE", `${record.binary.targetId} binary must be a regular executable entry`);
+    }
+    const expectedMagic = record.binary.targetId === "linux-x86_64-gnu"
+      ? Buffer.from([0x7f, 0x45, 0x4c, 0x46])
+      : Buffer.from([0x4d, 0x5a]);
+    if (record.entry.bytes.length < expectedMagic.length
+        || !record.entry.bytes.subarray(0, expectedMagic.length).equals(expectedMagic)) {
+      contractFail("UNIVERSAL_BINARY_MAGIC", `${record.binary.targetId} binary magic is invalid`);
+    }
+  }
+
+  const unexpectedExecutable = entries.find((entry) => !expectedPaths.has(entry.name)
+    && entry.type === "0"
+    && (entry.mode & 0o111) !== 0);
+  if (unexpectedExecutable) {
+    contractFail("UNIVERSAL_EXTRA_EXECUTABLE", `universal npm archive contains extra executable ${unexpectedExecutable.name}`);
+  }
+
+  const launcher = entries.find((entry) => entry.name === "package/bin/minimax-codex.cjs");
+  if (!launcher
+      || launcher.type !== "0"
+      || launcher.mode !== manifest.launcher.mode
+      || launcher.bytes.length !== manifest.launcher.bytes
+      || sha256(launcher.bytes) !== manifest.launcher.sha256) {
+    contractFail("UNIVERSAL_LAUNCHER_MISMATCH", "universal npm launcher does not match its manifest");
+  }
+  const packageMetadata = entries.find((entry) => entry.name === "package/package.json");
+  validatePublishedPackageEntry(packageMetadata, manifest.version);
+
+  if (entries.length !== manifest.npmPackage.entries.length) {
+    contractFail("UNIVERSAL_CHECKSUM_MISMATCH", "universal npm archive entry count does not match its manifest");
+  }
+  for (let index = 0; index < manifest.npmPackage.entries.length; index += 1) {
+    const expected = manifest.npmPackage.entries[index];
+    const actual = entries[index];
+    const expectedType = expected.type === "directory" ? "5" : "0";
+    if (!actual
+        || actual.name !== expected.path
+        || actual.type !== expectedType
+        || actual.mode !== expected.mode) {
+      contractFail("UNIVERSAL_CHECKSUM_MISMATCH", `universal npm archive metadata drifted at ${expected.path}`);
+    }
+    if (expected.type === "file"
+        && (actual.bytes.length !== expected.bytes || sha256(actual.bytes) !== expected.sha256)) {
+      contractFail("UNIVERSAL_CHECKSUM_MISMATCH", `universal npm archive content drifted at ${expected.path}`);
+    }
+  }
+
+  const archiveHash = sha256(archiveBytes);
+  const sidecarHash = parseUniversalSidecar(checksumBytes, manifest.npmPackage.name);
+  if (archiveBytes.length !== manifest.npmPackage.bytes
+      || archiveHash !== manifest.npmPackage.sha256
+      || sidecarHash !== archiveHash) {
+    contractFail("UNIVERSAL_CHECKSUM_MISMATCH", "universal npm archive checksum does not match its manifest and sidecar");
+  }
   return manifest;
 }
 
@@ -337,7 +608,7 @@ function parseSidecar(bytes, expectedName) {
   return match[1];
 }
 
-function parseTarGzip(bytes, label) {
+export function parseTarGzip(bytes, label) {
   let tar;
   try {
     tar = gunzipSync(bytes);
@@ -445,8 +716,63 @@ function parseTarOctal(buffer, offset, length, label) {
   return Number.parseInt(value, 8);
 }
 
-function sha256(bytes) {
+export function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+function validateUniversalPayload(payload, fields, label) {
+  exactObject(payload, fields, "UNIVERSAL_MANIFEST_UNKNOWN_FIELD", `universal npm ${label}`);
+  if (!safeRelativePath(payload.path)
+      || !Number.isSafeInteger(payload.mode)
+      || !Number.isSafeInteger(payload.bytes)
+      || payload.bytes <= 0
+      || typeof payload.sha256 !== "string"
+      || !/^[0-9a-f]{64}$/u.test(payload.sha256)) {
+    contractFail("UNIVERSAL_MANIFEST_INVALID", `universal npm ${label} payload is invalid`);
+  }
+}
+
+function validatePublishedPackageEntry(entry, version) {
+  if (!entry || entry.type !== "0" || entry.mode !== fileMode) {
+    contractFail("PACKAGE_METADATA_FORBIDDEN", "published package metadata must be one regular non-executable file");
+  }
+  let packageMetadata;
+  try {
+    packageMetadata = JSON.parse(entry.bytes.toString("utf8"));
+  } catch {
+    contractFail("PACKAGE_METADATA_FORBIDDEN", "published package metadata is not valid JSON");
+  }
+  exactObject(
+    packageMetadata,
+    ["name", "version", "description", "license", "type", "bin", "engines", "repository", "homepage", "bugs", "publishConfig"],
+    "PACKAGE_METADATA_FORBIDDEN",
+    "published package metadata"
+  );
+  if (packageMetadata.name !== "minimax-codex"
+      || packageMetadata.version !== version
+      || typeof packageMetadata.description !== "string"
+      || packageMetadata.description.length === 0
+      || packageMetadata.license !== "MIT OR Apache-2.0"
+      || packageMetadata.type !== "module"
+      || !sameJson(packageMetadata.bin, {"minimax-codex": "bin/minimax-codex.cjs"})
+      || !sameJson(packageMetadata.engines, {node: ">=20"})
+      || !sameJson(packageMetadata.repository, {
+        type: "git",
+        url: "git+https://github.com/niuniu122/wiki-coding.git"
+      })
+      || packageMetadata.homepage !== "https://github.com/niuniu122/wiki-coding#readme"
+      || !sameJson(packageMetadata.bugs, {url: "https://github.com/niuniu122/wiki-coding/issues"})
+      || !sameJson(packageMetadata.publishConfig, {access: "public"})) {
+    contractFail("PACKAGE_METADATA_IDENTITY", "published package metadata identity is invalid");
+  }
+}
+
+function parseUniversalSidecar(bytes, expectedName) {
+  const match = /^([0-9a-f]{64})  ([0-9A-Za-z][0-9A-Za-z._+-]{0,95})\n$/u.exec(bytes.toString("utf8"));
+  if (!match || match[2] !== expectedName) {
+    contractFail("UNIVERSAL_CHECKSUM_MISMATCH", "universal npm checksum sidecar is invalid");
+  }
+  return match[1];
 }
 
 function validateTargetFields(target) {
