@@ -503,6 +503,29 @@ test("package.json exposes the package-only corruption gate", () => {
   assert.equal(packageJson.scripts["test:package"], "node --test scripts/release/package-contract.test.mjs");
 });
 
+test("npm release workflow is tag-only ordered and secret-isolated", () => {
+  const source = readFileSync(resolve(root, ".github/workflows/npm-release.yml"), "utf8")
+    .replaceAll("\r\n", "\n");
+  assert.match(source, /on:\n  push:\n    tags:\n      - "v\*"/u);
+  assert.doesNotMatch(source, /pull_request:|workflow_dispatch:|release:/u);
+  assert.match(source, /permissions:\n  contents: read/u);
+  const preflight = source.indexOf("  preflight:");
+  const build = source.indexOf("  build:");
+  const assemble = source.indexOf("  assemble:");
+  const smoke = source.indexOf("  smoke:");
+  const publish = source.indexOf("  publish:");
+  assert.ok(preflight < build && build < assemble && assemble < smoke && smoke < publish);
+  const smokeText = source.slice(smoke, publish);
+  assert.match(smokeText, /--global --ignore-scripts/u);
+  assert.match(smokeText, /npx --no-install minimax-codex --version/u);
+  assert.doesNotMatch(smokeText, /cargo|rustup|rustc/u);
+  assert.equal(source.match(/secrets\.NPM_TOKEN/gu)?.length, 1);
+  assert.match(source.slice(publish), /environment: npm-production/u);
+  assert.match(source.slice(publish), /id-token: write/u);
+  assert.match(source.slice(publish), /npm publish "\$ARCHIVE" --dry-run --json --access public/u);
+  assert.match(source.slice(publish), /npm publish "\$ARCHIVE" --access public --provenance/u);
+});
+
 test("release CLIs require one explicit current fingerprint and bind artifacts to it", () => {
   mkdirSync(resolve(root, "target"), {recursive: true});
   const workspace = mkdtempSync(resolve(root, "target/fingerprint-contract-test-"));

@@ -8,6 +8,7 @@ use sha2::{Digest, Sha256};
 
 pub const SOURCE_AUTHORITY_MANIFEST: &str = "fixtures/compat/source-authority.v1.json";
 pub const CI_WORKFLOW: &str = ".github/workflows/ci.yml";
+pub const NPM_RELEASE_WORKFLOW: &str = ".github/workflows/npm-release.yml";
 pub const LEGACY_FIXTURE_PHASE_11_DISPOSITION: &str =
     "record-each-fixture-responsibility-in-typescript-responsibilities.v1.json";
 pub const LEGACY_FIXTURE_PHASE_14_ZERO_CONTRACT: &str =
@@ -423,6 +424,9 @@ pub fn validate_source_authority(
     let ci = fs::read_to_string(root.join(CI_WORKFLOW))
         .map_err(|_| SourceAuthorityError::PathRead(CI_WORKFLOW.to_owned()))?;
     validate_ci_workflow_text(&ci)?;
+    let npm_release = fs::read_to_string(root.join(NPM_RELEASE_WORKFLOW))
+        .map_err(|_| SourceAuthorityError::PathRead(NPM_RELEASE_WORKFLOW.to_owned()))?;
+    validate_npm_release_workflow_text(&npm_release)?;
     Ok(())
 }
 
@@ -592,6 +596,167 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
                 "CI strict/candidate branching must differ only for hosted evidence freshness",
             );
         }
+    }
+    Ok(())
+}
+
+pub fn validate_npm_release_workflow_text(source: &str) -> Result<(), SourceAuthorityError> {
+    let normalized = source.replace("\r\n", "\n");
+    let lowercase = normalized.to_ascii_lowercase();
+    if !normalized
+        .contains("on:\n  push:\n    tags:\n      - \"v*\"\n\npermissions:\n  contents: read\n")
+        || normalized.lines().any(|line| {
+            matches!(
+                line.trim(),
+                "pull_request:" | "workflow_dispatch:" | "release:" | "branches:"
+            )
+        })
+    {
+        return violation("npm release must be triggered only by v* tag pushes");
+    }
+    if normalized.matches("permissions:").count() != 2
+        || !normalized.contains(
+            "    environment: npm-production\n    permissions:\n      contents: read\n      id-token: write\n",
+        )
+        || normalized.matches("id-token: write").count() != 1
+    {
+        return violation(
+            "npm release permissions must be read-only except publish OIDC in npm-production",
+        );
+    }
+    if normalized.contains("continue-on-error:") {
+        return violation("npm release gates must fail closed");
+    }
+
+    let job_names = ["preflight", "build", "assemble", "smoke", "publish"];
+    let mut positions = Vec::new();
+    for job in job_names {
+        let marker = format!("  {job}:");
+        let matches = normalized.match_indices(&marker).collect::<Vec<_>>();
+        let [(position, _)] = matches.as_slice() else {
+            return violation(format!("npm release must declare {job} exactly once"));
+        };
+        positions.push(*position);
+    }
+    if !positions.windows(2).all(|window| window[0] < window[1])
+        || !normalized.contains("  build:\n    needs: preflight")
+        || !normalized.contains("  assemble:\n    needs: [preflight, build]")
+        || !normalized.contains("  smoke:\n    needs: [preflight, assemble]")
+        || !normalized.contains("  publish:\n    needs: [preflight, assemble, smoke]")
+    {
+        return violation(
+            "npm release jobs must remain preflight, build, assemble, smoke, then publish",
+        );
+    }
+
+    for required in [
+        "fetch-depth: 0",
+        "^v([0-9]+\\.[0-9]+\\.[0-9]+)$",
+        "PACKAGE_VERSION=$(node -p \"require('./package.json').version\")",
+        "CARGO_VERSION=$(sed -n",
+        "git fetch --no-tags origin main",
+        "git merge-base --is-ancestor \"$GITHUB_SHA\" origin/main",
+        "npm view minimax-codex versions --json",
+        "grep -Eq 'E404|404 Not Found'",
+        "versions.includes(version)",
+        "echo \"version=$VERSION\" >> \"$GITHUB_OUTPUT\"",
+    ] {
+        if normalized.matches(required).count() == 0 {
+            return violation(format!("npm release preflight must retain {required}"));
+        }
+    }
+
+    let build_text = &normalized[positions[1]..positions[2]];
+    for required in [
+        "target_id: linux-x86_64-gnu",
+        "target_id: windows-x86_64-msvc",
+        "-C link-arg=/Brepro",
+        "bash scripts/ci-linux-sandbox-canary.sh",
+        "npm ci --ignore-scripts",
+        "npm run check:rust",
+        "npm run test:rust:candidate",
+        "npm run eval:provider",
+        "npm run eval:retrieval",
+        "npm run verify:rust-contracts:candidate",
+        "npm run test:package",
+        "npm run build:rust:release",
+        "node scripts/release/package-rust.mjs --binary",
+        "node scripts/release/verify-rust-release.mjs --binary",
+        "node scripts/release/verify-milestone-flow.mjs --artifacts",
+        "name: npm-release-input-${{ matrix.target_id }}",
+    ] {
+        if !build_text.contains(required) {
+            return violation(format!("npm release build must retain {required}"));
+        }
+    }
+
+    let assemble_text = &normalized[positions[2]..positions[3]];
+    for required in [
+        "npm-release-input-linux-x86_64-gnu",
+        "npm-release-input-windows-x86_64-msvc",
+        "cmp target/npm-release-input/linux/fingerprint.json target/npm-release-input/windows/fingerprint.json",
+        "node scripts/release/package-rust.mjs --universal-npm",
+        "name: npm-release-universal-${{ needs.preflight.outputs.version }}",
+        "target/npm-universal/minimax-codex-${{ needs.preflight.outputs.version }}.tgz",
+        "target/npm-universal/minimax-codex-${{ needs.preflight.outputs.version }}.tgz.sha256",
+        "target/npm-universal/minimax-codex-v${{ needs.preflight.outputs.version }}-NPM-MANIFEST.json",
+    ] {
+        if !assemble_text.contains(required) {
+            return violation(format!("npm release assembly must retain {required}"));
+        }
+    }
+
+    let smoke_text = &normalized[positions[3]..positions[4]];
+    for required in [
+        "os: [ubuntu-latest, windows-latest]",
+        "node-version: 20",
+        "npm install --global --ignore-scripts --prefix \"$PREFIX\" \"$ARCHIVE\"",
+        "npm install --ignore-scripts --save-dev \"$ARCHIVE\"",
+        "npx --no-install minimax-codex --version",
+        "MINIMAX_API_KEY=fixture-no-network \"$COMMAND\" doctor --json",
+        "value.healthy !== true",
+    ] {
+        if !smoke_text.contains(required) {
+            return violation(format!("npm release smoke must retain {required}"));
+        }
+    }
+    if ["cargo", "rustup", "rustc", "npm run", "npm publish"]
+        .iter()
+        .any(|forbidden| smoke_text.to_ascii_lowercase().contains(forbidden))
+    {
+        return violation("npm release consumer smoke must not build or publish");
+    }
+
+    let publish_text = &normalized[positions[4]..];
+    for required in [
+        "environment: npm-production",
+        "node-version: 24",
+        "sha256sum --check \"$(basename \"$SIDECAR\")\"",
+        "npm publish \"$ARCHIVE\" --dry-run --json --access public",
+        "npm publish \"$ARCHIVE\" --access public --provenance",
+        "npm view minimax-codex versions --json",
+        "NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}",
+    ] {
+        if !publish_text.contains(required) {
+            return violation(format!("npm release publish must retain {required}"));
+        }
+    }
+    if ["package-rust.mjs", "npm pack", "cargo ", "rustup "]
+        .iter()
+        .any(|forbidden| publish_text.to_ascii_lowercase().contains(forbidden))
+    {
+        return violation(
+            "npm release publish must consume the smoke-tested tarball without rebuilding",
+        );
+    }
+    if lowercase.matches("secrets.").count() != 1
+        || !publish_text.contains("secrets.NPM_TOKEN")
+        || lowercase[..positions[4]].contains("secrets.")
+        || lowercase[..positions[4]].contains("npm publish")
+    {
+        return violation(
+            "npm credentials and publication must exist only in the final publish job",
+        );
     }
     Ok(())
 }

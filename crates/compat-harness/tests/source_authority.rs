@@ -11,8 +11,8 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use source_authority::{
     CI_WORKFLOW, LEGACY_FIXTURE_PHASE_11_DISPOSITION, LEGACY_FIXTURE_PHASE_14_ZERO_CONTRACT,
-    SourceAuthorityError, load_source_authority, parse_source_authority, validate_ci_workflow_text,
-    validate_source_authority,
+    NPM_RELEASE_WORKFLOW, SourceAuthorityError, load_source_authority, parse_source_authority,
+    validate_ci_workflow_text, validate_npm_release_workflow_text, validate_source_authority,
 };
 
 static NEXT_SYNTHETIC_ROOT: AtomicU64 = AtomicU64::new(1);
@@ -123,6 +123,12 @@ impl SyntheticRepository {
             CI_WORKFLOW,
             &fs::read_to_string(repository_root().join(CI_WORKFLOW))
                 .expect("committed CI workflow should be readable"),
+        );
+        write_file(
+            &root,
+            NPM_RELEASE_WORKFLOW,
+            &fs::read_to_string(repository_root().join(NPM_RELEASE_WORKFLOW))
+                .expect("committed npm release workflow should be readable"),
         );
         let committed = manifest_json(&repository_root());
         let mut manifest: Value =
@@ -937,5 +943,111 @@ fn assert_ci_rejected(source: &str, expected: &str) {
     assert!(
         error.to_string().contains(expected),
         "expected {expected:?} in {error:?}"
+    );
+}
+
+#[test]
+fn npm_release_workflow_is_tag_only_ordered_and_secret_isolated() {
+    let source = fs::read_to_string(repository_root().join(NPM_RELEASE_WORKFLOW))
+        .expect("npm release workflow should be readable");
+    validate_npm_release_workflow_text(&source)
+        .expect("committed npm release workflow should preserve publication authority");
+
+    for (label, mutation, expected) in [
+        (
+            "manual trigger",
+            source.replace("on:\n  push:", "on:\n  workflow_dispatch:\n  push:"),
+            "triggered only by v* tag pushes",
+        ),
+        (
+            "untrusted ancestry",
+            source.replace(
+                "git merge-base --is-ancestor \"$GITHUB_SHA\" origin/main",
+                "echo skipped-main-ancestry",
+            ),
+            "preflight must retain git merge-base",
+        ),
+        (
+            "ambiguous registry error",
+            source.replace("E404|404 Not Found", "any-error"),
+            "preflight must retain grep -Eq 'E404|404 Not Found'",
+        ),
+        (
+            "publish before smoke",
+            source.replace(
+                "  publish:\n    needs: [preflight, assemble, smoke]",
+                "  publish:\n    needs: [preflight, assemble]",
+            ),
+            "preflight, build, assemble, smoke, then publish",
+        ),
+        (
+            "consumer Rust install",
+            source.replace(
+                "      - name: Smoke global and project-local installs without lifecycle scripts",
+                "      - run: rustup toolchain install 1.97.0\n      - name: Smoke global and project-local installs without lifecycle scripts",
+            ),
+            "consumer smoke must not build or publish",
+        ),
+        (
+            "lifecycle execution",
+            source.replace(
+                "npm install --global --ignore-scripts --prefix",
+                "npm install --global --prefix",
+            ),
+            "smoke must retain npm install --global --ignore-scripts",
+        ),
+        (
+            "unprotected publish",
+            source.replace("    environment: npm-production\n", ""),
+            "permissions must be read-only except publish OIDC",
+        ),
+        (
+            "broad OIDC",
+            source.replace("      id-token: write", "      id-token: read"),
+            "permissions must be read-only except publish OIDC",
+        ),
+        (
+            "non-blocking release gate",
+            source.replace(
+                "    timeout-minutes: 10\n    outputs:",
+                "    timeout-minutes: 10\n    continue-on-error: true\n    outputs:",
+            ),
+            "gates must fail closed",
+        ),
+        (
+            "rebuilt publish artifact",
+            source.replace(
+                "npm publish \"$ARCHIVE\" --access public --provenance",
+                "npm publish \"$ARCHIVE.rebuilt\" --access public --provenance",
+            ),
+            "publish must retain npm publish \"$ARCHIVE\" --access public --provenance",
+        ),
+        (
+            "missing dry run",
+            source.replace(
+                "npm publish \"$ARCHIVE\" --dry-run --json --access public",
+                "echo skipped-dry-run",
+            ),
+            "publish must retain npm publish \"$ARCHIVE\" --dry-run --json --access public",
+        ),
+        (
+            "early credential",
+            source.replace(
+                "      - name: Validate tag, versions, main ancestry, and npm availability",
+                "      - name: Expose secret\n        run: echo ${{ secrets.NPM_TOKEN }}\n      - name: Validate tag, versions, main ancestry, and npm availability",
+            ),
+            "credentials and publication must exist only in the final publish job",
+        ),
+    ] {
+        assert_npm_release_rejected(&mutation, expected, label);
+    }
+}
+
+fn assert_npm_release_rejected(source: &str, expected: &str, label: &str) {
+    let error = validate_npm_release_workflow_text(source)
+        .expect_err("npm release workflow mutation must fail");
+    assert!(
+        error.to_string().contains(expected),
+        "{label}: expected {expected:?} in {error:?}"
     );
 }

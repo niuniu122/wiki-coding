@@ -1,0 +1,287 @@
+name: npm Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: npm-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          registry-url: https://registry.npmjs.org
+          cache: npm
+      - name: Validate tag, versions, main ancestry, and npm availability
+        id: release
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ ! "$GITHUB_REF_NAME" =~ ^v([0-9]+\.[0-9]+\.[0-9]+)$ ]]; then
+            echo "release tag must be exactly vMAJOR.MINOR.PATCH" >&2
+            exit 1
+          fi
+          VERSION="${BASH_REMATCH[1]}"
+          PACKAGE_VERSION=$(node -p "require('./package.json').version")
+          CARGO_VERSION=$(sed -n '/^\[workspace.package\]/,/^\[/s/^version = "\([^"]*\)"/\1/p' Cargo.toml | head -n 1)
+          test "$VERSION" = "$PACKAGE_VERSION"
+          test "$VERSION" = "$CARGO_VERSION"
+          git fetch --no-tags origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          mkdir -p target/npm-preflight
+          set +e
+          REGISTRY_JSON=$(npm view minimax-codex versions --json 2>target/npm-preflight/npm-view.err)
+          REGISTRY_STATUS=$?
+          set -e
+          if [ "$REGISTRY_STATUS" -ne 0 ]; then
+            if grep -Eq 'E404|404 Not Found' target/npm-preflight/npm-view.err; then
+              REGISTRY_JSON='[]'
+            else
+              cat target/npm-preflight/npm-view.err >&2
+              exit "$REGISTRY_STATUS"
+            fi
+          fi
+          node - "$VERSION" "$REGISTRY_JSON" <<'NODE'
+          const [version, raw] = process.argv.slice(2);
+          const value = JSON.parse(raw || "[]");
+          const versions = Array.isArray(value) ? value : [value];
+          if (versions.includes(version)) {
+            console.error(`minimax-codex@${version} already exists and cannot be overwritten`);
+            process.exit(1);
+          }
+          NODE
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: preflight
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target_id: linux-x86_64-gnu
+            binary_suffix: ""
+          - os: windows-latest
+            target_id: windows-x86_64-msvc
+            binary_suffix: ".exe"
+    env:
+      CARGO_TARGET_DIR: target/npm-release/cargo
+      RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '-C link-arg=/Brepro' || '' }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux subprocess sandbox
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y bubblewrap && sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Verify Linux subprocess sandbox
+        if: runner.os == 'Linux'
+        run: bwrap --unshare-user --unshare-ipc --unshare-pid --unshare-net --unshare-uts --unshare-cgroup-try --die-with-parent --new-session --cap-drop ALL --clearenv --ro-bind / / /bin/true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: rustup toolchain install 1.97.0 --profile minimal --component rustfmt --component clippy
+      - name: Run Linux adversarial sandbox canary
+        if: runner.os == 'Linux'
+        run: bash scripts/ci-linux-sandbox-canary.sh
+      - run: npm ci --ignore-scripts
+      - run: npm run check:rust
+      - run: npm run test:rust:candidate
+      - run: npm run eval:provider
+      - run: npm run eval:retrieval
+      - run: npm run verify:rust-contracts:candidate
+      - run: npm run test:package
+      - name: Generate explicit release product fingerprint
+        shell: bash
+        run: mkdir -p target/npm-release && node scripts/release/product-fingerprint.mjs > target/npm-release/fingerprint.json
+      - run: npm run build:rust:release
+      - name: Package platform release candidate
+        shell: bash
+        run: node scripts/release/package-rust.mjs --binary "target/npm-release/cargo/release/minimax-cli${{ matrix.binary_suffix }}" --output target/npm-release/artifacts --fingerprint-file target/npm-release/fingerprint.json --version "${{ needs.preflight.outputs.version }}"
+      - name: Verify installed platform release candidate
+        shell: bash
+        run: node scripts/release/verify-rust-release.mjs --binary "target/npm-release/cargo/release/minimax-cli${{ matrix.binary_suffix }}" --artifacts target/npm-release/artifacts --evidence-dir target/npm-release/evidence
+      - name: Verify platform milestone flow
+        shell: bash
+        run: node scripts/release/verify-milestone-flow.mjs --artifacts target/npm-release/artifacts --evidence-dir target/npm-release/evidence --fingerprint-file target/npm-release/fingerprint.json
+      - name: Upload verified platform release input
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-release-input-${{ matrix.target_id }}
+          path: |
+            target/npm-release/artifacts
+            target/npm-release/evidence
+            target/npm-release/fingerprint.json
+          if-no-files-found: error
+          retention-days: 7
+
+  assemble:
+    needs: [preflight, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - name: Download Linux release input
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-release-input-linux-x86_64-gnu
+          path: target/npm-release-input/linux
+      - name: Download Windows release input
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-release-input-windows-x86_64-msvc
+          path: target/npm-release-input/windows
+      - name: Prove both hosted builds bind one product fingerprint
+        shell: bash
+        run: cmp target/npm-release-input/linux/fingerprint.json target/npm-release-input/windows/fingerprint.json
+      - name: Assemble and validate the universal npm package
+        shell: bash
+        run: node scripts/release/package-rust.mjs --universal-npm --windows-artifacts target/npm-release-input/windows/artifacts --linux-artifacts target/npm-release-input/linux/artifacts --output target/npm-universal --fingerprint-file target/npm-release-input/linux/fingerprint.json --version "${{ needs.preflight.outputs.version }}"
+      - name: Upload exact universal npm candidate
+        uses: actions/upload-artifact@v4
+        with:
+          name: npm-release-universal-${{ needs.preflight.outputs.version }}
+          path: |
+            target/npm-universal/minimax-codex-${{ needs.preflight.outputs.version }}.tgz
+            target/npm-universal/minimax-codex-${{ needs.preflight.outputs.version }}.tgz.sha256
+            target/npm-universal/minimax-codex-v${{ needs.preflight.outputs.version }}-NPM-MANIFEST.json
+          if-no-files-found: error
+          retention-days: 7
+
+  smoke:
+    needs: [preflight, assemble]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Download exact universal npm candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-release-universal-${{ needs.preflight.outputs.version }}
+          path: target/npm-smoke
+      - name: Smoke global and project-local installs without lifecycle scripts
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.preflight.outputs.version }}"
+          ARCHIVE="$GITHUB_WORKSPACE/target/npm-smoke/minimax-codex-${VERSION}.tgz"
+          PREFIX="$GITHUB_WORKSPACE/target/npm-global"
+          PROJECT="$GITHUB_WORKSPACE/target/npm-local"
+          npm install --global --ignore-scripts --prefix "$PREFIX" "$ARCHIVE"
+          if [ "$RUNNER_OS" = "Windows" ]; then
+            COMMAND="$PREFIX/minimax-codex.cmd"
+          else
+            COMMAND="$PREFIX/bin/minimax-codex"
+          fi
+          GLOBAL_VERSION=$("$COMMAND" --version | tr -d '\r')
+          test "$GLOBAL_VERSION" = "minimax-codex-rust $VERSION"
+          mkdir -p "$PROJECT"
+          cd "$PROJECT"
+          npm init --yes
+          npm install --ignore-scripts --save-dev "$ARCHIVE"
+          LOCAL_VERSION=$(npx --no-install minimax-codex --version | tr -d '\r')
+          test "$LOCAL_VERSION" = "minimax-codex-rust $VERSION"
+          DOCTOR_JSON=$(MINIMAX_API_KEY=fixture-no-network "$COMMAND" doctor --json)
+          printf '%s\n' "$DOCTOR_JSON" > doctor.json
+          node -e 'const value = JSON.parse(require("node:fs").readFileSync("doctor.json", "utf8")); if (value.healthy !== true) process.exit(1);'
+
+  publish:
+    needs: [preflight, assemble, smoke]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment: npm-production
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      - name: Download the smoke-tested universal npm candidate
+        uses: actions/download-artifact@v4
+        with:
+          name: npm-release-universal-${{ needs.preflight.outputs.version }}
+          path: target/npm-publish
+      - name: Reverify digest, manifest, and dry-run file set
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.preflight.outputs.version }}"
+          ARCHIVE="$GITHUB_WORKSPACE/target/npm-publish/minimax-codex-${VERSION}.tgz"
+          SIDECAR="${ARCHIVE}.sha256"
+          MANIFEST="$GITHUB_WORKSPACE/target/npm-publish/minimax-codex-v${VERSION}-NPM-MANIFEST.json"
+          cd "$GITHUB_WORKSPACE/target/npm-publish"
+          sha256sum --check "$(basename "$SIDECAR")"
+          npm publish "$ARCHIVE" --dry-run --json --access public > npm-dry-run.json
+          node - "$VERSION" "$MANIFEST" npm-dry-run.json <<'NODE'
+          const fs = require("node:fs");
+          const [version, manifestPath, dryRunPath] = process.argv.slice(2);
+          const manifest = JSON.parse(fs.readFileSync(manifestPath, "utf8"));
+          const dryRun = JSON.parse(fs.readFileSync(dryRunPath, "utf8"));
+          const expected = manifest.npmPackage.entries
+            .filter((entry) => entry.type === "file")
+            .map((entry) => entry.path.slice("package/".length))
+            .sort();
+          const actual = dryRun.files.map((entry) => entry.path).sort();
+          if (dryRun.name !== "minimax-codex" || dryRun.version !== version
+              || JSON.stringify(actual) !== JSON.stringify(expected)) process.exit(1);
+          NODE
+      - name: Recheck immutable npm version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.preflight.outputs.version }}"
+          set +e
+          REGISTRY_JSON=$(npm view minimax-codex versions --json 2>target/npm-publish/npm-view.err)
+          REGISTRY_STATUS=$?
+          set -e
+          if [ "$REGISTRY_STATUS" -ne 0 ]; then
+            if grep -Eq 'E404|404 Not Found' target/npm-publish/npm-view.err; then
+              REGISTRY_JSON='[]'
+            else
+              cat target/npm-publish/npm-view.err >&2
+              exit "$REGISTRY_STATUS"
+            fi
+          fi
+          node - "$VERSION" "$REGISTRY_JSON" <<'NODE'
+          const [version, raw] = process.argv.slice(2);
+          const value = JSON.parse(raw || "[]");
+          if ((Array.isArray(value) ? value : [value]).includes(version)) process.exit(1);
+          NODE
+      - name: Publish the exact tested tarball
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          set -euo pipefail
+          VERSION="${{ needs.preflight.outputs.version }}"
+          ARCHIVE="$GITHUB_WORKSPACE/target/npm-publish/minimax-codex-${VERSION}.tgz"
+          npm publish "$ARCHIVE" --access public --provenance
