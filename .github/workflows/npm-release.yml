@@ -257,7 +257,9 @@ jobs:
             .filter((entry) => entry.type === "file")
             .map((entry) => entry.path.slice("package/".length))
             .sort();
-          const actual = dryRun.files.map((entry) => entry.path).sort();
+          const actual = dryRun.files
+            .filter((entry) => entry.path !== "" && !entry.path.endsWith("/"))
+            .map((entry) => entry.path).sort();
           if (dryRun.name !== "minimax-codex" || dryRun.version !== version
               || archiveSha256 !== manifest.npmPackage.sha256
               || JSON.stringify(actual) !== JSON.stringify(expected)) process.exit(1);

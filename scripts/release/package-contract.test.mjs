@@ -527,6 +527,10 @@ test("npm release workflow is tag-only ordered and secret-isolated", () => {
   assert.match(source.slice(publish), /npm install --global npm@11\.5\.1/u);
   assert.match(source.slice(publish), /manifest\.npmPackage\.sha256/u);
   assert.match(source.slice(publish), /npm publish "\$ARCHIVE" --dry-run --json --access public/u);
+  assert.match(
+    source.slice(publish),
+    /const actual = dryRun\.files\s+\.filter\(\(entry\) => entry\.path !== "" && !entry\.path\.endsWith\("\/"\)\)\s+\.map\(\(entry\) => entry\.path\)\.sort\(\);/u
+  );
   assert.match(source.slice(publish), /npm publish "\$ARCHIVE" --access public --provenance/u);
 });
 
