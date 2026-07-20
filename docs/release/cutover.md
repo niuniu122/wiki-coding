@@ -32,11 +32,12 @@ local package behavior but can never substitute for hosted Windows MSVC.
 
 ## Distribution boundary
 
-The native archive contains one Rust binary, `bin/minimax-codex.cjs`, release
-documentation, both licenses, and the release manifest. The platform npm package
-contains the same launcher and Rust binary plus npm metadata. Neither archive
-contains TypeScript/TSX source, `dist/`, a legacy bin, runtime dependencies,
-install hooks, an embedding resource, or a downloader.
+Each native archive contains one Rust binary, `bin/minimax-codex.cjs`, release
+documentation, both licenses, and the release manifest. The public registry
+receives one universal npm package containing the verified Windows x64 and
+Linux x64 binaries, the same launcher, and npm metadata. No archive contains
+TypeScript/TSX source, `dist/`, a legacy bin, runtime dependencies, install
+hooks, an embedding resource, or a downloader.
 
 Release verification checks:
 
@@ -93,8 +94,12 @@ subsequent strict run optional.
 
 Push, workflow dispatch, publication, tagging, PR creation, and merge are
 external actions. They require fresh authorization and are not implied by local
-verification. npm publication, tagging, PR creation, merge, and real user-data
-migration are outside this closure workflow.
+verification. A `vMAJOR.MINOR.PATCH` tag starts the separate npm release
+workflow, which rebuilds both hosted targets, assembles one universal package,
+smoke-tests the exact tarball on clean Windows and Linux Node.js 20 runners, and
+publishes that same tarball only through the protected `npm-production`
+environment. Real publication and user-data migration remain outside local
+closure verification.
 
 ## Actionable no-fallback failures
 
@@ -112,17 +117,18 @@ tries an alternate command.
 
 ## Fresh install
 
-Choose the native archive or platform npm tarball for the exact supported
-target. Verify its `.sha256` sidecar and `RELEASE-MANIFEST.json`, install into a
-new versioned location, then run:
+For the normal user path, install the registry package. It already contains the
+prebuilt binary for both supported hosts and requires no Rust toolchain:
 
 ```bash
+npm install --global minimax-codex
 minimax-codex --version
 minimax-codex doctor
 ```
 
-For native extraction, also verify `node bin/minimax-codex.cjs doctor` reaches
-the same Rust binary. For global/npm and one-time `npx` examples, see
+For manual/offline installation, verify the universal npm tarball or matching
+native archive against its `.sha256` sidecar and manifest first. For
+project-local, one-time `npx`, upgrade, and rollback examples, see
 [installation, upgrade, and rollback](install-upgrade-rollback.md).
 
 ## TypeScript-era state migration
@@ -145,10 +151,9 @@ locks, databases, and unknown records are excluded.
 
 ## Upgrade and rollback
 
-Install upgrades beside the active version. Verify hashes/manifest, run
-`--version` and `doctor`, and complete migration verification before switching
-the stable command. Binary rollback points the command back to the previous
-verified version without touching Vault content, imported files, receipts, or
+Use `npm update --global minimax-codex`, then run `--version` and `doctor`.
+Rollback with `npm install --global minimax-codex@<previous-version>`. Package
+upgrade and rollback do not touch Vault content, imported files, receipts, or
 source data.
 
 Data rollback requires:

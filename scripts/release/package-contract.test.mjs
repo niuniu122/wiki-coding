@@ -526,6 +526,32 @@ test("npm release workflow is tag-only ordered and secret-isolated", () => {
   assert.match(source.slice(publish), /npm publish "\$ARCHIVE" --access public --provenance/u);
 });
 
+test("consumer docs lead with registry installs and keep Rust in source development", () => {
+  const readme = readFileSync(resolve(root, "README.md"), "utf8");
+  const installGuide = readFileSync(
+    resolve(root, "docs/release/install-upgrade-rollback.md"),
+    "utf8"
+  );
+  const cutover = readFileSync(resolve(root, "docs/release/cutover.md"), "utf8");
+  const consumerText = `${readme}\n${installGuide}\n${cutover}`;
+
+  assert.match(readme, /npm install --global minimax-codex/u);
+  assert.match(readme, /npm install --save-dev minimax-codex/u);
+  assert.match(readme, /npx minimax-codex --version/u);
+  assert.match(readme, /Node\.js 20 or newer/u);
+  assert.match(installGuide, /npm update --global minimax-codex/u);
+  assert.match(installGuide, /npm install --global minimax-codex@<previous-version>/u);
+  assert.match(cutover, /one universal npm package/u);
+  assert.match(consumerText, /Windows x64/u);
+  assert.match(consumerText, /Linux x64/u);
+  assert.match(consumerText, /E_UNSUPPORTED_HOST/u);
+  assert.match(readme, /## Source development and release verification[\s\S]*Rust 1\.97\.0/u);
+  assert.doesNotMatch(
+    readme.slice(readme.indexOf("## Install and run"), readme.indexOf("## Permission and subprocess boundaries")),
+    /cargo|rustup|Rust 1\.97\.0/u
+  );
+});
+
 test("release CLIs require one explicit current fingerprint and bind artifacts to it", () => {
   mkdirSync(resolve(root, "target"), {recursive: true});
   const workspace = mkdtempSync(resolve(root, "target/fingerprint-contract-test-"));

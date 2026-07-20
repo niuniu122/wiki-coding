@@ -22,29 +22,34 @@ The supported release targets are exactly:
 supported Windows release and cannot satisfy hosted MSVC verification. macOS
 and other architectures are not supported by this release.
 
-Each platform candidate contains one Rust binary, the shell-free
-`bin/minimax-codex.cjs` launcher, documentation, licenses, and a strict release
-manifest. No package contains a TypeScript runtime, fallback command, embedding
-model, or install-time download.
+The public npm package contains both prebuilt binaries and the shell-free
+`bin/minimax-codex.cjs` launcher. The launcher selects the matching binary for
+the current supported host. No package contains a TypeScript runtime, fallback
+command, embedding model, install-time compiler, or install-time download.
 
 ## Install and run
 
-Verify the archive or npm tarball against its matching `.sha256` sidecar before
-installation. Common local installation paths are:
+Node.js 20 or newer is the only installation prerequisite. Ordinary users do
+not need Rust, Cargo, a C/C++ compiler, or the project source code.
 
 ```bash
-# Install the already-downloaded platform npm tarball globally.
-npm install --global --ignore-scripts ./minimax-codex-v0.1.0-<target>-npm.tgz
+# Install the CLI for the current user or machine.
+npm install --global minimax-codex
 minimax-codex --version
 
-# Run the already-downloaded platform npm tarball once without a global install.
-npx --offline --yes --package ./minimax-codex-v0.1.0-<target>-npm.tgz minimax-codex doctor
+# Or install it in one project.
+npm install --save-dev minimax-codex
+npx minimax-codex --version
+
+# Or run it once without keeping a project dependency.
+npx minimax-codex doctor
 ```
 
-For a native installation, extract the matching base `.tar.gz` into a
-versioned directory, verify `RELEASE-MANIFEST.json`, then run
-`minimax-codex.exe` on Windows or `./minimax-codex` on Linux. Keep the previous
-versioned directory until the new version has passed `doctor` and normal work.
+The same registry package works on Windows x64 and Linux x64 because it already
+contains both release binaries. npm verifies the registry package during
+installation; the release workflow separately verifies its checksum, exact
+file list, both hosted builds, and clean global/project-local installs before
+publication.
 
 After any installation:
 
@@ -59,7 +64,9 @@ The npm command launches only the fixed sibling Rust binary. It never searches
 back to another implementation. Launcher failures use stable categories:
 `E_UNSUPPORTED_HOST`, `E_BINARY_MISSING`, `E_BINARY_UNSAFE`,
 `E_BINARY_NOT_EXECUTABLE`, `E_START_FAILED`, and `E_SIGNAL_TERMINATION`.
-Reinstall the correct package for a supported target; there is no legacy route.
+`E_UNSUPPORTED_HOST` means the current operating system or CPU is not supported;
+use Windows x64 or Linux x64. For offline or manual native installation, checksum
+verification, upgrades, and rollback, see the guide below.
 
 See [installation, upgrade, and rollback](docs/release/install-upgrade-rollback.md)
 and the [Rust-only cutover contract](docs/release/cutover.md) before rollout or
@@ -190,8 +197,10 @@ a second product implementation.
 
 ## Source development and release verification
 
-Rust 1.97.0 and Node.js 20 or newer are required. Node is used only for the npm
-launcher, packaging, and release orchestration:
+This section is only for contributors building from source. Rust 1.97.0 and
+Node.js 20 or newer are required for source development and release
+verification; they are not required to install the published CLI. Node is used
+for the npm launcher, packaging, and release orchestration:
 
 ```bash
 npm ci

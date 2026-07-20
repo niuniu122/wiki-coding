@@ -1,8 +1,12 @@
-# Rust Release Installation, Upgrade, and Rollback
+# Installation, Upgrade, and Rollback
 
-Rust is the sole product runtime. The npm package contains one CJS launcher and
-one native Rust binary; it contains no TypeScript product, fallback command,
-runtime dependency, lifecycle hook, model, or automatic downloader.
+The recommended distribution is the `minimax-codex` package from the npm
+registry. It contains one small CJS launcher plus prebuilt Windows x64 and Linux
+x64 binaries. Users need Node.js 20 or newer, but do not need Rust, Cargo, a
+C/C++ compiler, Git, or a source checkout.
+
+The package contains no TypeScript product, fallback command, runtime
+dependency, lifecycle hook, model, or automatic downloader.
 
 ## Supported release artifacts
 
@@ -16,45 +20,64 @@ Only these hosted release targets are supported:
 `windows-x86_64-gnullvm-dev` / `x86_64-pc-windows-gnullvm` is local
 `development_only` evidence. Do not distribute it as Windows MSVC evidence.
 
-Each target has a versioned native `.tar.gz`, a platform npm `.tgz`, and a
-`.sha256` sidecar for each archive. `RELEASE-MANIFEST.json` binds the version,
-target, product fingerprint, Rust binary, launcher, native archive, and npm
+Each release publishes one universal npm package containing both hosted
+binaries. Advanced/offline users can also use the per-target native `.tar.gz`
+artifacts. Every downloadable release artifact has a `.sha256` sidecar, and its
+manifest binds the version, target, product fingerprint, binary, launcher, and
 archive. `embeddingIncluded` must be `false`.
 
-Before installation:
+For the normal npm registry path, npm performs package-integrity verification.
+For a manually downloaded tarball or native archive:
 
-1. Obtain the artifact and sidecar from the same release and target.
+1. Obtain the artifact and sidecar from the same release.
 2. Compare the artifact SHA-256 with the sidecar.
-3. Inspect the matching `RELEASE-MANIFEST.json` from the native archive.
-4. Require the exact target ID/Rust host, archive names, and hashes you intend
-   to install.
+3. Inspect the matching release manifest.
+4. Require the exact version, supported target identities, archive names, and
+   hashes you intend to install.
 
 ## npm global installation
 
-Node.js 20 or newer is required for the thin launcher. Install the already
-downloaded platform npm tarball without lifecycle scripts:
+Install the published CLI directly from the npm registry:
 
 ```bash
-npm install --global --ignore-scripts ./minimax-codex-v0.1.0-<target>-npm.tgz
+npm install --global minimax-codex
 minimax-codex --version
 minimax-codex doctor
 ```
 
 The installed `minimax-codex` command launches only the fixed sibling
-`minimax-codex.exe` or `minimax-codex`. It performs no shell invocation,
-`PATH` search, override lookup, fallback, or download.
+`minimax-codex.exe` or `minimax-codex` from the same installed package. It
+performs no shell invocation, `PATH` search, override lookup, fallback, or
+download.
+
+## Project-local installation
+
+Install the CLI as a development dependency when a project needs a pinned
+version:
+
+```bash
+npm install --save-dev minimax-codex
+npx minimax-codex --version
+npx minimax-codex doctor
+```
 
 ## One-time npx execution
 
-Run the already-downloaded platform tarball without a global install:
+Run the current registry release once without a global installation:
 
 ```bash
-npx --offline --yes --package ./minimax-codex-v0.1.0-<target>-npm.tgz minimax-codex --version
-npx --offline --yes --package ./minimax-codex-v0.1.0-<target>-npm.tgz minimax-codex doctor
+npx minimax-codex --version
+npx minimax-codex doctor
 ```
 
-`--offline` prevents registry access. The package still requires its included
-native binary for the current supported host.
+For an offline install, first download the release tarball and `.sha256`
+sidecar on a connected machine, verify them, then install the exact file:
+
+```bash
+npm install --global --ignore-scripts ./minimax-codex-0.1.0.tgz
+```
+
+The universal tarball still supports only Windows x64 and Linux x64.
 
 ## Native archive installation
 
@@ -110,9 +133,17 @@ See [the complete sandbox trust boundary](subprocess-sandbox.md).
 
 ## Upgrade
 
-Install the new release beside the active version. Verify its sidecars and
-manifest, run `--version` and `doctor`, then evaluate TypeScript-era state before
-changing the stable command:
+Upgrade a global installation, then verify it before normal work:
+
+```bash
+npm update --global minimax-codex
+minimax-codex --version
+minimax-codex doctor
+```
+
+For a project-local installation, use `npm update minimax-codex` and commit the
+updated lockfile. Before migrating TypeScript-era state, inspect and verify the
+plan:
 
 ```bash
 minimax-codex migrate inventory
@@ -122,15 +153,24 @@ minimax-codex migrate verify --receipt <receipt>
 ```
 
 Save the dry-run JSON outside `.mini-codex`. Review every inclusion, exclusion,
-and collision. Apply only with the exact printed confirmation. Never overwrite
-the active version directory; this keeps binary rollback independent of data
-rollback.
+and collision. Apply only with the exact printed confirmation. Package upgrades
+do not migrate project data automatically.
 
 ## Binary rollback
 
-Point the stable command back to the previous verified versioned directory.
+Install the exact previous published version, replacing `<previous-version>`
+with a known good version number:
+
+```bash
+npm install --global minimax-codex@<previous-version>
+minimax-codex --version
+minimax-codex doctor
+```
+
+For a project-local rollback, run
+`npm install --save-dev minimax-codex@<previous-version>` and commit the lockfile.
 Migration receipts, imported files, the Vault, and `.mini-codex` source data are
-not modified by binary rollback.
+not modified by package rollback.
 
 ## Data rollback
 
