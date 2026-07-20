@@ -85,7 +85,7 @@
     {
       "id": "package-contract-tests",
       "path": "scripts/release/package-contract.test.mjs",
-      "sha256": "aff6b4dcf7a011358a0ae86198db7f002656e14c79d0c87d8784e2615b6803e7",
+      "sha256": "424e5501e3f2378ea5530f23a5e516dbfd0b6c8a799945a91c6162774392b494",
       "purpose": "packageTestOnly",
       "forbiddenCapabilities": [
         "fallback",
