@@ -304,6 +304,168 @@ test("package assembly is byte-identical and emits one strict external manifest"
   }
 });
 
+test("universal packager consumes exactly one verified hosted artifact per OS", () => {
+  mkdirSync(resolve(root, "target"), {recursive: true});
+  const workspace = mkdtempSync(resolve(root, "target/universal-packager-test-"));
+  try {
+    const currentProduct = computeProductFingerprint(root);
+    const linuxArtifacts = resolve(workspace, "linux");
+    const windowsArtifacts = resolve(workspace, "windows");
+    const firstOutput = resolve(workspace, "first");
+    const secondOutput = resolve(workspace, "second");
+    const fingerprintFile = resolve(workspace, "fingerprint.json");
+    writeFileSync(fingerprintFile, `${JSON.stringify(currentProduct)}\n`, "utf8");
+    writeArtifactCandidateDirectory(
+      linuxArtifacts,
+      healthyArtifactCandidate("linux-x86_64-gnu", currentProduct)
+    );
+    writeArtifactCandidateDirectory(
+      windowsArtifacts,
+      healthyArtifactCandidate("windows-x86_64-msvc", currentProduct)
+    );
+
+    const first = runUniversalPackage(
+      windowsArtifacts,
+      linuxArtifacts,
+      firstOutput,
+      fingerprintFile
+    );
+    const second = runUniversalPackage(
+      windowsArtifacts,
+      linuxArtifacts,
+      secondOutput,
+      fingerprintFile
+    );
+    const firstRecord = JSON.parse(first.stdout);
+    assert.deepEqual(
+      {
+        schemaVersion: firstRecord.schemaVersion,
+        mode: firstRecord.mode,
+        productFingerprint: firstRecord.productFingerprint,
+        version: firstRecord.version
+      },
+      {
+        schemaVersion: 1,
+        mode: "universal-npm",
+        productFingerprint: currentProduct.fingerprint,
+        version: "0.1.0"
+      }
+    );
+
+    const expectedFiles = [
+      "minimax-codex-0.1.0.tgz",
+      "minimax-codex-0.1.0.tgz.sha256",
+      "minimax-codex-v0.1.0-NPM-MANIFEST.json"
+    ];
+    assert.deepEqual(readdirSync(firstOutput).sort(), expectedFiles);
+    assert.deepEqual(readdirSync(secondOutput).sort(), expectedFiles);
+    for (const name of expectedFiles) {
+      assert.deepEqual(
+        readFileSync(resolve(firstOutput, name)),
+        readFileSync(resolve(secondOutput, name)),
+        name
+      );
+    }
+    const manifest = JSON.parse(
+      readFileSync(resolve(firstOutput, "minimax-codex-v0.1.0-NPM-MANIFEST.json"), "utf8")
+    );
+    validateUniversalNpmCandidate({
+      manifest,
+      contract: loadTargetContract(),
+      thresholds: loadReleaseThresholds(),
+      expectedProduct: currentProduct,
+      archiveBytes: readFileSync(resolve(firstOutput, "minimax-codex-0.1.0.tgz")),
+      checksumBytes: readFileSync(resolve(firstOutput, "minimax-codex-0.1.0.tgz.sha256"))
+    });
+  } finally {
+    rmSync(workspace, {recursive: true, force: true});
+  }
+});
+
+test("universal packager rejects unsafe and mismatched inputs before output", async (t) => {
+  for (const [label, mutate, expected] of [
+    ["swapped platform directories", (fixture) => {
+      const windows = fixture.args[2];
+      fixture.args[2] = fixture.args[4];
+      fixture.args[4] = windows;
+    }, "ARTIFACT_TARGET_MISMATCH"],
+    ["development-only Windows target", (fixture) => {
+      rmSync(fixture.windowsArtifacts, {recursive: true, force: true});
+      writeArtifactCandidateDirectory(
+        fixture.windowsArtifacts,
+        healthyArtifactCandidate("windows-x86_64-gnullvm-dev", fixture.currentProduct)
+      );
+    }, "ARTIFACT_TARGET_MISMATCH"],
+    ["second release manifest", (fixture) => {
+      writeFileSync(
+        resolve(fixture.windowsArtifacts, "extra-RELEASE-MANIFEST.json"),
+        "{}\n",
+        "utf8"
+      );
+    }, "UNIVERSAL_INPUT_FILE_SET"],
+    ["missing checksum sidecar", (fixture) => {
+      const sidecarName = readdirSync(fixture.linuxArtifacts).find((name) => name.endsWith(".sha256"));
+      assert.ok(sidecarName);
+      rmSync(resolve(fixture.linuxArtifacts, sidecarName));
+    }, "ARTIFACT_FILE_SET"],
+    ["stale fingerprint", (fixture) => {
+      writeFileSync(
+        fixture.fingerprintFile,
+        `${JSON.stringify({...fixture.currentProduct, fingerprint: "0".repeat(64)})}\n`,
+        "utf8"
+      );
+    }, "E_FINGERPRINT_STALE"],
+    ["version mismatch", (fixture) => fixture.args[fixture.args.length - 1] = "0.1.1", "UNIVERSAL_INPUT_VERSION"],
+    ["wrong Windows binary magic", (fixture) => {
+      rmSync(fixture.windowsArtifacts, {recursive: true, force: true});
+      writeArtifactCandidateDirectory(
+        fixture.windowsArtifacts,
+        healthyArtifactCandidate(
+          "windows-x86_64-msvc",
+          fixture.currentProduct,
+          Buffer.from("not-pe\n", "utf8")
+        )
+      );
+    }, "UNIVERSAL_BINARY_MAGIC"],
+    ["launcher drift", (fixture) => {
+      rmSync(fixture.windowsArtifacts, {recursive: true, force: true});
+      const candidate = healthyArtifactCandidate("windows-x86_64-msvc", fixture.currentProduct);
+      mutatePlatformSharedContent(
+        candidate,
+        "bin/minimax-codex.cjs",
+        Buffer.from("#!/usr/bin/env node\nlauncher drift\n", "utf8")
+      );
+      writeArtifactCandidateDirectory(fixture.windowsArtifacts, candidate);
+    }, "UNIVERSAL_INPUT_DRIFT"],
+    ["missing artifact directory", (fixture) => fixture.args[2] = resolve(fixture.workspace, "missing-windows"), "UNIVERSAL_INPUT_UNSAFE"],
+    ["output outside target", (fixture) => fixture.args[6] = resolve(root, "outside-universal-output-test"), "must stay inside"],
+    ["non-empty output directory", (fixture) => {
+      mkdirSync(fixture.output, {recursive: true});
+      writeFileSync(resolve(fixture.output, "unexpected.txt"), "occupied\n", "utf8");
+    }, "UNIVERSAL_OUTPUT_NOT_EMPTY"],
+    ["pre-existing archive output", (fixture) => {
+      mkdirSync(fixture.output, {recursive: true});
+      writeFileSync(resolve(fixture.output, "minimax-codex-0.1.0.tgz"), "occupied\n", "utf8");
+    }, "UNIVERSAL_OUTPUT_EXISTS"],
+    ["unknown argument", (fixture) => fixture.args.push("--surprise", "value"), "invalid package argument"]
+  ]) {
+    await t.test(label, () => {
+      const fixture = setupUniversalPackageInputs();
+      try {
+        mutate(fixture);
+        const result = spawnReleaseScript("package-rust.mjs", fixture.args);
+        assert.notEqual(result.status, 0, label);
+        assert.match(result.stderr, new RegExp(expected, "u"), label);
+        if (!expected.startsWith("UNIVERSAL_OUTPUT")) {
+          assert.equal(existsSync(fixture.output), false, `${label}: output must not be created`);
+        }
+      } finally {
+        rmSync(fixture.workspace, {recursive: true, force: true});
+      }
+    });
+  }
+});
+
 test("corrupt package candidates fail closed by stable category before any alternate child", async (t) => {
   mkdirSync(resolve(root, "target"), {recursive: true});
   const workspace = mkdtempSync(resolve(root, "target/package-corruption-test-"));
@@ -615,20 +777,37 @@ function setContentEvidence(entries, path, hash, bytes) {
   entry.bytes = bytes;
 }
 
-function healthyArtifactCandidate() {
+function healthyArtifactCandidate(
+  targetId = "linux-x86_64-gnu",
+  expectedProduct = {fingerprint: sha256(Buffer.from("current-product", "utf8")), fileCount: 438},
+  binaryOverride
+) {
   const contract = loadTargetContract();
-  const target = contract.targets[0];
+  const target = contract.targets.find((candidate) => candidate.id === targetId);
+  assert.ok(target, `unknown artifact test target ${targetId}`);
   const version = "0.1.0";
   const nativePrefix = `minimax-codex-v${version}-${target.id}/`;
-  const nativeEntries = materializeTestEntries(expectedArchiveEntries(target, version, "native"), nativePrefix);
-  const npmEntries = materializeTestEntries(expectedArchiveEntries(target, version, "npm"), "package/");
+  const overrides = binaryOverride ? new Map([[target.binaryName, binaryOverride]]) : new Map();
+  const nativeEntries = materializeTestEntries(
+    expectedArchiveEntries(target, version, "native"),
+    nativePrefix,
+    overrides
+  );
+  const npmEntries = materializeTestEntries(
+    expectedArchiveEntries(target, version, "npm"),
+    "package/",
+    overrides
+  );
   const nativeBytes = createDeterministicTarGzip(nativeEntries);
   const npmBytes = createDeterministicTarGzip(npmEntries);
-  const binaryBytes = fixtureBytes(target.binaryName);
+  const binaryBytes = overrides.get(target.binaryName) ?? fixtureBytes(target.binaryName);
   const launcherBytes = fixtureBytes("bin/minimax-codex.cjs");
   const nativeName = `minimax-codex-v${version}-${target.id}.tar.gz`;
   const npmName = `minimax-codex-v${version}-${target.id}-npm.tgz`;
-  const product = {fingerprint: sha256(Buffer.from("current-product", "utf8")), fileCount: 438};
+  const product = {
+    fingerprint: expectedProduct.fingerprint,
+    fileCount: expectedProduct.fileCount
+  };
   const manifest = {
     schemaVersion: contract.manifestSchemaVersion,
     name: "minimax-codex",
@@ -677,12 +856,13 @@ function healthyArtifactCandidate() {
   };
 }
 
-function materializeTestEntries(descriptors, prefix) {
+function materializeTestEntries(descriptors, prefix, overrides = new Map()) {
   return descriptors.map((descriptor) => descriptor.type === "directory"
     ? {name: descriptor.path, bytes: Buffer.alloc(0), mode: descriptor.mode, type: "5"}
     : {
         name: descriptor.path,
-        bytes: fixtureBytes(descriptor.path.slice(prefix.length)),
+        bytes: overrides.get(descriptor.path.slice(prefix.length))
+          ?? fixtureBytes(descriptor.path.slice(prefix.length)),
         mode: descriptor.mode,
         type: "0"
       });
@@ -695,6 +875,25 @@ function testEntryEvidence(entries) {
 }
 
 function fixtureBytes(relativePath) {
+  if (relativePath === "minimax-codex") {
+    return Buffer.concat([Buffer.from([0x7f, 0x45, 0x4c, 0x46]), Buffer.from("fixture-linux\n", "utf8")]);
+  }
+  if (relativePath === "minimax-codex.exe") {
+    return Buffer.concat([Buffer.from([0x4d, 0x5a]), Buffer.from("fixture-windows\n", "utf8")]);
+  }
+  if ([
+    "bin/minimax-codex.cjs",
+    "package.json",
+    "README.md",
+    "LICENSE-APACHE",
+    "LICENSE-MIT",
+    "docs/release/cutover.md",
+    "docs/release/embedding-package.md",
+    "docs/release/install-upgrade-rollback.md",
+    "docs/release/subprocess-sandbox.md"
+  ].includes(relativePath)) {
+    return readFileSync(resolve(root, relativePath));
+  }
   return Buffer.from(`fixture:${relativePath}\n`, "utf8");
 }
 
@@ -717,6 +916,41 @@ function rebuildNative(candidate) {
   const name = candidate.input.manifest.nativeArchive.name;
   candidate.input.artifacts.set(name, {kind: "file", bytes});
   candidate.input.artifacts.set(`${name}.sha256`, {kind: "file", bytes: sidecar(name, bytes)});
+}
+
+function mutatePlatformSharedContent(candidate, relativePath, bytes) {
+  const manifest = candidate.input.manifest;
+  const nativePath = `minimax-codex-v${manifest.version}-${manifest.target.id}/${relativePath}`;
+  const npmPath = `package/${relativePath}`;
+  const native = candidate.nativeEntries.find((entry) => entry.name === nativePath);
+  const npm = candidate.npmEntries.find((entry) => entry.name === npmPath);
+  assert.ok(native, `expected platform native entry ${nativePath}`);
+  assert.ok(npm, `expected platform npm entry ${npmPath}`);
+  native.bytes = bytes;
+  npm.bytes = bytes;
+  if (relativePath === "bin/minimax-codex.cjs") {
+    manifest.launcher.bytes = bytes.length;
+    manifest.launcher.sha256 = sha256(bytes);
+  }
+  const nativeBytes = createDeterministicTarGzip(candidate.nativeEntries);
+  const npmBytes = createDeterministicTarGzip(candidate.npmEntries);
+  manifest.nativeArchive.bytes = nativeBytes.length;
+  manifest.nativeArchive.sha256 = sha256(nativeBytes);
+  manifest.nativeArchive.entries = testEntryEvidence(candidate.nativeEntries);
+  manifest.npmPackage.bytes = npmBytes.length;
+  manifest.npmPackage.sha256 = sha256(npmBytes);
+  manifest.npmPackage.entries = testEntryEvidence(candidate.npmEntries);
+  candidate.input.artifacts.set(manifest.nativeArchive.name, {kind: "file", bytes: nativeBytes});
+  candidate.input.artifacts.set(
+    `${manifest.nativeArchive.name}.sha256`,
+    {kind: "file", bytes: sidecar(manifest.nativeArchive.name, nativeBytes)}
+  );
+  candidate.input.artifacts.set(manifest.npmPackage.name, {kind: "file", bytes: npmBytes});
+  candidate.input.artifacts.set(
+    `${manifest.npmPackage.name}.sha256`,
+    {kind: "file", bytes: sidecar(manifest.npmPackage.name, npmBytes)}
+  );
+  validateReleaseManifest(manifest, candidate.input.contract);
 }
 
 function removeNativeBinary(candidate) {
@@ -786,6 +1020,64 @@ function runPackage(binary, output, fingerprintFile) {
   ]);
   assert.equal(result.status, 0, result.stderr || result.stdout);
   return result;
+}
+
+function writeArtifactCandidateDirectory(directory, candidate) {
+  mkdirSync(directory, {recursive: true});
+  for (const [name, artifact] of candidate.input.artifacts) {
+    writeFileSync(resolve(directory, name), artifact.bytes);
+  }
+  const manifest = candidate.input.manifest;
+  const manifestName = `minimax-codex-v${manifest.version}-${manifest.target.id}-RELEASE-MANIFEST.json`;
+  writeFileSync(resolve(directory, manifestName), `${JSON.stringify(manifest, null, 2)}\n`, "utf8");
+}
+
+function runUniversalPackage(windowsArtifacts, linuxArtifacts, output, fingerprintFile) {
+  const result = spawnReleaseScript("package-rust.mjs", [
+    "--universal-npm",
+    "--windows-artifacts", windowsArtifacts,
+    "--linux-artifacts", linuxArtifacts,
+    "--output", output,
+    "--fingerprint-file", fingerprintFile,
+    "--version", "0.1.0"
+  ]);
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  return result;
+}
+
+function setupUniversalPackageInputs() {
+  mkdirSync(resolve(root, "target"), {recursive: true});
+  const workspace = mkdtempSync(resolve(root, "target/universal-packager-corruption-test-"));
+  const currentProduct = computeProductFingerprint(root);
+  const windowsArtifacts = resolve(workspace, "windows");
+  const linuxArtifacts = resolve(workspace, "linux");
+  const output = resolve(workspace, "output");
+  const fingerprintFile = resolve(workspace, "fingerprint.json");
+  writeFileSync(fingerprintFile, `${JSON.stringify(currentProduct)}\n`, "utf8");
+  writeArtifactCandidateDirectory(
+    windowsArtifacts,
+    healthyArtifactCandidate("windows-x86_64-msvc", currentProduct)
+  );
+  writeArtifactCandidateDirectory(
+    linuxArtifacts,
+    healthyArtifactCandidate("linux-x86_64-gnu", currentProduct)
+  );
+  return {
+    workspace,
+    currentProduct,
+    windowsArtifacts,
+    linuxArtifacts,
+    output,
+    fingerprintFile,
+    args: [
+      "--universal-npm",
+      "--windows-artifacts", windowsArtifacts,
+      "--linux-artifacts", linuxArtifacts,
+      "--output", output,
+      "--fingerprint-file", fingerprintFile,
+      "--version", "0.1.0"
+    ]
+  };
 }
 
 function spawnReleaseScript(name, values) {

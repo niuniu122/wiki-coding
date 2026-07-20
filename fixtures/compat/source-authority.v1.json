@@ -85,7 +85,7 @@
     {
       "id": "package-contract-tests",
       "path": "scripts/release/package-contract.test.mjs",
-      "sha256": "375654e942cdd5a0a430296083755cd73c989812e8790b29c54bf41556bef83d",
+      "sha256": "cf09af08fcc55023fa704cf09f1768b4664f30f40170a5a0bd6707538ddb4837",
       "purpose": "packageTestOnly",
       "forbiddenCapabilities": [
         "fallback",
@@ -102,7 +102,7 @@
     {
       "id": "release-package",
       "path": "scripts/release/package-rust.mjs",
-      "sha256": "36c7045eb70ed2f7d77658e40327559c052288f94e5fe4526f858da12ae6023f",
+      "sha256": "671354a8ab185250f7ef5385b346cbd21519f4813808551cc4acc031a9fd8d22",
       "purpose": "rustReleasePackaging",
       "forbiddenCapabilities": [
         "fallback",
