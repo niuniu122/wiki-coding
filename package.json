@@ -2,6 +2,18 @@
   "name": "minimax-codex",
   "version": "0.1.0",
   "description": "A Codex-style interactive CLI shell for MiniMax.",
+  "license": "MIT OR Apache-2.0",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/niuniu122/wiki-coding.git"
+  },
+  "homepage": "https://github.com/niuniu122/wiki-coding#readme",
+  "bugs": {
+    "url": "https://github.com/niuniu122/wiki-coding/issues"
+  },
+  "publishConfig": {
+    "access": "public"
+  },
   "type": "module",
   "bin": {
     "minimax-codex": "bin/minimax-codex.cjs"

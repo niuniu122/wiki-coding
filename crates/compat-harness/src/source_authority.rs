@@ -24,12 +24,17 @@ const REQUIRED_RETAINED_FIXTURES: [&str; 7] = [
     "fixtures/compat/verification/typescript-responsibilities.v1.json",
 ];
 
-const PACKAGE_TOP_LEVEL_KEYS: [&str; 8] = [
+const PACKAGE_TOP_LEVEL_KEYS: [&str; 13] = [
     "bin",
+    "bugs",
     "description",
     "engines",
     "files",
+    "homepage",
+    "license",
     "name",
+    "publishConfig",
+    "repository",
     "scripts",
     "type",
     "version",
@@ -647,12 +652,39 @@ pub(crate) fn validate_package_product_scripts(package: &serde_json::Value) -> R
     let object = package
         .as_object()
         .ok_or_else(|| "package metadata must be an object".to_owned())?;
+    let dependency_fields = [
+        "dependencies",
+        "devDependencies",
+        "optionalDependencies",
+        "peerDependencies",
+        "bundledDependencies",
+    ];
+    let lifecycle_scripts = ["preinstall", "install", "postinstall"];
+    let has_dependency = dependency_fields
+        .iter()
+        .any(|field| object.contains_key(*field));
+    let has_lifecycle = package
+        .get("scripts")
+        .and_then(serde_json::Value::as_object)
+        .is_some_and(|scripts| {
+            lifecycle_scripts
+                .iter()
+                .any(|name| scripts.contains_key(*name))
+        });
+    if has_dependency || has_lifecycle {
+        return Err("package dependency or lifecycle authority denied".to_owned());
+    }
     let keys = object.keys().map(String::as_str).collect::<Vec<_>>();
     if keys != PACKAGE_TOP_LEVEL_KEYS {
         return Err("package metadata must contain only the Rust distribution contract".to_owned());
     }
     if package.get("name").and_then(serde_json::Value::as_str) != Some("minimax-codex")
-        || package.get("version").and_then(serde_json::Value::as_str) != Some("0.1.0")
+        || package.get("version").and_then(serde_json::Value::as_str)
+            != Some(env!("CARGO_PKG_VERSION"))
+        || package
+            .get("description")
+            .and_then(serde_json::Value::as_str)
+            != Some("A Codex-style interactive CLI shell for MiniMax.")
         || package.get("type").and_then(serde_json::Value::as_str) != Some("module")
         || package
             .get("engines")
@@ -660,7 +692,30 @@ pub(crate) fn validate_package_product_scripts(package: &serde_json::Value) -> R
             .and_then(serde_json::Value::as_str)
             != Some(">=20")
     {
-        return Err("package identity and engine contract must remain fixed".to_owned());
+        return Err(
+            "package publication identity and engine contract must remain fixed".to_owned(),
+        );
+    }
+    if package.get("license") != Some(&serde_json::json!("MIT OR Apache-2.0"))
+        || package.get("repository")
+            != Some(&serde_json::json!({
+                "type": "git",
+                "url": "git+https://github.com/niuniu122/wiki-coding.git"
+            }))
+        || package.get("homepage")
+            != Some(&serde_json::json!(
+                "https://github.com/niuniu122/wiki-coding#readme"
+            ))
+        || package.get("bugs")
+            != Some(&serde_json::json!({
+                "url": "https://github.com/niuniu122/wiki-coding/issues"
+            }))
+        || package.get("publishConfig")
+            != Some(&serde_json::json!({
+                "access": "public"
+            }))
+    {
+        return Err("package publication identity must remain fixed".to_owned());
     }
 
     let bins = package
@@ -720,15 +775,17 @@ pub(crate) fn validate_package_product_scripts(package: &serde_json::Value) -> R
 }
 
 fn validate_package_lock(package_lock: &serde_json::Value) -> Result<(), String> {
+    let version = env!("CARGO_PKG_VERSION");
     let expected = serde_json::json!({
         "name": "minimax-codex",
-        "version": "0.1.0",
+        "version": version,
         "lockfileVersion": 3,
         "requires": true,
         "packages": {
             "": {
                 "name": "minimax-codex",
-                "version": "0.1.0",
+                "version": version,
+                "license": "MIT OR Apache-2.0",
                 "bin": {
                     "minimax-codex": "bin/minimax-codex.cjs"
                 },

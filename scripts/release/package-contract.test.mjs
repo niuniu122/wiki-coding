@@ -126,6 +126,14 @@ test("published package metadata excludes install-time code and dependencies", (
   }
 });
 
+test("source package carries exact npm publication metadata", () => {
+  const sourcePackage = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8"));
+  const published = createPublishedPackageJson(sourcePackage, sourcePackage.version);
+  assert.equal(published.license, "MIT OR Apache-2.0");
+  assert.deepEqual(published.publishConfig, {access: "public"});
+  assert.equal(published.repository.url, "git+https://github.com/niuniu122/wiki-coding.git");
+});
+
 test("universal npm manifest and candidate bind both hosted binaries", () => {
   const candidate = healthyUniversalCandidate();
   assert.equal(

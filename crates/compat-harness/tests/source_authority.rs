@@ -180,6 +180,20 @@ impl SyntheticRepository {
         )
         .expect("synthetic package should be written");
     }
+
+    fn mutate_package(&self, mutate: impl FnOnce(&mut Value)) {
+        let path = self.root.join("package.json");
+        let mut package: Value = serde_json::from_str(
+            &fs::read_to_string(&path).expect("synthetic package should be readable"),
+        )
+        .expect("synthetic package should parse");
+        mutate(&mut package);
+        fs::write(
+            path,
+            serde_json::to_string_pretty(&package).expect("synthetic package should serialize"),
+        )
+        .expect("synthetic package should be written");
+    }
 }
 
 impl Drop for SyntheticRepository {
@@ -441,6 +455,73 @@ fn repository_product_scripts_are_rust_owned() {
             "legacy script survived: {legacy}"
         );
     }
+}
+
+#[test]
+fn package_publication_metadata_is_exact_and_dependency_free() {
+    let healthy = SyntheticRepository::new();
+    let manifest = healthy.load();
+    validate_source_authority(&healthy.root, &manifest)
+        .expect("approved npm publication metadata should satisfy source authority");
+
+    for (label, configure) in [
+        (
+            "license drift",
+            (|repository: &SyntheticRepository| {
+                repository
+                    .mutate_package(|package| package["license"] = Value::String("MIT".into()));
+            }) as fn(&SyntheticRepository),
+        ),
+        ("repository drift", |repository: &SyntheticRepository| {
+            repository.mutate_package(|package| {
+                package["repository"]["url"] =
+                    Value::String("https://example.invalid/repo.git".into());
+            });
+        }),
+        ("homepage drift", |repository: &SyntheticRepository| {
+            repository.mutate_package(|package| {
+                package["homepage"] = Value::String("https://example.invalid".into());
+            });
+        }),
+        ("issue URL drift", |repository: &SyntheticRepository| {
+            repository.mutate_package(|package| {
+                package["bugs"]["url"] = Value::String("https://example.invalid/issues".into());
+            });
+        }),
+        (
+            "publish access drift",
+            |repository: &SyntheticRepository| {
+                repository.mutate_package(|package| {
+                    package["publishConfig"]["access"] = Value::String("restricted".into());
+                });
+            },
+        ),
+        (
+            "workspace version drift",
+            |repository: &SyntheticRepository| {
+                repository.mutate_package(|package| {
+                    package["version"] = Value::String("0.1.1".into());
+                });
+            },
+        ),
+    ] {
+        assert_validation_rejected(label, configure, "publication identity");
+    }
+
+    assert_validation_rejected(
+        "runtime dependency",
+        |repository| {
+            repository.mutate_package(|package| {
+                package["dependencies"] = serde_json::json!({"native-loader": "1.0.0"});
+            });
+        },
+        "dependency or lifecycle",
+    );
+    assert_validation_rejected(
+        "install lifecycle",
+        |repository| repository.set_package_script("install", "cargo build --release"),
+        "dependency or lifecycle",
+    );
 }
 
 #[test]

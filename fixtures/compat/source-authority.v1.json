@@ -68,7 +68,7 @@
     {
       "id": "package-contract",
       "path": "scripts/release/package-contract.mjs",
-      "sha256": "29f3533d65d28e18e54ab0954731154f98a82dd1b06f018ae8453c11aa45c2d7",
+      "sha256": "279d2e7ce75012831f5a61a9e7989fbe72b65155becc817659d76c7526ef2c8b",
       "purpose": "releaseOrchestration",
       "forbiddenCapabilities": [
         "fallback",
@@ -85,7 +85,7 @@
     {
       "id": "package-contract-tests",
       "path": "scripts/release/package-contract.test.mjs",
-      "sha256": "947421233904e15852e67056244ce980af25acd45f501d9bbbfdc46f7bb7aacc",
+      "sha256": "375654e942cdd5a0a430296083755cd73c989812e8790b29c54bf41556bef83d",
       "purpose": "packageTestOnly",
       "forbiddenCapabilities": [
         "fallback",
