@@ -122,8 +122,14 @@ impl CancellationPort for TestCancellation {
 
     fn cancelled<'a>(&'a self) -> CancellationFuture<'a> {
         Box::pin(async move {
-            while !self.is_cancelled() {
-                self.notify.notified().await;
+            loop {
+                let notified = self.notify.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
+                if self.is_cancelled() {
+                    return;
+                }
+                notified.as_mut().await;
             }
         })
     }
@@ -316,6 +322,13 @@ struct TerminationGate {
     entered: Arc<tokio::sync::Notify>,
     released: Arc<AtomicBool>,
     release: Arc<tokio::sync::Notify>,
+    wait_registration_gate: Arc<Mutex<Option<WaitRegistrationGate>>>,
+}
+
+#[derive(Clone)]
+struct WaitRegistrationGate {
+    checked: Arc<tokio::sync::Barrier>,
+    resume: Arc<tokio::sync::Barrier>,
 }
 
 #[derive(Clone)]
@@ -345,13 +358,25 @@ impl KillGate {
     }
 
     async fn wait_until_entered(&self) {
-        while !self.entered.load(Ordering::Acquire) {
-            self.entered_notify.notified().await;
+        loop {
+            let notified = self.entered_notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.entered.load(Ordering::Acquire) {
+                return;
+            }
+            notified.as_mut().await;
         }
     }
 
-    fn is_entered(&self) -> bool {
-        self.entered.load(Ordering::Acquire)
+    async fn wait_until_entered_bounded(&self, timeout: Duration, message: &str) {
+        if tokio::time::timeout(timeout, self.wait_until_entered())
+            .await
+            .is_err()
+        {
+            self.release();
+            panic!("{message}");
+        }
     }
 
     fn release(&self) {
@@ -368,20 +393,58 @@ impl TerminationGate {
             entered: Arc::new(tokio::sync::Notify::new()),
             released: Arc::new(AtomicBool::new(false)),
             release: Arc::new(tokio::sync::Notify::new()),
+            wait_registration_gate: Arc::new(Mutex::new(None)),
         }
+    }
+
+    fn set_wait_registration_gate(&self, gate: WaitRegistrationGate) {
+        *self
+            .wait_registration_gate
+            .lock()
+            .expect("wait registration gate lock") = Some(gate);
     }
 
     async fn enter(&self) {
         self.entries.fetch_add(1, Ordering::AcqRel);
         self.entered.notify_waiters();
-        while !self.released.load(Ordering::Acquire) {
-            self.release.notified().await;
+        loop {
+            let notified = self.release.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.released.load(Ordering::Acquire) {
+                return;
+            }
+            notified.as_mut().await;
         }
     }
 
     async fn wait_for_entries(&self, expected: usize) {
-        while self.entries.load(Ordering::Acquire) < expected {
-            self.entered.notified().await;
+        loop {
+            let notified = self.entered.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.entries.load(Ordering::Acquire) >= expected {
+                return;
+            }
+            let registration_gate = self
+                .wait_registration_gate
+                .lock()
+                .expect("wait registration gate lock")
+                .take();
+            if let Some(gate) = registration_gate {
+                gate.block_after_check().await;
+            }
+            notified.as_mut().await;
+        }
+    }
+
+    async fn wait_for_entries_bounded(&self, expected: usize, timeout: Duration, message: &str) {
+        if tokio::time::timeout(timeout, self.wait_for_entries(expected))
+            .await
+            .is_err()
+        {
+            self.release();
+            panic!("{message}");
         }
     }
 
@@ -392,6 +455,28 @@ impl TerminationGate {
     fn release(&self) {
         self.released.store(true, Ordering::Release);
         self.release.notify_waiters();
+    }
+}
+
+impl WaitRegistrationGate {
+    fn new() -> Self {
+        Self {
+            checked: Arc::new(tokio::sync::Barrier::new(2)),
+            resume: Arc::new(tokio::sync::Barrier::new(2)),
+        }
+    }
+
+    async fn block_after_check(&self) {
+        self.checked.wait().await;
+        self.resume.wait().await;
+    }
+
+    async fn wait_until_checked(&self) {
+        self.checked.wait().await;
+    }
+
+    async fn resume(&self) {
+        self.resume.wait().await;
     }
 }
 
@@ -507,8 +592,14 @@ impl FakeBackend {
     }
 
     async fn wait_for_spawn_count(&self, expected: usize) {
-        while self.spawn_count() < expected {
-            self.spawn_notify.notified().await;
+        loop {
+            let notified = self.spawn_notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.spawn_count() >= expected {
+                return;
+            }
+            notified.as_mut().await;
         }
     }
 }
@@ -727,6 +818,40 @@ async fn enabled_manager(
 }
 
 #[tokio::test]
+async fn termination_gate_waiter_cannot_lose_entry_notification() {
+    let termination_gate = TerminationGate::new();
+    let registration_gate = WaitRegistrationGate::new();
+    termination_gate.set_wait_registration_gate(registration_gate.clone());
+
+    let wait_gate = termination_gate.clone();
+    let waiter = tokio::spawn(async move { wait_gate.wait_for_entries(1).await });
+    registration_gate.wait_until_checked().await;
+
+    let enter_gate = termination_gate.clone();
+    let enter = tokio::spawn(async move { enter_gate.enter().await });
+    tokio::time::timeout(Duration::from_secs(1), async {
+        while termination_gate.entry_count() == 0 {
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("termination gate entry is recorded");
+    registration_gate.resume().await;
+
+    let waiter_result = tokio::time::timeout(Duration::from_secs(1), waiter).await;
+    if waiter_result.is_err() {
+        termination_gate.release();
+        enter.await.expect("termination gate caller joins");
+        panic!("registered waiter observes entry");
+    }
+    waiter_result
+        .expect("entry waiter completes")
+        .expect("entry waiter joins");
+    termination_gate.release();
+    enter.await.expect("termination gate caller joins");
+}
+
+#[tokio::test]
 async fn fast_command_returns_terminal_receipt_without_running_slot() {
     let backend = Arc::new(FakeBackend::default());
     backend.queue_fast(b"done\n", 0);
@@ -873,7 +998,9 @@ async fn cancel_before_id_delivery_stops_the_spawned_tree() {
             )
             .await
     });
-    backend.wait_for_spawn_count(1).await;
+    tokio::time::timeout(Duration::from_secs(1), backend.wait_for_spawn_count(1))
+        .await
+        .expect("cancelled start reaches backend spawn");
     cancellation.cancel();
     assert_eq!(
         start.await.expect("start task joins"),
@@ -914,16 +1041,12 @@ async fn aborted_unpublished_start_settles_reservation() {
         .await
         .expect("interrupt waiter joins")
     );
-    for _ in 0..=400 {
-        if kill_gate.is_entered() {
-            break;
-        }
-        tokio::time::advance(Duration::from_millis(5)).await;
-    }
-    assert!(
-        kill_gate.is_entered(),
-        "unpublished cleanup reaches child kill"
-    );
+    kill_gate
+        .wait_until_entered_bounded(
+            Duration::from_secs(3),
+            "unpublished cleanup reaches child kill",
+        )
+        .await;
     start.abort();
     assert!(
         start
@@ -991,12 +1114,13 @@ async fn reader_spawn_failure_keeps_partial_ownership_until_cleanup_confirms_exi
         .expect("interrupt waiter joins"),
         "partial cleanup writes ETX before its natural wait"
     );
-    for _ in 0..=400 {
-        if termination_gate.entry_count() == 1 {
-            break;
-        }
-        tokio::time::advance(Duration::from_millis(5)).await;
-    }
+    termination_gate
+        .wait_for_entries_bounded(
+            1,
+            Duration::from_secs(3),
+            "reader spawn cleanup reaches tree termination",
+        )
+        .await;
     assert_eq!(
         termination_gate.entry_count(),
         1,
@@ -1392,7 +1516,13 @@ async fn concurrent_stop_has_one_cleanup_owner() {
     let first_id = started.session_id.clone();
     let first = tokio::spawn(async move { first_manager.stop(&first_id, OUTPUT_LIMIT).await });
     tokio::time::advance(Duration::from_secs(2)).await;
-    termination_gate.wait_for_entries(1).await;
+    termination_gate
+        .wait_for_entries_bounded(
+            1,
+            Duration::from_secs(3),
+            "first cleanup owner reaches tree termination",
+        )
+        .await;
 
     let second_manager = manager.clone();
     let second_id = started.session_id;
@@ -1436,7 +1566,13 @@ async fn aborted_cleanup_owner_does_not_strand_waiters() {
     let owner_id = started.session_id.clone();
     let owner = tokio::spawn(async move { owner_manager.stop(&owner_id, OUTPUT_LIMIT).await });
     tokio::time::advance(Duration::from_secs(2)).await;
-    termination_gate.wait_for_entries(1).await;
+    termination_gate
+        .wait_for_entries_bounded(
+            1,
+            Duration::from_secs(3),
+            "aborted cleanup owner reaches tree termination",
+        )
+        .await;
     owner.abort();
     assert!(
         owner
@@ -1645,7 +1781,9 @@ async fn blocking_child_kill_timeout_does_not_relock_child() {
             let _ = result_tx.send(stop_manager.stop(&stop_id, OUTPUT_LIMIT).await);
         });
     });
-    kill_gate.wait_until_entered().await;
+    kill_gate
+        .wait_until_entered_bounded(Duration::from_secs(1), "child kill reaches blocking gate")
+        .await;
     let result_rx = Arc::new(Mutex::new(result_rx));
     let bounded_rx = Arc::clone(&result_rx);
     let bounded = tokio::task::spawn_blocking(move || {

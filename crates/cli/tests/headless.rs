@@ -392,10 +392,9 @@ fn full_access_agent_run_enables_shell_and_discloses_risk_on_jsonl_stderr() {
     let stdout = String::from_utf8(output.stdout).expect("stdout UTF-8");
     let stderr = String::from_utf8(output.stderr).expect("stderr UTF-8");
     let server_result = server.join();
-    let request_count = requests.lock().expect("fixture requests").len();
     assert!(
         server_result.is_ok(),
-        "fixture server failed after {request_count} requests\nstatus={:?}\nstdout={stdout}\nstderr={stderr}",
+        "fixture server failed\nstatus={:?}\nstdout={stdout}\nstderr={stderr}",
         output.status.code()
     );
     assert!(
@@ -423,6 +422,45 @@ fn full_access_agent_run_enables_shell_and_discloses_risk_on_jsonl_stderr() {
         requests[1]
     );
     assert!(!requests[1].contains("shell_requires_full_access"));
+}
+
+#[test]
+fn provider_fixture_waits_for_delayed_request_bytes() {
+    let (endpoint, requests, server) = provider_fixture_server(vec!["fixture-response"]);
+    let address = endpoint
+        .strip_prefix("http://")
+        .expect("loopback fixture endpoint");
+    let mut client = TcpStream::connect(address).expect("connect fixture");
+    client
+        .set_read_timeout(Some(Duration::from_secs(5)))
+        .expect("client read timeout");
+
+    std::thread::sleep(Duration::from_millis(100));
+    let write_result = write!(
+        client,
+        "POST /v1/responses HTTP/1.1\r\nHost: {address}\r\nContent-Length: 0\r\n\r\n"
+    )
+    .and_then(|()| client.flush());
+    let mut response = String::new();
+    let read_result = write_result
+        .as_ref()
+        .map_err(std::io::Error::kind)
+        .and_then(|()| {
+            client
+                .read_to_string(&mut response)
+                .map_err(|error| error.kind())
+        });
+    let server_result = server.join();
+
+    assert!(
+        server_result.is_ok(),
+        "fixture server failed; client write={:?}, read={read_result:?}",
+        write_result.as_ref().map_err(std::io::Error::kind)
+    );
+    write_result.expect("write delayed fixture request");
+    read_result.expect("read fixture response");
+    assert!(response.contains("fixture-response"), "{response}");
+    assert_eq!(requests.lock().expect("fixture requests").len(), 1);
 }
 
 #[test]
@@ -537,12 +575,16 @@ fn provider_fixture_server(
                 }
             };
             socket
+                .set_nonblocking(false)
+                .expect("blocking fixture socket");
+            socket
                 .set_read_timeout(Some(Duration::from_secs(5)))
                 .expect("fixture read timeout");
-            captured
-                .lock()
-                .expect("fixture requests")
-                .push(read_http_request(&mut socket));
+            socket
+                .set_write_timeout(Some(Duration::from_secs(5)))
+                .expect("fixture write timeout");
+            let request = read_http_request(&mut socket);
+            captured.lock().expect("fixture requests").push(request);
             write!(
                 socket,
                 "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",

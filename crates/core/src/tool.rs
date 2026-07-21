@@ -369,17 +369,24 @@ impl InvocationMachine {
 }
 
 pub(crate) fn late_shell_rejection_is_legal(tool_name: &str, code: &str) -> bool {
-    matches!(tool_name, "shell_command" | "shell_session")
-        && matches!(
-            code,
+    matches!(
+        (tool_name, code),
+        (
+            "shell_command",
             "invalid_arguments"
                 | "input_limit"
                 | "path_not_found"
                 | "wrong_file_type"
                 | "shell_requires_full_access"
-                | "shell_session_not_found"
                 | "shell_session_limit"
+        ) | (
+            "shell_session",
+            "invalid_arguments"
+                | "input_limit"
+                | "shell_requires_full_access"
+                | "shell_session_not_found"
         )
+    )
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

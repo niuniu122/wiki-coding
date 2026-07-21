@@ -472,54 +472,61 @@ fn a_late_adapter_rejection_after_start_remains_illegal_for_non_shell_tools() {
     assert!(matches!(machine.state(), InvocationState::Started { .. }));
 }
 
+const REAL_LATE_SHELL_REJECTIONS: [(&str, &str); 10] = [
+    ("shell_command", "invalid_arguments"),
+    ("shell_command", "input_limit"),
+    ("shell_command", "path_not_found"),
+    ("shell_command", "wrong_file_type"),
+    ("shell_command", "shell_requires_full_access"),
+    ("shell_command", "shell_session_limit"),
+    ("shell_session", "invalid_arguments"),
+    ("shell_session", "input_limit"),
+    ("shell_session", "shell_requires_full_access"),
+    ("shell_session", "shell_session_not_found"),
+];
+
+const FORGED_LATE_SHELL_REJECTIONS: [(&str, &str); 6] = [
+    ("shell_session", "path_not_found"),
+    ("shell_session", "wrong_file_type"),
+    ("shell_session", "shell_session_limit"),
+    ("shell_command", "shell_session_not_found"),
+    ("shell_command", "forged_rejection"),
+    ("shell_session", "forged_rejection"),
+];
+
 #[test]
 fn shell_tools_accept_only_real_late_adapter_rejection_codes_after_start() {
-    let allowed_codes = [
-        "invalid_arguments",
-        "input_limit",
-        "path_not_found",
-        "wrong_file_type",
-        "shell_requires_full_access",
-        "shell_session_not_found",
-        "shell_session_limit",
-    ];
+    for (index, (tool_name, code)) in REAL_LATE_SHELL_REJECTIONS.into_iter().enumerate() {
+        let call_id = format!("call-{tool_name}-{index}");
+        let (mut machine, _) =
+            InvocationMachine::request(invocation_for(&call_id, tool_name, ToolEffect::Process));
+        machine
+            .apply(InvocationInput::PreflightAllowed {
+                permission_mode: PermissionMode::FullAccess,
+            })
+            .expect("policy approval");
+        machine.apply(InvocationInput::Start).expect("start");
+        let rejected = result_for_tool(&call_id, tool_name, ToolTerminalStatus::Rejected, code);
 
-    for tool_name in ["shell_command", "shell_session"] {
-        for (index, code) in allowed_codes.into_iter().enumerate() {
-            let call_id = format!("call-{tool_name}-{index}");
-            let (mut machine, _) = InvocationMachine::request(invocation_for(
-                &call_id,
-                tool_name,
-                ToolEffect::Process,
-            ));
-            machine
-                .apply(InvocationInput::PreflightAllowed {
-                    permission_mode: PermissionMode::FullAccess,
-                })
-                .expect("policy approval");
-            machine.apply(InvocationInput::Start).expect("start");
-            let rejected = result_for_tool(&call_id, tool_name, ToolTerminalStatus::Rejected, code);
-
-            let effects = machine
-                .apply(InvocationInput::Complete {
-                    result: rejected.clone(),
-                })
-                .expect("real late Shell rejection");
-            assert_eq!(
-                effects,
-                vec![
-                    InvocationEffect::PersistTerminal(rejected.clone()),
-                    InvocationEffect::PublishTerminal(rejected),
-                ]
-            );
-        }
+        let effects = machine
+            .apply(InvocationInput::Complete {
+                result: rejected.clone(),
+            })
+            .expect("real late Shell rejection");
+        assert_eq!(
+            effects,
+            vec![
+                InvocationEffect::PersistTerminal(rejected.clone()),
+                InvocationEffect::PublishTerminal(rejected),
+            ]
+        );
     }
 }
 
 #[test]
 fn shell_tools_reject_forged_late_adapter_rejection_codes() {
-    for tool_name in ["shell_command", "shell_session"] {
-        let call_id = format!("call-forged-{tool_name}");
+    for (index, (tool_name, code)) in FORGED_LATE_SHELL_REJECTIONS.into_iter().enumerate() {
+        let call_id = format!("call-forged-{tool_name}-{index}");
         let (mut machine, _) =
             InvocationMachine::request(invocation_for(&call_id, tool_name, ToolEffect::Process));
         machine
@@ -531,12 +538,7 @@ fn shell_tools_reject_forged_late_adapter_rejection_codes() {
 
         assert_eq!(
             machine.apply(InvocationInput::Complete {
-                result: result_for_tool(
-                    &call_id,
-                    tool_name,
-                    ToolTerminalStatus::Rejected,
-                    "forged_rejection",
-                ),
+                result: result_for_tool(&call_id, tool_name, ToolTerminalStatus::Rejected, code),
             }),
             Err(InvocationError::InvalidTerminal)
         );
@@ -562,36 +564,34 @@ fn durable_session_projection_matches_late_shell_rejection_policy() {
         Err(RuntimeErrorCode::Recovery)
     );
 
-    let (mut shell_machine, shell_turn) =
-        started_session_machine("call-durable-shell", "shell_session", ToolEffect::Process);
-    shell_machine
-        .apply(SessionCommand::RecordToolTerminal {
-            record_id: RecordId::new("record-terminal-shell").expect("record"),
-            turn_id: shell_turn,
-            result: result_for_tool(
-                "call-durable-shell",
-                "shell_session",
-                ToolTerminalStatus::Rejected,
-                "shell_session_not_found",
-            ),
-            now_unix_ms: 6,
-        })
-        .expect("durable late Shell rejection");
+    for (index, (tool_name, code)) in REAL_LATE_SHELL_REJECTIONS.into_iter().enumerate() {
+        let call_id = format!("call-durable-{tool_name}-{index}");
+        let (mut machine, turn_id) =
+            started_session_machine(&call_id, tool_name, ToolEffect::Process);
+        machine
+            .apply(SessionCommand::RecordToolTerminal {
+                record_id: RecordId::new(format!("record-terminal-{tool_name}-{index}"))
+                    .expect("record"),
+                turn_id,
+                result: result_for_tool(&call_id, tool_name, ToolTerminalStatus::Rejected, code),
+                now_unix_ms: 6,
+            })
+            .expect("durable real late Shell rejection");
+    }
 
-    let (mut forged_machine, forged_turn) =
-        started_session_machine("call-durable-forged", "shell_command", ToolEffect::Process);
-    assert_eq!(
-        forged_machine.apply(SessionCommand::RecordToolTerminal {
-            record_id: RecordId::new("record-terminal-forged").expect("record"),
-            turn_id: forged_turn,
-            result: result_for_tool(
-                "call-durable-forged",
-                "shell_command",
-                ToolTerminalStatus::Rejected,
-                "forged_rejection",
-            ),
-            now_unix_ms: 6,
-        }),
-        Err(RuntimeErrorCode::Recovery)
-    );
+    for (index, (tool_name, code)) in FORGED_LATE_SHELL_REJECTIONS.into_iter().enumerate() {
+        let call_id = format!("call-durable-forged-{tool_name}-{index}");
+        let (mut machine, turn_id) =
+            started_session_machine(&call_id, tool_name, ToolEffect::Process);
+        assert_eq!(
+            machine.apply(SessionCommand::RecordToolTerminal {
+                record_id: RecordId::new(format!("record-terminal-forged-{tool_name}-{index}"))
+                    .expect("record"),
+                turn_id,
+                result: result_for_tool(&call_id, tool_name, ToolTerminalStatus::Rejected, code),
+                now_unix_ms: 6,
+            }),
+            Err(RuntimeErrorCode::Recovery)
+        );
+    }
 }

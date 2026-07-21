@@ -323,6 +323,26 @@ fn shell_completion_trace_keeps_only_bounded_metadata() {
         "[REDACTED]"
     );
 
+    let non_string_session = SafeTraceRecorder::record(
+        43,
+        TraceCode::ToolCompleted,
+        BTreeMap::from([("session_id".to_owned(), SafeTraceFact::U64(7))]),
+    );
+    assert_eq!(non_string_session.facts["session_id"], "[REDACTED]");
+
+    let low_entropy_non_production_session = SafeTraceRecorder::record(
+        43,
+        TraceCode::ToolCompleted,
+        BTreeMap::from([(
+            "session_id".to_owned(),
+            SafeTraceFact::String("shell-secret-value".to_owned()),
+        )]),
+    );
+    assert_eq!(
+        low_entropy_non_production_session.facts["session_id"],
+        "[REDACTED]"
+    );
+
     let wrong_key = SafeTraceRecorder::record(
         44,
         TraceCode::ToolCompleted,
@@ -333,6 +353,16 @@ fn shell_completion_trace_keeps_only_bounded_metadata() {
     );
     assert_eq!(wrong_key.facts["tool"], "[REDACTED]");
 
+    let low_entropy_wrong_key = SafeTraceRecorder::record(
+        44,
+        TraceCode::ToolCompleted,
+        BTreeMap::from([(
+            "tool".to_owned(),
+            SafeTraceFact::String("shell-secret-value".to_owned()),
+        )]),
+    );
+    assert_eq!(low_entropy_wrong_key.facts["tool"], "shell-secret-value");
+
     let other_event = SafeTraceRecorder::record(
         45,
         TraceCode::CommandRejected,
@@ -342,4 +372,17 @@ fn shell_completion_trace_keeps_only_bounded_metadata() {
         )]),
     );
     assert_eq!(other_event.facts["command"], "[REDACTED]");
+
+    let low_entropy_other_event = SafeTraceRecorder::record(
+        45,
+        TraceCode::CommandRejected,
+        BTreeMap::from([(
+            "command".to_owned(),
+            SafeTraceFact::String("shell-secret-value".to_owned()),
+        )]),
+    );
+    assert_eq!(
+        low_entropy_other_event.facts["command"],
+        "shell-secret-value"
+    );
 }

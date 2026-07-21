@@ -84,11 +84,16 @@ fn allowed_facts(code: TraceCode) -> &'static [&'static str] {
 }
 
 fn sanitize_fact(code: TraceCode, key: &str, value: SafeTraceFact) -> Option<String> {
+    if code == TraceCode::ToolCompleted && key == "session_id" {
+        let rendered = match value {
+            SafeTraceFact::String(value) if is_valid_tool_completed_session_id(&value) => value,
+            _ => "[REDACTED]".to_owned(),
+        };
+        return Some(rendered);
+    }
     let rendered = match value {
         SafeTraceFact::String(value) => {
-            if !is_valid_tool_completed_session_id(code, key, &value)
-                && contains_prohibited_material(&value)
-            {
+            if contains_prohibited_material(&value) {
                 "[REDACTED]".to_owned()
             } else {
                 value
@@ -102,10 +107,7 @@ fn sanitize_fact(code: TraceCode, key: &str, value: SafeTraceFact) -> Option<Str
     (rendered.len() <= MAX_FACT_VALUE_BYTES).then_some(rendered)
 }
 
-fn is_valid_tool_completed_session_id(code: TraceCode, key: &str, value: &str) -> bool {
-    if code != TraceCode::ToolCompleted || key != "session_id" {
-        return false;
-    }
+fn is_valid_tool_completed_session_id(value: &str) -> bool {
     let Ok(session_id) = ShellSessionId::new(value.to_owned()) else {
         return false;
     };
