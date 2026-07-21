@@ -6,12 +6,12 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use minimax_core::{CancellationFuture, CancellationPort, Clock};
-use minimax_protocol::{ShellSessionId, ShellSessionState};
+use minimax_protocol::{MAX_SHELL_UNREAD_BYTES, ShellSessionId, ShellSessionState};
 use minimax_tools::{
     MAX_RUNNING_SHELL_SESSIONS, MAX_TERMINAL_SHELL_RECEIPTS, PtyBackend, PtyChild,
-    PtyTerminateFuture, ShellCommandRequest, ShellManagerError, ShellPollRequest,
-    ShellSessionIdSource, ShellSessionManager, ShellSpawnRequest, ShellWriteRequest, SpawnedPty,
-    TERMINAL_RECEIPT_TTL,
+    PtyTerminateFuture, ShellCleanupError, ShellCommandRequest, ShellManagerError,
+    ShellPollRequest, ShellSessionIdSource, ShellSessionManager, ShellSpawnRequest,
+    ShellWriteRequest, SpawnedPty, TERMINAL_RECEIPT_TTL,
 };
 
 const OUTPUT_LIMIT: usize = 1024;
@@ -99,9 +99,14 @@ struct FakeShared {
     input: Mutex<Vec<u8>>,
     reader_tx: Mutex<Option<std::sync::mpsc::Sender<ReaderEvent>>>,
     interrupts: AtomicUsize,
+    interrupt_wait: (Mutex<usize>, Condvar),
     kills: AtomicUsize,
+    try_wait_error: AtomicBool,
+    kill_error: AtomicBool,
+    kill_gate: Mutex<Option<KillGate>>,
     exit_on_interrupt: AtomicBool,
     flush_hook: Mutex<Option<FlushHook>>,
+    flush_error: Mutex<Option<io::ErrorKind>>,
 }
 
 impl FakeShared {
@@ -140,16 +145,59 @@ impl FakeControl {
         self.shared.exit(code);
     }
 
+    fn finish_reader(&self) {
+        if let Some(sender) = self
+            .shared
+            .reader_tx
+            .lock()
+            .expect("reader sender lock")
+            .take()
+        {
+            let _ = sender.send(ReaderEvent::Eof);
+        }
+    }
+
     fn input(&self) -> Vec<u8> {
         self.shared.input.lock().expect("input lock").clone()
+    }
+
+    fn set_exit_on_interrupt(&self, enabled: bool) {
+        self.shared
+            .exit_on_interrupt
+            .store(enabled, Ordering::Release);
+    }
+
+    fn set_try_wait_error(&self, enabled: bool) {
+        self.shared.try_wait_error.store(enabled, Ordering::Release);
+    }
+
+    fn set_kill_error(&self, enabled: bool) {
+        self.shared.kill_error.store(enabled, Ordering::Release);
+    }
+
+    fn set_kill_gate(&self, gate: KillGate) {
+        *self.shared.kill_gate.lock().expect("kill gate lock") = Some(gate);
     }
 
     fn set_flush_hook(&self, hook: FlushHook) {
         *self.shared.flush_hook.lock().expect("flush hook lock") = Some(hook);
     }
 
+    fn set_flush_error(&self, kind: io::ErrorKind) {
+        *self.shared.flush_error.lock().expect("flush error lock") = Some(kind);
+    }
+
     fn interrupts(&self) -> usize {
         self.shared.interrupts.load(Ordering::Acquire)
+    }
+
+    fn wait_for_interrupts(&self, expected: usize, timeout: Duration) -> bool {
+        let (count, signal) = &self.shared.interrupt_wait;
+        let count = count.lock().expect("interrupt wait lock");
+        let (count, _) = signal
+            .wait_timeout_while(count, timeout, |count| *count < expected)
+            .expect("interrupt wait");
+        *count >= expected
     }
 
     fn kills(&self) -> usize {
@@ -194,6 +242,83 @@ struct SpawnGate {
     released: Arc<(Mutex<bool>, Condvar)>,
 }
 
+#[derive(Clone)]
+struct TerminationGate {
+    entries: Arc<AtomicUsize>,
+    entered: Arc<tokio::sync::Notify>,
+    released: Arc<AtomicBool>,
+    release: Arc<tokio::sync::Notify>,
+}
+
+#[derive(Clone)]
+struct KillGate {
+    entered: Arc<AtomicBool>,
+    entered_notify: Arc<tokio::sync::Notify>,
+    released: Arc<(Mutex<bool>, Condvar)>,
+}
+
+impl KillGate {
+    fn new() -> Self {
+        Self {
+            entered: Arc::new(AtomicBool::new(false)),
+            entered_notify: Arc::new(tokio::sync::Notify::new()),
+            released: Arc::new((Mutex::new(false), Condvar::new())),
+        }
+    }
+
+    fn block(&self) {
+        self.entered.store(true, Ordering::Release);
+        self.entered_notify.notify_waiters();
+        let (released, signal) = &*self.released;
+        let mut released = released.lock().expect("kill release lock");
+        while !*released {
+            released = signal.wait(released).expect("kill release wait");
+        }
+    }
+
+    async fn wait_until_entered(&self) {
+        while !self.entered.load(Ordering::Acquire) {
+            self.entered_notify.notified().await;
+        }
+    }
+
+    fn release(&self) {
+        let (released, signal) = &*self.released;
+        *released.lock().expect("kill release lock") = true;
+        signal.notify_all();
+    }
+}
+
+impl TerminationGate {
+    fn new() -> Self {
+        Self {
+            entries: Arc::new(AtomicUsize::new(0)),
+            entered: Arc::new(tokio::sync::Notify::new()),
+            released: Arc::new(AtomicBool::new(false)),
+            release: Arc::new(tokio::sync::Notify::new()),
+        }
+    }
+
+    async fn enter(&self) {
+        self.entries.fetch_add(1, Ordering::AcqRel);
+        self.entered.notify_waiters();
+        while !self.released.load(Ordering::Acquire) {
+            self.release.notified().await;
+        }
+    }
+
+    async fn wait_for_entries(&self, expected: usize) {
+        while self.entries.load(Ordering::Acquire) < expected {
+            self.entered.notified().await;
+        }
+    }
+
+    fn release(&self) {
+        self.released.store(true, Ordering::Release);
+        self.release.notify_waiters();
+    }
+}
+
 impl SpawnGate {
     fn new() -> Self {
         Self {
@@ -236,6 +361,8 @@ struct FakeBackend {
     processes: Mutex<HashMap<u32, Arc<FakeShared>>>,
     spawns: AtomicUsize,
     terminations: AtomicUsize,
+    termination_error: AtomicBool,
+    termination_gate: Mutex<Option<TerminationGate>>,
     spawn_notify: tokio::sync::Notify,
     next_process_id: AtomicU64,
 }
@@ -261,9 +388,14 @@ impl FakeBackend {
             input: Mutex::new(Vec::new()),
             reader_tx: Mutex::new(Some(reader_tx)),
             interrupts: AtomicUsize::new(0),
+            interrupt_wait: (Mutex::new(0), Condvar::new()),
             kills: AtomicUsize::new(0),
+            try_wait_error: AtomicBool::new(false),
+            kill_error: AtomicBool::new(false),
+            kill_gate: Mutex::new(None),
             exit_on_interrupt: AtomicBool::new(true),
             flush_hook: Mutex::new(None),
+            flush_error: Mutex::new(None),
         });
         self.plans.lock().expect("plans lock").push_back(FakePlan {
             shared: Arc::clone(&shared),
@@ -282,6 +414,18 @@ impl FakeBackend {
 
     fn spawn_count(&self) -> usize {
         self.spawns.load(Ordering::Acquire)
+    }
+
+    fn set_termination_error(&self, enabled: bool) {
+        self.termination_error.store(enabled, Ordering::Release);
+    }
+
+    fn set_termination_gate(&self, gate: TerminationGate) {
+        *self.termination_gate.lock().expect("termination gate lock") = Some(gate);
+    }
+
+    fn termination_count(&self) -> usize {
+        self.terminations.load(Ordering::Acquire)
     }
 
     async fn wait_for_spawn_count(&self, expected: usize) {
@@ -327,6 +471,17 @@ impl PtyBackend for FakeBackend {
     fn terminate_tree<'a>(&'a self, process_id: u32) -> PtyTerminateFuture<'a> {
         Box::pin(async move {
             self.terminations.fetch_add(1, Ordering::AcqRel);
+            let gate = self
+                .termination_gate
+                .lock()
+                .expect("termination gate lock")
+                .clone();
+            if let Some(gate) = gate {
+                gate.enter().await;
+            }
+            if self.termination_error.load(Ordering::Acquire) {
+                return Err(io::Error::other("scripted tree termination failure"));
+            }
             let process = self
                 .processes
                 .lock()
@@ -350,11 +505,26 @@ impl PtyChild for FakeChild {
     }
 
     fn try_wait(&mut self) -> io::Result<Option<i32>> {
+        if self.shared.try_wait_error.load(Ordering::Acquire) {
+            return Err(io::Error::other("scripted try_wait failure"));
+        }
         Ok(*self.shared.exit_code.lock().expect("exit lock"))
     }
 
     fn kill(&mut self) -> io::Result<()> {
         self.shared.kills.fetch_add(1, Ordering::AcqRel);
+        let gate = self
+            .shared
+            .kill_gate
+            .lock()
+            .expect("kill gate lock")
+            .clone();
+        if let Some(gate) = gate {
+            gate.block();
+        }
+        if self.shared.kill_error.load(Ordering::Acquire) {
+            return Err(io::Error::other("scripted kill failure"));
+        }
         self.shared.exit(-9);
         Ok(())
     }
@@ -394,6 +564,9 @@ impl Write for FakeWriter {
             .extend_from_slice(bytes);
         if bytes == b"\x03" {
             self.shared.interrupts.fetch_add(1, Ordering::AcqRel);
+            let (count, signal) = &self.shared.interrupt_wait;
+            *count.lock().expect("interrupt wait lock") += 1;
+            signal.notify_all();
             if self.shared.exit_on_interrupt.load(Ordering::Acquire) {
                 self.shared.exit(-2);
             }
@@ -415,6 +588,9 @@ impl Write for FakeWriter {
             while !*released {
                 released = signal.wait(released).expect("flush release wait");
             }
+        }
+        if let Some(kind) = *self.shared.flush_error.lock().expect("flush error lock") {
+            return Err(io::Error::new(kind, "scripted flush failure"));
         }
         Ok(())
     }
@@ -678,6 +854,38 @@ async fn write_after_bytes_are_committed_can_report_indeterminate() {
 }
 
 #[tokio::test]
+async fn real_interrupted_flush_without_cancellation_is_not_cancelled() {
+    let backend = Arc::new(FakeBackend::default());
+    let control = backend.queue_process();
+    control.set_flush_error(io::ErrorKind::Interrupted);
+    let manager = enabled_manager(Arc::clone(&backend), Arc::new(ManualClock::default())).await;
+    let started = manager
+        .start(
+            command_request("interactive", Duration::ZERO),
+            &NeverCancelled,
+        )
+        .await
+        .expect("interactive command starts");
+
+    assert_eq!(
+        manager
+            .write(
+                ShellWriteRequest {
+                    session_id: started.session_id,
+                    input: "committed".to_owned(),
+                    submit: false,
+                    yield_time: Duration::ZERO,
+                    max_output_bytes: OUTPUT_LIMIT,
+                },
+                &NeverCancelled,
+            )
+            .await,
+        Err(ShellManagerError::Io)
+    );
+    assert_eq!(control.input(), b"committed");
+}
+
+#[tokio::test]
 async fn stop_is_terminal_and_idempotent() {
     let backend = Arc::new(FakeBackend::default());
     let control = backend.queue_process();
@@ -698,6 +906,217 @@ async fn stop_is_terminal_and_idempotent() {
     assert_eq!(second.state, ShellSessionState::Stopped);
     assert_eq!(control.interrupts(), 1);
     assert!(!control.is_running());
+}
+
+#[tokio::test(start_paused = true)]
+async fn concurrent_stop_has_one_cleanup_owner() {
+    let backend = Arc::new(FakeBackend::default());
+    let control = backend.queue_process();
+    control.set_exit_on_interrupt(false);
+    let termination_gate = TerminationGate::new();
+    backend.set_termination_gate(termination_gate.clone());
+    let manager = enabled_manager(Arc::clone(&backend), Arc::new(ManualClock::default())).await;
+    let started = manager
+        .start(command_request("long", Duration::ZERO), &NeverCancelled)
+        .await
+        .expect("long command starts");
+
+    let first_manager = manager.clone();
+    let first_id = started.session_id.clone();
+    let first = tokio::spawn(async move { first_manager.stop(&first_id).await });
+    tokio::time::advance(Duration::from_secs(2)).await;
+    termination_gate.wait_for_entries(1).await;
+
+    let second_manager = manager.clone();
+    let second_id = started.session_id;
+    let second = tokio::spawn(async move { second_manager.stop(&second_id).await });
+    let wait_control = control.clone();
+    let duplicate_interrupt = tokio::task::spawn_blocking(move || {
+        wait_control.wait_for_interrupts(2, Duration::from_millis(100))
+    })
+    .await
+    .expect("interrupt wait joins");
+    let termination_count_before_release = backend.termination_count();
+    termination_gate.release();
+
+    assert_eq!(
+        first.await.expect("first stop joins").expect("first stop"),
+        second
+            .await
+            .expect("second stop joins")
+            .expect("second stop")
+    );
+    assert!(!duplicate_interrupt, "both stop callers wrote ETX");
+    assert_eq!(control.interrupts(), 1);
+    assert_eq!(termination_count_before_release, 1);
+    assert_eq!(control.kills(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn cleanup_failure_is_sticky_for_stop_disable_and_shutdown() {
+    let backend = Arc::new(FakeBackend::default());
+    let control = backend.queue_process();
+    control.set_exit_on_interrupt(false);
+    backend.set_termination_error(true);
+    let clock = Arc::new(ManualClock::default());
+    let manager = enabled_manager(Arc::clone(&backend), Arc::clone(&clock)).await;
+    let started = manager
+        .start(command_request("long", Duration::ZERO), &NeverCancelled)
+        .await
+        .expect("long command starts");
+
+    assert_eq!(
+        manager.stop(&started.session_id).await,
+        Err(ShellManagerError::Indeterminate)
+    );
+    clock.advance(TERMINAL_RECEIPT_TTL + Duration::from_millis(1));
+    assert_eq!(
+        manager.stop(&started.session_id).await,
+        Err(ShellManagerError::Indeterminate)
+    );
+    let expected = ShellCleanupError {
+        session_ids: vec![started.session_id.clone()],
+    };
+    assert_eq!(manager.disable_and_stop_all().await, Err(expected.clone()));
+    assert_eq!(manager.shutdown().await, Err(expected));
+    assert_eq!(control.interrupts(), 1);
+    assert_eq!(backend.termination_count(), 1);
+    assert_eq!(control.kills(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn try_wait_error_keeps_live_child_owned_and_capacity_reserved() {
+    let backend = Arc::new(FakeBackend::default());
+    let control = backend.queue_process();
+    let manager = enabled_manager(Arc::clone(&backend), Arc::new(ManualClock::default())).await;
+    let started = manager
+        .start(
+            command_request("probe-error", Duration::ZERO),
+            &NeverCancelled,
+        )
+        .await
+        .expect("command starts before probe failure");
+    control.finish_reader();
+    control.set_exit_on_interrupt(false);
+    control.set_try_wait_error(true);
+    control.set_kill_error(true);
+    backend.set_termination_error(true);
+
+    assert_eq!(
+        manager
+            .poll(
+                poll_request(started.session_id.clone(), Duration::ZERO),
+                &NeverCancelled,
+            )
+            .await,
+        Err(ShellManagerError::Indeterminate)
+    );
+    assert!(control.is_running());
+
+    for index in 1..MAX_RUNNING_SHELL_SESSIONS {
+        backend.queue_process();
+        manager
+            .start(
+                command_request(&format!("long-{index}"), Duration::ZERO),
+                &NeverCancelled,
+            )
+            .await
+            .expect("remaining capacity starts");
+    }
+    assert_eq!(
+        manager
+            .start(
+                command_request("over-capacity", Duration::ZERO),
+                &NeverCancelled,
+            )
+            .await,
+        Err(ShellManagerError::SessionLimit)
+    );
+    assert_eq!(backend.spawn_count(), MAX_RUNNING_SHELL_SESSIONS);
+    assert_eq!(
+        manager.disable_and_stop_all().await,
+        Err(ShellCleanupError {
+            session_ids: vec![started.session_id],
+        })
+    );
+}
+
+#[tokio::test]
+async fn blocking_child_kill_timeout_does_not_relock_child() {
+    let backend = Arc::new(FakeBackend::default());
+    let control = backend.queue_process();
+    control.set_exit_on_interrupt(false);
+    let kill_gate = KillGate::new();
+    control.set_kill_gate(kill_gate.clone());
+    let manager = enabled_manager(Arc::clone(&backend), Arc::new(ManualClock::default())).await;
+    let started = manager
+        .start(
+            command_request("blocking-kill", Duration::ZERO),
+            &NeverCancelled,
+        )
+        .await
+        .expect("command starts");
+
+    let stop_manager = manager.clone();
+    let stop_id = started.session_id.clone();
+    let (result_tx, result_rx) = std::sync::mpsc::sync_channel(1);
+    let advance_gate = kill_gate.clone();
+    let stop_thread = std::thread::spawn(move || {
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_time()
+            .build()
+            .expect("stop runtime builds");
+        runtime.block_on(async move {
+            tokio::time::pause();
+            tokio::spawn(async move {
+                tokio::time::advance(Duration::from_secs(3)).await;
+                advance_gate.wait_until_entered().await;
+                tokio::time::advance(Duration::from_secs(2) + Duration::from_millis(1)).await;
+            });
+            let _ = result_tx.send(stop_manager.stop(&stop_id).await);
+        });
+    });
+    kill_gate.wait_until_entered().await;
+    let result_rx = Arc::new(Mutex::new(result_rx));
+    let bounded_rx = Arc::clone(&result_rx);
+    let bounded = tokio::task::spawn_blocking(move || {
+        bounded_rx
+            .lock()
+            .expect("stop result lock")
+            .recv_timeout(Duration::from_millis(500))
+    })
+    .await
+    .expect("bounded stop wait joins");
+    let returned_before_release = bounded.is_ok();
+    kill_gate.release();
+    let result = match bounded {
+        Ok(result) => result,
+        Err(_) => {
+            let released_rx = Arc::clone(&result_rx);
+            tokio::task::spawn_blocking(move || {
+                released_rx
+                    .lock()
+                    .expect("stop result lock")
+                    .recv_timeout(Duration::from_secs(1))
+            })
+            .await
+            .expect("released stop wait joins")
+            .expect("stop returns after releasing blocked kill")
+        }
+    };
+    tokio::task::spawn_blocking(move || stop_thread.join().expect("stop thread joins"))
+        .await
+        .expect("stop thread join task");
+
+    assert!(
+        returned_before_release,
+        "stop relocked child after kill timed out"
+    );
+    assert_eq!(result, Err(ShellManagerError::Indeterminate));
+    assert_eq!(
+        manager.stop(&started.session_id).await,
+        Err(ShellManagerError::Indeterminate)
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -816,8 +1235,9 @@ async fn terminal_receipts_expire_by_count_and_clock() {
     let clock = Arc::new(ManualClock::default());
     let manager = enabled_manager(Arc::clone(&backend), Arc::clone(&clock)).await;
     let mut receipts = Vec::new();
+    let output = vec![b'x'; 2 * OUTPUT_LIMIT];
     for index in 0..=MAX_TERMINAL_SHELL_RECEIPTS {
-        backend.queue_fast(&[], 0);
+        backend.queue_fast(&output, 0);
         receipts.push(
             manager
                 .start(
@@ -846,6 +1266,46 @@ async fn terminal_receipts_expire_by_count_and_clock() {
             .await,
         Err(ShellManagerError::SessionNotFound)
     );
+}
+
+#[tokio::test]
+async fn terminal_gc_releases_evicted_unread_output_budget() {
+    let backend = Arc::new(FakeBackend::default());
+    let clock = Arc::new(ManualClock::default());
+    let manager = enabled_manager(Arc::clone(&backend), Arc::clone(&clock)).await;
+    let saturated_output = vec![b'x'; MAX_SHELL_UNREAD_BYTES];
+    let mut receipts = Vec::new();
+    for index in 0..MAX_RUNNING_SHELL_SESSIONS {
+        backend.queue_fast(&saturated_output, 0);
+        receipts.push(
+            manager
+                .start(
+                    command_request(&format!("saturate-{index}"), Duration::ZERO),
+                    &NeverCancelled,
+                )
+                .await
+                .expect("saturating command exits"),
+        );
+    }
+
+    clock.advance(TERMINAL_RECEIPT_TTL + Duration::from_millis(1));
+    assert_eq!(
+        manager
+            .poll(
+                poll_request(receipts[0].session_id.clone(), Duration::ZERO),
+                &NeverCancelled,
+            )
+            .await,
+        Err(ShellManagerError::SessionNotFound)
+    );
+
+    backend.queue_fast(&vec![b'f'; 2 * OUTPUT_LIMIT], 0);
+    let fresh = manager
+        .start(command_request("fresh", Duration::ZERO), &NeverCancelled)
+        .await
+        .expect("fresh command exits after GC");
+    assert_eq!(fresh.output, "f".repeat(OUTPUT_LIMIT));
+    assert!(!fresh.output_truncated);
 }
 
 #[tokio::test]

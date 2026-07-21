@@ -102,6 +102,9 @@ struct ShellSession {
     guard: Option<Box<dyn PtyGuard>>,
     state: ShellSessionState,
     stopping: bool,
+    cleanup_started: bool,
+    cleanup_result: Option<Result<(), ShellManagerError>>,
+    cleanup_notify: Arc<tokio::sync::Notify>,
     exit_code: Option<i32>,
     terminal_at_unix_ms: Option<u64>,
     terminal_sequence: Option<u64>,
@@ -275,9 +278,14 @@ impl ShellSessionManager {
         let boundary = Arc::new(AtomicU8::new(WriteBoundary::Pending as u8));
         let operation_boundary = Arc::clone(&boundary);
         let mut operation = tokio::task::spawn_blocking(move || {
-            let mut writer = writer
-                .lock()
-                .map_err(|_| io::Error::other("writer poisoned"))?;
+            let mut writer = match writer.lock() {
+                Ok(writer) => writer,
+                Err(_) => {
+                    return BlockingWriteResult::Completed(Err(io::Error::other(
+                        "writer poisoned",
+                    )));
+                }
+            };
             if operation_boundary
                 .compare_exchange(
                     WriteBoundary::Pending as u8,
@@ -287,14 +295,13 @@ impl ShellSessionManager {
                 )
                 .is_err()
             {
-                return Err(io::Error::new(
-                    io::ErrorKind::Interrupted,
-                    "write cancelled",
-                ));
+                return BlockingWriteResult::CancelledBeforeWrite;
             }
-            writer.write_all(&bytes)?;
+            if let Err(error) = writer.write_all(&bytes) {
+                return BlockingWriteResult::Completed(Err(error));
+            }
             operation_boundary.store(WriteBoundary::Committed as u8, Ordering::Release);
-            writer.flush()
+            BlockingWriteResult::Completed(writer.flush())
         });
 
         let write_result = tokio::select! {
@@ -302,11 +309,13 @@ impl ShellSessionManager {
             () = cancellation.cancelled() => None,
         };
         match write_result {
-            Some(Ok(Ok(()))) => {}
-            Some(Ok(Err(error))) if error.kind() == io::ErrorKind::Interrupted => {
+            Some(Ok(BlockingWriteResult::Completed(Ok(())))) => {}
+            Some(Ok(BlockingWriteResult::CancelledBeforeWrite)) => {
                 return Err(ShellManagerError::Cancelled);
             }
-            Some(Ok(Err(_))) | Some(Err(_)) => return Err(ShellManagerError::Io),
+            Some(Ok(BlockingWriteResult::Completed(Err(_)))) | Some(Err(_)) => {
+                return Err(ShellManagerError::Io);
+            }
             None => {
                 let cancelled_before_write = boundary
                     .compare_exchange(
@@ -370,7 +379,10 @@ impl ShellSessionManager {
                 .iter()
                 .filter_map(|(id, session)| {
                     session.lock().ok().and_then(|session| {
-                        (session.state == ShellSessionState::Running).then(|| id.clone())
+                        (session.state == ShellSessionState::Running
+                            || session.cleanup_started
+                            || session.cleanup_result.is_some_and(|result| result.is_err()))
+                        .then(|| id.clone())
                     })
                 })
                 .collect::<Vec<_>>()
@@ -503,7 +515,10 @@ impl ShellSessionManager {
             if cancellation.is_cancelled() {
                 return Err(ShellManagerError::Cancelled);
             }
-            self.refresh_session(&session).await?;
+            if self.refresh_session(&session).await.is_err() {
+                self.ensure_cleanup(&session).await?;
+                return self.receipt(&session, max_output_bytes);
+            }
             let (terminal, has_output) = {
                 let session = session.lock().map_err(|_| ShellManagerError::Io)?;
                 let has_output = session
@@ -515,9 +530,7 @@ impl ShellSessionManager {
                 (session.state != ShellSessionState::Running, has_output)
             };
             if terminal {
-                if !self.close_handles_and_join_reader(&session).await {
-                    return Err(ShellManagerError::Indeterminate);
-                }
+                self.ensure_cleanup(&session).await?;
                 return self.receipt(&session, max_output_bytes);
             }
             if has_output || tokio::time::Instant::now() >= deadline {
@@ -559,11 +572,7 @@ impl ShellSessionManager {
                         true
                     }
                     Ok(None) => false,
-                    Err(_) => {
-                        session.state = ShellSessionState::Failed;
-                        session.terminal_at_unix_ms = Some(self.clock.now_unix_ms());
-                        true
-                    }
+                    Err(_) => return Err(ShellManagerError::Io),
                 }
             }
         };
@@ -585,21 +594,66 @@ impl ShellSessionManager {
         &self,
         session: Arc<StdMutex<ShellSession>>,
     ) -> Result<ShellReceipt, ShellManagerError> {
-        let already_terminal = {
-            let mut session = session.lock().map_err(|_| ShellManagerError::Io)?;
-            if session.state == ShellSessionState::Running {
-                session.stopping = true;
-                false
-            } else {
-                true
-            }
-        };
-        if already_terminal {
-            return self.receipt(&session, MAX_SHELL_OUTPUT_BYTES);
-        }
+        self.ensure_cleanup(&session).await?;
+        self.receipt(&session, MAX_SHELL_OUTPUT_BYTES)
+    }
 
-        let _ = self.write_interrupt(&session).await;
-        let exited_after_interrupt = self.wait_for_exit(&session, CLEANUP_WAIT).await?;
+    async fn ensure_cleanup(
+        &self,
+        session: &Arc<StdMutex<ShellSession>>,
+    ) -> Result<(), ShellManagerError> {
+        let notify = session
+            .lock()
+            .map_err(|_| ShellManagerError::Io)?
+            .cleanup_notify
+            .clone();
+        loop {
+            let notified = notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            let role = {
+                let mut session = session.lock().map_err(|_| ShellManagerError::Io)?;
+                if let Some(result) = session.cleanup_result {
+                    CleanupRole::Complete(result)
+                } else if session.cleanup_started {
+                    CleanupRole::Wait
+                } else {
+                    session.cleanup_started = true;
+                    let running = session.state == ShellSessionState::Running;
+                    if running {
+                        session.stopping = true;
+                    }
+                    CleanupRole::Owner { running }
+                }
+            };
+            match role {
+                CleanupRole::Complete(result) => return result,
+                CleanupRole::Wait => notified.as_mut().await,
+                CleanupRole::Owner { running } => {
+                    let result = if running {
+                        self.cleanup_running_session(session).await
+                    } else if self.close_handles_and_join_reader(session).await {
+                        Ok(())
+                    } else {
+                        Err(ShellManagerError::Indeterminate)
+                    };
+                    if let Ok(mut session) = session.lock() {
+                        session.cleanup_started = false;
+                        session.cleanup_result = Some(result);
+                    }
+                    notify.notify_waiters();
+                    return result;
+                }
+            }
+        }
+    }
+
+    async fn cleanup_running_session(
+        &self,
+        session: &Arc<StdMutex<ShellSession>>,
+    ) -> Result<(), ShellManagerError> {
+        let _ = self.write_interrupt(session).await;
+        let exited_after_interrupt = self.wait_for_exit(session, CLEANUP_WAIT).await?;
         let mut terminate_ok = true;
         if !exited_after_interrupt {
             let process_id = session
@@ -610,22 +664,24 @@ impl ShellSessionManager {
                 tokio::time::timeout(CLEANUP_WAIT, self.backend.terminate_tree(process_id)).await,
                 Ok(Ok(()))
             );
-            let _ = self.kill_child(&session).await;
+            if self.kill_child(session).await == ChildKillOutcome::TimedOut {
+                return Err(ShellManagerError::Indeterminate);
+            }
         }
         let confirmed = if exited_after_interrupt {
             true
         } else {
-            self.wait_for_exit(&session, CLEANUP_WAIT).await?
+            self.wait_for_exit(session, CLEANUP_WAIT).await?
         };
         let reader_done = if confirmed {
-            self.close_handles_and_join_reader(&session).await
+            self.close_handles_and_join_reader(session).await
         } else {
             false
         };
         if !terminate_ok || !confirmed || !reader_done {
             return Err(ShellManagerError::Indeterminate);
         }
-        self.receipt(&session, MAX_SHELL_OUTPUT_BYTES)
+        Ok(())
     }
 
     async fn wait_for_exit(
@@ -635,9 +691,9 @@ impl ShellSessionManager {
     ) -> Result<bool, ShellManagerError> {
         let deadline = tokio::time::Instant::now() + timeout;
         loop {
-            self.refresh_session(session).await?;
-            if session.lock().map_err(|_| ShellManagerError::Io)?.state
-                != ShellSessionState::Running
+            if self.refresh_session(session).await.is_ok()
+                && session.lock().map_err(|_| ShellManagerError::Io)?.state
+                    != ShellSessionState::Running
             {
                 return Ok(true);
             }
@@ -670,21 +726,23 @@ impl ShellSessionManager {
         )
     }
 
-    async fn kill_child(&self, session: &Arc<StdMutex<ShellSession>>) -> bool {
+    async fn kill_child(&self, session: &Arc<StdMutex<ShellSession>>) -> ChildKillOutcome {
         let child = match session.lock() {
             Ok(session) => Arc::clone(&session.child),
-            Err(_) => return false,
+            Err(_) => return ChildKillOutcome::Failed,
         };
-        matches!(
-            tokio::time::timeout(
-                CLEANUP_WAIT,
-                tokio::task::spawn_blocking(move || {
-                    child.lock().map_err(|_| ())?.kill().map_err(|_| ())
-                })
-            )
-            .await,
-            Ok(Ok(Ok(())))
-        )
+        let deadline = tokio::time::sleep(CLEANUP_WAIT);
+        tokio::pin!(deadline);
+        let mut operation = tokio::task::spawn_blocking(move || {
+            child.lock().map_err(|_| ())?.kill().map_err(|_| ())
+        });
+        tokio::select! {
+            result = &mut operation => match result {
+                Ok(Ok(())) => ChildKillOutcome::Completed,
+                Ok(Err(())) | Err(_) => ChildKillOutcome::Failed,
+            },
+            () = deadline.as_mut() => ChildKillOutcome::TimedOut,
+        }
     }
 
     async fn close_handles_and_join_reader(&self, session: &Arc<StdMutex<ShellSession>>) -> bool {
@@ -765,9 +823,10 @@ impl ShellSessionManager {
                 let session = session.lock().ok()?;
                 let terminal_at = session.terminal_at_unix_ms?;
                 let sequence = session.terminal_sequence?;
-                let unread = session.output.lock().ok()?.unread_bytes();
-                (session.state != ShellSessionState::Running && unread == 0)
-                    .then(|| (id.clone(), terminal_at, sequence))
+                (session.state != ShellSessionState::Running
+                    && !session.cleanup_started
+                    && !session.cleanup_result.is_some_and(|result| result.is_err()))
+                .then(|| (id.clone(), terminal_at, sequence))
             })
             .collect::<Vec<_>>();
         let expired = terminal
@@ -844,11 +903,32 @@ impl OwnedSessionResources {
             guard: Some(self.guard),
             state: ShellSessionState::Running,
             stopping: false,
+            cleanup_started: false,
+            cleanup_result: None,
+            cleanup_notify: Arc::new(tokio::sync::Notify::new()),
             exit_code: None,
             terminal_at_unix_ms: None,
             terminal_sequence: None,
         }
     }
+}
+
+enum CleanupRole {
+    Owner { running: bool },
+    Wait,
+    Complete(Result<(), ShellManagerError>),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ChildKillOutcome {
+    Completed,
+    Failed,
+    TimedOut,
+}
+
+enum BlockingWriteResult {
+    CancelledBeforeWrite,
+    Completed(io::Result<()>),
 }
 
 #[repr(u8)]
