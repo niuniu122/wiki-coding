@@ -2,7 +2,7 @@
 
 ## Overview
 
-The product proceeds through fourteen vertical, verifiable boundaries. Eight completed v1 phases established the Rust runtime, safe tools, Vault/Wiki, hybrid retrieval, release cutover, and subprocess sandbox; the completed v2 phase added a read-only capability workspace. v3.0 Rust Convergence now moves authority in five ordered slices: establish Rust-only execution and state boundaries, replace TypeScript verification, preserve fixture-based compatibility and migration, reduce npm to a no-fallback native launcher, and only then delete the inert TypeScript tree before refreshing final hosted evidence.
+The product proceeds through fifteen vertical, verifiable boundaries. Eight completed v1 phases established the Rust runtime, safe tools, Vault/Wiki, hybrid retrieval, release cutover, and subprocess sandbox; the completed v2 phase added a read-only capability workspace. v3.0 Rust Convergence completed five ordered authority slices from Rust-only execution through hosted closure. v3.1 now adds one bounded full-access Shell phase so users can run one-shot and interactive native commands without creating a second runtime.
 
 ## Phases
 
@@ -20,6 +20,7 @@ The product proceeds through fourteen vertical, verifiable boundaries. Eight com
 - [x] **Phase 12: Fixture Compatibility and Rust Migration** - Verify compatibility and TypeScript-era upgrades from immutable fixtures without building or executing the legacy runtime. (completed 2026-07-18)
 - [x] **Phase 13: Thin npm and Native Release** - Ship one no-fallback npm command that launches a verified platform Rust binary and rejects invalid packages before release. (completed 2026-07-18)
 - [x] **Phase 14: TypeScript Removal and Hosted Closure** - Delete the inert TypeScript implementation, converge CI and documentation, and bind final Windows/Linux evidence to one product fingerprint. (completed 2026-07-18)
+- [ ] **Phase 15: Full Access Shell** - Run one-shot and interactive native Shell commands only in process-scoped full-access, with bounded output and reliable cleanup.
 
 ## Phase Details
 
@@ -214,6 +215,7 @@ Plans:
 | 12. Fixture Compatibility and Rust Migration | 4/4 | Complete    | 2026-07-18 |
 | 13. Thin npm and Native Release | 3/3 | Complete    | 2026-07-18 |
 | 14. TypeScript Removal and Hosted Closure | 3/3 | Complete    | 2026-07-18 |
+| 15. Full Access Shell | 0/1 | Ready | - |
 
 ### Phase 7: Close milestone integration gaps
 
@@ -428,3 +430,22 @@ Plans:
 - [x] 14-01: Delete replaced TypeScript source, tests, configuration, and legacy references
 - [x] 14-02: Make permanent source, CI, release, and product-fingerprint gates enforce the Rust-only tree
 - [x] 14-03: Finalize Rust-only docs, freeze the final fingerprint/intake, collect hosted Windows/Linux evidence, and close v3.0
+
+### Phase 15: Full Access Shell
+
+**Goal:** Users can directly run one-shot and interactive native Shell commands during process-scoped `full-access`, while `confirm` remains unable to advertise or execute those commands.
+**Requirements**: SHELL-01, SHELL-02, SHELL-03, SHELL-04, SHELL-05, SHELL-06, SHELL-07
+**Depends on:** Phase 14
+**Success Criteria** (what must be TRUE):
+
+  1. In `full-access`, the model sees and can invoke exactly `shell_command` and `shell_session` in addition to the existing tools without a per-command confirmation; in `confirm`, neither tool is advertised and a forged call reaches neither approval nor process execution.
+  2. A user can run an arbitrary one-shot command with an optional working directory through PowerShell/ConPTY on Windows or the configured native Shell/PTY path on Linux and receive a stable structured result.
+  3. A command that continues running returns a process-scoped session ID whose new output can be polled without duplication, whose stdin can be written and submitted, and whose process tree can be explicitly stopped.
+  4. Session count, command, working-directory, input, unread-output, aggregate-output, and per-result limits fail predictably, while safe traces expose only bounded metadata and never command, input, working-directory, or output bodies.
+  5. Cancellation before ID delivery, permission downgrade, explicit stop, and normal application exit clean up the complete tested process tree; Windows/Linux PTY tests, TUI output, public contracts, documentation, and CI prove the Rust-only behavior without Pi, Node/TypeScript, tmux, or an external terminal runtime.
+
+**Plans:** 0/1 plans executed
+
+Plans:
+
+- [ ] `docs/superpowers/plans/2026-07-21-full-access-shell.md`: Implement and verify the full-access Shell contract

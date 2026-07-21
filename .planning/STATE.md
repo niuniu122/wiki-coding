@@ -2,13 +2,16 @@
 gsd_state_version: 1.0
 milestone: v3.1
 milestone_name: Full Access Shell
-status: planning
-last_updated: "2026-07-21T08:37:35.345Z"
+current_phase: 15
+current_phase_name: Full Access Shell
+status: ready
+stopped_at: Phase 15 ready for implementation
+last_updated: "2026-07-21T08:46:56.655Z"
 last_activity: 2026-07-21
 progress:
-  total_phases: 0
+  total_phases: 1
   completed_phases: 0
-  total_plans: 0
+  total_plans: 1
   completed_plans: 0
   percent: 0
 ---
@@ -17,16 +20,16 @@ progress:
 
 ## Project Reference
 
-See: `.planning/PROJECT.md` (updated 2026-07-18)
+See: `.planning/PROJECT.md` (updated 2026-07-21)
 
 **Core value:** A non-programmer can safely find the right open-source capability or project and complete work in one recoverable local CLI.
 
 ## Current Position
 
-Phase: Not started (defining requirements)
-Plan: —
-Status: Defining requirements
-Last activity: 2026-07-21 — Milestone v3.1 started
+Phase: 15 of 15 (Full Access Shell)
+Plan: 0 of 1
+Status: Ready to execute
+Last activity: 2026-07-21 - Phase 15 roadmap and implementation plan approved
 
 ## Superseded Evidence
 
@@ -48,6 +51,9 @@ Last activity: 2026-07-21 — Milestone v3.1 started
 
 - Rust is the sole supported product entry; `minimax-codex` reaches only the fixed native launcher and no legacy command is exposed.
 - Permissions are exactly `confirm` and process-scoped `full-access`; all hard safety gates remain active.
+- Arbitrary Shell is exposed through exactly `shell_command` and `shell_session` only in `full-access`; forged confirm-mode calls are rejected before approval or execution.
+- Shell sessions are process-scoped native PTYs with fixed resource bounds and shared cleanup on stop, permission downgrade, cancellation before ID delivery, and normal shutdown.
+- Pi remains a design reference only; the Shell implementation stays Rust-only without Node/TypeScript, tmux, or an external terminal runtime.
 - The product uses one project-bound Obsidian-compatible Vault and no SQLite.
 - Raw terminal sessions finalize before the separate pinned-main-model Wiki workflow.
 - Open-source project discovery is BM25-first; optional verified embedding reranks only BM25 candidates.
@@ -162,6 +168,6 @@ Phase 14-01 performed the planned repository TypeScript/TSX source deletion. No 
 
 ## Session
 
-**Last session:** 2026-07-18T09:56:01.005Z
-**Stopped at:** Completed 14-03-PLAN.md
-**Resume file:** None
+**Last session:** 2026-07-21
+**Stopped at:** Phase 15 ready for implementation
+**Resume file:** `docs/superpowers/plans/2026-07-21-full-access-shell.md`
