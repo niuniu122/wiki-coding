@@ -134,6 +134,18 @@
 - [x] **RCUT-02**: Windows x64 MSVC and Linux x64 GNU pass Rust tests, evaluations, packaging, installed smoke, checksum, upgrade/rollback, security, license, and performance gates against one final product fingerprint.
 - [x] **RCUT-03**: User and maintainer documentation describes Rust-only architecture, npm/native installation, supported platforms, no-fallback failures, migration/rollback, and the two-release compatibility window.
 
+## v3.1 Requirements
+
+### Full Access Shell
+
+- [ ] **SHELL-01**: A user in `full-access` can offer and invoke exactly the `shell_command` and `shell_session` model tools, while `confirm` neither advertises them nor permits a forged Shell call to reach approval or execution.
+- [ ] **SHELL-02**: A user can run an arbitrary one-shot command with an optional working directory through PowerShell on Windows or the configured absolute login shell with safe fallbacks on Linux.
+- [ ] **SHELL-03**: A command that outlives its initial yield returns a stable process-scoped session ID and preserves bounded incremental PTY output for later reads.
+- [ ] **SHELL-04**: A user can poll a running Shell session, write bounded stdin to it, or explicitly stop it and receive one stable structured receipt for every action.
+- [ ] **SHELL-05**: Shell execution enforces the fixed session-count, unread-output, aggregate-output, command, working-directory, input, and per-result limits without recording command text or output in safe traces.
+- [ ] **SHELL-06**: Permission downgrade, cancellation, normal application exit, and explicit stop interrupt and then terminate the complete child process tree within bounded cleanup waits.
+- [ ] **SHELL-07**: Windows and Linux tests, TUI status, public tool contracts, documentation, and CI prove the full-access Shell behavior without adding Pi, Node/TypeScript, tmux, or an external terminal runtime.
+
 ## Future Requirements
 
 ### Extensions
@@ -151,7 +163,7 @@
 | Application-layer Vault encryption | Obsidian-readable files are protected by OS controls |
 | Bundled embedding model | Base distribution must remain small and functional without it |
 | Automatic project/Skill/MCP installation or execution | Discovery does not grant authority; a later milestone must design confirmation, provenance, rollback, and sandboxing |
-| General plugins, subagents, or unrestricted shell | Outside this milestone's read-only capability-workspace contract |
+| General plugins, model subagents, or background daemons | Separate execution surfaces that are not required for direct full-access Shell support |
 
 ## Traceability
 
@@ -231,15 +243,23 @@
 | RCUT-01 | Phase 14 | Complete |
 | RCUT-02 | Phase 14 | Complete |
 | RCUT-03 | Phase 14 | Complete |
+| SHELL-01 | Phase 15 | Pending |
+| SHELL-02 | Phase 15 | Pending |
+| SHELL-03 | Phase 15 | Pending |
+| SHELL-04 | Phase 15 | Pending |
+| SHELL-05 | Phase 15 | Pending |
+| SHELL-06 | Phase 15 | Pending |
+| SHELL-07 | Phase 15 | Pending |
 
 **Coverage:**
 
 - v1 requirements: 52 complete
 - v2.0 requirements: 8 complete
 - v3.0 requirements: 14 complete
-- Mapped to phases: 74
+- v3.1 requirements: 7 pending
+- Mapped to phases: 81
 - Unmapped: 0
 
 ---
 *Requirements defined: 2026-07-15*
-*Last updated: 2026-07-18 after completing and verifying the v3.0 Rust Convergence milestone implementation*
+*Last updated: 2026-07-21 when defining milestone v3.1 Full Access Shell*
