@@ -27,7 +27,14 @@ pub use process::{
     SandboxCapability, SandboxCapabilityState, SandboxLaunchReceipt, TokioProcessLauncher,
 };
 pub use read::{ListDirectoryTool, ReadFileTool};
-pub use shell::{ShellOutputBudget, ShellOutputBuffer, ShellOutputChunk};
+pub use shell::{
+    DEFAULT_COMMAND_YIELD, DEFAULT_POLL_YIELD, DEFAULT_WRITE_YIELD, MAX_RUNNING_SHELL_SESSIONS,
+    MAX_TERMINAL_SHELL_RECEIPTS, PtyBackend, PtyChild, PtyGuard, PtyTerminateFuture,
+    ShellCleanupError, ShellCommandRequest, ShellManagerError, ShellOutputBudget,
+    ShellOutputBuffer, ShellOutputChunk, ShellPollRequest, ShellSessionIdSource,
+    ShellSessionManager, ShellSpawnRequest, ShellWriteRequest, SpawnedPty, SystemShellClock,
+    TERMINAL_RECEIPT_TTL,
+};
 pub use write::{ApplyPatchTool, WriteFileTool};
 
 /// Human-readable boundary used by architecture checks and documentation.
