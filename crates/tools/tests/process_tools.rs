@@ -554,42 +554,6 @@ async fn production_full_access_explicitly_keeps_the_direct_process_path() {
     assert_eq!(result.status, ToolTerminalStatus::Succeeded, "{result:?}");
 }
 
-#[tokio::test]
-async fn bounded_diagnostic_production_child_still_uses_tree_cleanup_on_cancellation() {
-    let fixture = Fixture::new();
-    must(std::fs::create_dir(fixture.path("src")));
-    must(std::fs::write(
-        fixture.path("Cargo.toml"),
-        "[package]\nname = \"slow-diagnostic-fixture\"\nversion = \"0.0.0\"\nedition = \"2024\"\n",
-    ));
-    let mut source = String::with_capacity(8 * 1_024 * 1_024);
-    for index in 0..200_000 {
-        source.push_str(&format!("pub fn diagnostic_{index}() {{}}\n"));
-    }
-    must(std::fs::write(fixture.path("src/lib.rs"), source));
-
-    let result = RunDiagnosticTool::production()
-        .execute_with_policy(
-            &fixture.workspace,
-            &invocation("run_diagnostic", json!({"action": "cargo_fmt_check"})),
-            ToolSandboxPolicy::Disabled,
-            &TimedCancellation(Duration::from_millis(10)),
-        )
-        .await;
-
-    assert!(
-        matches!(
-            result.status,
-            ToolTerminalStatus::Cancelled | ToolTerminalStatus::Indeterminate
-        ),
-        "{result:?}"
-    );
-    assert!(matches!(
-        result.code.as_str(),
-        "cancelled" | "cleanup_unknown"
-    ));
-}
-
 struct UnavailableSandboxLauncher {
     starts: Arc<AtomicUsize>,
 }

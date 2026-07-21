@@ -29,27 +29,14 @@ impl PtyBackend for NativePtyBackend {
         let mut command = CommandBuilder::new(&resolved.program);
         command.args(&resolved.args);
         command.cwd(&request.cwd);
-        let mut child = pair.slave.spawn_command(command).map_err(pty_error)?;
+        let (mut child, reader, writer) = acquire_handles_then_spawn(
+            || pair.master.try_clone_reader().map_err(pty_error),
+            || pair.master.take_writer().map_err(pty_error),
+            || pair.slave.spawn_command(command).map_err(pty_error),
+        )?;
         drop(pair.slave);
 
-        let Some(process_id) = child.process_id() else {
-            let _ = child.kill();
-            return Err(io::Error::other("PTY child did not expose a process ID"));
-        };
-        let reader = match pair.master.try_clone_reader() {
-            Ok(reader) => reader,
-            Err(error) => {
-                let _ = child.kill();
-                return Err(pty_error(error));
-            }
-        };
-        let writer = match pair.master.take_writer() {
-            Ok(writer) => writer,
-            Err(error) => {
-                let _ = child.kill();
-                return Err(pty_error(error));
-            }
-        };
+        let process_id = process_id_or_cleanup(child.as_mut())?;
 
         Ok(SpawnedPty {
             child: Box::new(NativePtyChild { child, process_id }),
@@ -217,20 +204,47 @@ fn resolve_native_shell(command: &str) -> io::Result<ResolvedShell> {
 
 #[cfg(target_os = "linux")]
 fn resolve_native_shell(command: &str) -> io::Result<ResolvedShell> {
-    use std::os::unix::fs::PermissionsExt as _;
-
     let requested_shell = std::env::var_os("SHELL").map(PathBuf::from);
     resolve_linux_shell(
         command,
         requested_shell.as_deref(),
         Path::new("/bin/bash"),
         Path::new("/bin/sh"),
-        |candidate| {
-            candidate.metadata().is_ok_and(|metadata| {
-                metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
-            })
-        },
+        is_executable_for_current_process,
     )
+}
+
+#[cfg(target_os = "linux")]
+fn is_executable_for_current_process(path: &Path) -> bool {
+    let test_programs = [Path::new("/usr/bin/test"), Path::new("/bin/test")];
+    is_executable_with_x_ok(path, &test_programs, |program, candidate| {
+        std::process::Command::new(program)
+            .arg("-x")
+            .arg(candidate)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .map(|status| status.success())
+    })
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn is_executable_with_x_ok(
+    path: &Path,
+    test_programs: &[&Path],
+    check_x_ok: impl Fn(&Path, &Path) -> io::Result<bool>,
+) -> bool {
+    if !path.is_file() {
+        return false;
+    }
+    for program in test_programs.iter().copied().filter(|path| path.is_file()) {
+        match check_x_ok(program, path) {
+            Ok(executable) => return executable,
+            Err(_) => continue,
+        }
+    }
+    false
 }
 
 #[cfg(not(any(windows, target_os = "linux")))]
@@ -245,13 +259,201 @@ fn pty_error(error: impl std::fmt::Display) -> io::Error {
     io::Error::other(error.to_string())
 }
 
+fn acquire_handles_then_spawn<Child, Reader, Writer>(
+    acquire_reader: impl FnOnce() -> io::Result<Reader>,
+    acquire_writer: impl FnOnce() -> io::Result<Writer>,
+    spawn: impl FnOnce() -> io::Result<Child>,
+) -> io::Result<(Child, Reader, Writer)> {
+    let reader = acquire_reader()?;
+    let writer = acquire_writer()?;
+    let child = spawn()?;
+    Ok((child, reader, writer))
+}
+
+fn process_id_or_cleanup(child: &mut (dyn portable_pty::Child + Send + Sync)) -> io::Result<u32> {
+    if let Some(process_id) = child.process_id() {
+        return Ok(process_id);
+    }
+
+    let kill_error = child.kill().err();
+    let wait_error = child.wait().err();
+    let cleanup = match (kill_error, wait_error) {
+        (None, None) => "direct kill and wait completed".to_owned(),
+        (Some(kill), None) => format!("direct kill failed: {kill}; wait completed"),
+        (None, Some(wait)) => format!("direct kill completed; wait failed: {wait}"),
+        (Some(kill), Some(wait)) => {
+            format!("direct kill failed: {kill}; wait failed: {wait}")
+        }
+    };
+    Err(io::Error::other(format!(
+        "PTY child did not expose a process ID; {cleanup}"
+    )))
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+    use std::io::{self, Cursor};
     use std::path::{Path, PathBuf};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
-    use super::{ProcessShellSessionIds, resolve_linux_shell, resolve_windows_shell};
+    use super::{
+        ProcessShellSessionIds, acquire_handles_then_spawn, is_executable_with_x_ok,
+        process_id_or_cleanup, resolve_linux_shell, resolve_windows_shell,
+    };
     use crate::shell::{ShellManagerError, ShellSessionIdSource};
+
+    #[test]
+    fn native_startup_acquires_both_fallible_master_handles_before_spawn() {
+        type HandleResult = io::Result<((), Cursor<Vec<u8>>, Cursor<Vec<u8>>)>;
+
+        let spawn_count = AtomicUsize::new(0);
+        let reader_failure: HandleResult = acquire_handles_then_spawn(
+            || Err(io::Error::other("reader acquisition failed")),
+            || Ok(Cursor::new(Vec::new())),
+            || {
+                spawn_count.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+        );
+        assert_eq!(
+            reader_failure
+                .expect_err("reader acquisition must fail")
+                .kind(),
+            io::ErrorKind::Other
+        );
+
+        let writer_failure: HandleResult = acquire_handles_then_spawn(
+            || Ok(Cursor::new(Vec::new())),
+            || Err(io::Error::other("writer acquisition failed")),
+            || {
+                spawn_count.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+        );
+        assert_eq!(
+            writer_failure
+                .expect_err("writer acquisition must fail")
+                .kind(),
+            io::ErrorKind::Other
+        );
+        assert_eq!(
+            spawn_count.load(Ordering::SeqCst),
+            0,
+            "no child may be spawned until both fallible master handles exist"
+        );
+    }
+
+    #[derive(Debug)]
+    struct MissingPidChild {
+        kills: Arc<AtomicUsize>,
+        waits: Arc<AtomicUsize>,
+    }
+
+    impl portable_pty::ChildKiller for MissingPidChild {
+        fn kill(&mut self) -> io::Result<()> {
+            self.kills.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn clone_killer(&self) -> Box<dyn portable_pty::ChildKiller + Send + Sync> {
+            Box::new(Self {
+                kills: Arc::clone(&self.kills),
+                waits: Arc::clone(&self.waits),
+            })
+        }
+    }
+
+    impl portable_pty::Child for MissingPidChild {
+        fn try_wait(&mut self) -> io::Result<Option<portable_pty::ExitStatus>> {
+            Ok(None)
+        }
+
+        fn wait(&mut self) -> io::Result<portable_pty::ExitStatus> {
+            self.waits.fetch_add(1, Ordering::SeqCst);
+            Ok(portable_pty::ExitStatus::with_exit_code(1))
+        }
+
+        fn process_id(&self) -> Option<u32> {
+            None
+        }
+
+        #[cfg(windows)]
+        fn as_raw_handle(&self) -> Option<std::os::windows::io::RawHandle> {
+            None
+        }
+    }
+
+    #[test]
+    fn native_startup_missing_process_id_directly_kills_and_waits() {
+        let kills = Arc::new(AtomicUsize::new(0));
+        let waits = Arc::new(AtomicUsize::new(0));
+        let mut child = MissingPidChild {
+            kills: Arc::clone(&kills),
+            waits: Arc::clone(&waits),
+        };
+
+        let error = process_id_or_cleanup(&mut child).expect_err("missing PID must fail startup");
+
+        assert_eq!(error.kind(), io::ErrorKind::Other);
+        assert_eq!(kills.load(Ordering::SeqCst), 1);
+        assert_eq!(waits.load(Ordering::SeqCst), 1);
+    }
+
+    #[test]
+    fn linux_x_ok_result_controls_production_executability_instead_of_mode_bits() {
+        let fixture = tempfile::tempdir().expect("x-ok fixture");
+        let test_program = fixture.path().join("test");
+        let candidate = fixture.path().join("candidate-shell");
+        std::fs::write(&test_program, []).expect("test program fixture");
+        std::fs::write(&candidate, []).expect("candidate fixture");
+        let calls = AtomicUsize::new(0);
+
+        let executable =
+            is_executable_with_x_ok(&candidate, &[test_program.as_path()], |program, path| {
+                calls.fetch_add(1, Ordering::SeqCst);
+                assert_eq!(program, test_program);
+                assert_eq!(path, candidate);
+                Ok(false)
+            });
+
+        assert!(!executable, "a denied X_OK check must remain denied");
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_x_ok_rejects_an_owned_file_with_only_other_execute_permission() {
+        use std::os::unix::fs::PermissionsExt as _;
+
+        let fixture = tempfile::tempdir().expect("x-ok fixture");
+        let candidate = fixture.path().join("candidate-shell");
+        std::fs::write(&candidate, b"#!/bin/sh\nexit 0\n").expect("candidate fixture");
+        let mut permissions = std::fs::metadata(&candidate)
+            .expect("candidate metadata")
+            .permissions();
+        permissions.set_mode(0o001);
+        std::fs::set_permissions(&candidate, permissions).expect("candidate permissions");
+        assert_ne!(
+            std::fs::metadata(&candidate)
+                .expect("candidate metadata")
+                .permissions()
+                .mode()
+                & 0o111,
+            0,
+            "the fixture must defeat a naive any-execute-bit check"
+        );
+
+        let current_uid = std::process::Command::new("/usr/bin/id")
+            .arg("-u")
+            .output()
+            .expect("current uid");
+        if current_uid.stdout == b"0\n" {
+            return;
+        }
+        assert!(!super::is_executable_for_current_process(&candidate));
+    }
 
     #[test]
     fn native_shell_resolution_windows_prefers_pwsh_then_powershell_and_never_cmd() {

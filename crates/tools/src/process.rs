@@ -349,9 +349,48 @@ impl ProcessLauncher for TokioProcessLauncher {
             stdout_closed: false,
             stderr_closed: false,
             exit_emitted: false,
-            process_id,
+            process_tree: TokioProcessTree::system(process_id),
             _sandbox_home: sandbox_home,
         }))
+    }
+}
+
+trait ProcessTreeTerminator: Send + Sync {
+    fn terminate<'a>(&'a self, process_id: u32) -> ChildStopFuture<'a>;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+struct SystemProcessTreeTerminator;
+
+impl ProcessTreeTerminator for SystemProcessTreeTerminator {
+    fn terminate<'a>(&'a self, process_id: u32) -> ChildStopFuture<'a> {
+        Box::pin(terminate_process_tree(process_id))
+    }
+}
+
+struct TokioProcessTree {
+    process_id: u32,
+    terminator: Arc<dyn ProcessTreeTerminator>,
+}
+
+impl TokioProcessTree {
+    fn system(process_id: u32) -> Self {
+        Self {
+            process_id,
+            terminator: Arc::new(SystemProcessTreeTerminator),
+        }
+    }
+
+    #[cfg(test)]
+    fn new_with_terminator(process_id: u32, terminator: Arc<dyn ProcessTreeTerminator>) -> Self {
+        Self {
+            process_id,
+            terminator,
+        }
+    }
+
+    async fn terminate(&self) -> std::io::Result<()> {
+        self.terminator.terminate(self.process_id).await
     }
 }
 
@@ -362,7 +401,7 @@ struct TokioDirectChild {
     stdout_closed: bool,
     stderr_closed: bool,
     exit_emitted: bool,
-    process_id: u32,
+    process_tree: TokioProcessTree,
     _sandbox_home: Option<tempfile::TempDir>,
 }
 
@@ -405,7 +444,7 @@ impl DirectChild for TokioDirectChild {
 
     fn terminate_and_wait<'a>(&'a mut self) -> ChildStopFuture<'a> {
         Box::pin(async move {
-            let tree_result = terminate_process_tree(self.process_id).await;
+            let tree_result = self.process_tree.terminate().await;
             let _ = self.child.start_kill();
             let wait_result = self.child.wait().await;
             self.exit_emitted = true;
@@ -1028,6 +1067,43 @@ pub(crate) fn normalized_relative(path: &Path) -> String {
 
 fn strings(values: &[&str]) -> Vec<String> {
     values.iter().map(|value| (*value).to_owned()).collect()
+}
+
+#[cfg(test)]
+mod termination_delegation_tests {
+    use std::sync::{Arc, Mutex};
+
+    use super::*;
+
+    #[derive(Default)]
+    struct RecordingTerminator {
+        process_ids: Mutex<Vec<u32>>,
+    }
+
+    impl ProcessTreeTerminator for RecordingTerminator {
+        fn terminate<'a>(&'a self, process_id: u32) -> ChildStopFuture<'a> {
+            Box::pin(async move {
+                self.process_ids
+                    .lock()
+                    .expect("recording terminator")
+                    .push(process_id);
+                Ok(())
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn tokio_direct_child_tree_termination_delegates_once_with_the_exact_pid() {
+        let terminator = Arc::new(RecordingTerminator::default());
+        let process_tree = TokioProcessTree::new_with_terminator(42_424, terminator.clone());
+
+        process_tree.terminate().await.expect("tree termination");
+
+        assert_eq!(
+            *terminator.process_ids.lock().expect("recorded process IDs"),
+            [42_424]
+        );
+    }
 }
 
 #[cfg(test)]
