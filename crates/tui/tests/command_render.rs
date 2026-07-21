@@ -5,8 +5,9 @@ use std::io;
 use minimax_protocol::{
     DiagnosticCode, IndexDomain, IndexStatusRecord, RetrievalDegradedReason, RetrievalExplanation,
     RetrievalHitRecord, RetrievalMode, RetrievalResponse, RuntimeEvent, RuntimeEventV1,
-    RuntimeTerminalOutcome, SchemaVersion, ToolCall, ToolCallId, ToolEffect, ToolInvocation,
-    ToolResult, ToolTerminalStatus, TraceCode, TraceEntry,
+    RuntimeTerminalOutcome, SchemaVersion, ShellReceipt, ShellSessionId, ShellSessionState,
+    ToolCall, ToolCallId, ToolEffect, ToolInvocation, ToolResult, ToolTerminalStatus, TraceCode,
+    TraceEntry,
 };
 use minimax_tui::{
     CommandAvailability, CommandIntent, EventRenderer, InteractiveShell, ParsedInput,
@@ -189,6 +190,77 @@ fn approval_and_tool_result_rendering_is_bounded_normalized_and_identified() {
     assert!(rendered.contains("call=call-render"));
     assert!(rendered.contains("status=Succeeded"));
     assert!(!rendered.contains('\u{1b}'));
+}
+
+#[test]
+fn valid_shell_receipts_render_as_readable_terminal_summaries() {
+    let running = shell_result(ShellReceipt {
+        session_id: ShellSessionId::new("shell-abcd-0001").expect("session ID"),
+        state: ShellSessionState::Running,
+        exit_code: None,
+        output: "server listening on 3000\n".to_owned(),
+        output_truncated: false,
+    });
+    assert_eq!(
+        EventRenderer::tool_result(&running),
+        "shell | session=shell-abcd-0001 | state=running | exit=none | truncated=false\nserver listening on 3000\n"
+    );
+
+    let exited = shell_result(ShellReceipt {
+        session_id: ShellSessionId::new("shell-abcd-0002").expect("session ID"),
+        state: ShellSessionState::Exited,
+        exit_code: Some(7),
+        output: "failed\n".to_owned(),
+        output_truncated: false,
+    });
+    assert!(
+        EventRenderer::tool_result(&exited)
+            .starts_with("shell | session=shell-abcd-0002 | state=exited | exit=7")
+    );
+
+    let truncated = shell_result(ShellReceipt {
+        session_id: ShellSessionId::new("shell-abcd-0003").expect("session ID"),
+        state: ShellSessionState::Running,
+        exit_code: None,
+        output: "latest output".to_owned(),
+        output_truncated: true,
+    });
+    assert!(EventRenderer::tool_result(&truncated).contains("truncated=true"));
+}
+
+#[test]
+fn malformed_shell_json_falls_back_to_generic_rendering_and_output_is_bounded() {
+    let malformed = ToolResult {
+        schema_version: SchemaVersion,
+        call_id: ToolCallId::new("call-shell-malformed").expect("call ID"),
+        tool_name: "shell_command".to_owned(),
+        status: ToolTerminalStatus::Failed,
+        code: "shell_launch_failed".to_owned(),
+        output: Some("{not-json".to_owned()),
+    };
+    let fallback = EventRenderer::tool_result(&malformed);
+    assert!(fallback.starts_with("tool result | call=call-shell-malformed"));
+    assert!(fallback.contains("output={not-json"));
+
+    let bounded = shell_result(ShellReceipt {
+        session_id: ShellSessionId::new("shell-abcd-0004").expect("session ID"),
+        state: ShellSessionState::Running,
+        exit_code: None,
+        output: "x".repeat(20_000),
+        output_truncated: false,
+    });
+    assert!(EventRenderer::tool_result(&bounded).chars().count() <= 16_001);
+}
+
+fn shell_result(receipt: ShellReceipt) -> ToolResult {
+    ToolResult {
+        schema_version: SchemaVersion,
+        call_id: ToolCallId::new("call-shell-render").expect("call ID"),
+        tool_name: "shell_command".to_owned(),
+        status: ToolTerminalStatus::Succeeded,
+        code: "shell_running".to_owned(),
+        output: Some(serde_json::to_string(&receipt).expect("receipt JSON")),
+    }
 }
 
 #[test]

@@ -1,5 +1,7 @@
 # Phase 8: Codex-style subprocess sandbox hardening — Specification
 
+> **Supersession note (2026-07-21):** Phase 8's fixed-tool-only statement remains historical evidence for the completed Phase 8 scope. For the new `shell_command` and `shell_session` tools only, it is superseded by `docs/superpowers/specs/2026-07-21-full-access-shell-design.md`, which permits arbitrary host Shell commands exclusively in process-scoped `full-access`. The original eight tools retain the Phase 8 contract.
+
 **Created:** 2026-07-17
 **Ambiguity score:** 0.08 (gate: <= 0.20)
 **Requirements:** 7 locked

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, mpsc};
 use std::thread;
 use std::time::Duration;
@@ -109,6 +109,7 @@ struct ShellSession {
     cleanup_started: bool,
     cleanup_result: Option<Result<(), ShellManagerError>>,
     cleanup_notify: Arc<tokio::sync::Notify>,
+    terminal_handshake_failed: Arc<AtomicBool>,
     slot_release_deferred: bool,
     exit_code: Option<i32>,
     terminal_at_unix_ms: Option<u64>,
@@ -236,6 +237,7 @@ impl ShellSessionManager {
                 request.yield_time,
                 request.max_output_bytes,
                 cancellation,
+                false,
             )
             .await
         {
@@ -262,6 +264,7 @@ impl ShellSessionManager {
             request.yield_time,
             request.max_output_bytes,
             cancellation,
+            true,
         )
         .await
     }
@@ -372,6 +375,7 @@ impl ShellSessionManager {
                 request.yield_time,
                 request.max_output_bytes,
                 cancellation,
+                true,
             )
             .await
         {
@@ -487,11 +491,15 @@ impl ShellSessionManager {
             &self.output_budget,
         ))));
         let reader_output = Arc::clone(&output);
+        let reader_writer = Arc::clone(&writer);
+        let terminal_handshake_failed = Arc::new(AtomicBool::new(false));
+        let reader_handshake_failed = Arc::clone(&terminal_handshake_failed);
         let (reader_done_tx, reader_done) = mpsc::sync_channel(1);
         let reader = self.reader_spawner.spawn(
             format!("shell-reader-{process_id}"),
             Box::new(move || {
                 let mut chunk = [0_u8; READER_CHUNK_BYTES];
+                let mut terminal_query = Vec::new();
                 loop {
                     match reader.read(&mut chunk) {
                         Ok(0) => {
@@ -501,9 +509,21 @@ impl ShellSessionManager {
                             break;
                         }
                         Ok(read) => {
+                            let handshake = respond_to_terminal_cursor_queries(
+                                &chunk[..read],
+                                &mut terminal_query,
+                                &reader_writer,
+                            );
                             if let Ok(mut output) = reader_output.lock() {
                                 output.append(&chunk[..read]);
+                                if handshake.is_err() {
+                                    output.finish();
+                                }
                             } else {
+                                break;
+                            }
+                            if handshake.is_err() {
+                                reader_handshake_failed.store(true, Ordering::Release);
                                 break;
                             }
                         }
@@ -523,6 +543,7 @@ impl ShellSessionManager {
             child: Arc::clone(&child),
             writer: Arc::clone(&writer),
             output: Arc::clone(&output),
+            terminal_handshake_failed: Arc::clone(&terminal_handshake_failed),
             reader,
             reader_done,
             guard: None,
@@ -558,11 +579,21 @@ impl ShellSessionManager {
         yield_time: Duration,
         max_output_bytes: usize,
         cancellation: &dyn CancellationPort,
+        return_on_output: bool,
     ) -> Result<ShellReceipt, ShellManagerError> {
         let deadline = tokio::time::Instant::now() + yield_time;
         loop {
             if cancellation.is_cancelled() {
                 return Err(ShellManagerError::Cancelled);
+            }
+            let terminal_handshake_failed = session
+                .lock()
+                .map_err(|_| ShellManagerError::Io)?
+                .terminal_handshake_failed
+                .load(Ordering::Acquire);
+            if terminal_handshake_failed {
+                self.ensure_cleanup(&session).await?;
+                return Err(ShellManagerError::Io);
             }
             if self.refresh_session(&session).await.is_err() {
                 self.ensure_cleanup(&session).await?;
@@ -582,7 +613,7 @@ impl ShellSessionManager {
                 self.ensure_cleanup(&session).await?;
                 return self.receipt(&session, max_output_bytes);
             }
-            if has_output || tokio::time::Instant::now() >= deadline {
+            if (return_on_output && has_output) || tokio::time::Instant::now() >= deadline {
                 return self.receipt(&session, max_output_bytes);
             }
 
@@ -1004,6 +1035,7 @@ struct OwnedSessionResources {
     child: Arc<StdMutex<Box<dyn PtyChild>>>,
     writer: Arc<StdMutex<Box<dyn Write + Send>>>,
     output: Arc<StdMutex<ShellOutputBuffer>>,
+    terminal_handshake_failed: Arc<AtomicBool>,
     reader: Option<thread::JoinHandle<()>>,
     reader_done: Option<mpsc::Receiver<()>>,
     guard: Option<Box<dyn PtyGuard>>,
@@ -1025,6 +1057,7 @@ impl OwnedSessionResources {
             cleanup_started: false,
             cleanup_result: None,
             cleanup_notify: Arc::new(tokio::sync::Notify::new()),
+            terminal_handshake_failed: self.terminal_handshake_failed,
             slot_release_deferred: false,
             exit_code: None,
             terminal_at_unix_ms: None,
@@ -1076,6 +1109,35 @@ fn validate_command_request(request: &ShellCommandRequest) -> Result<(), ShellMa
     validate_yield_and_output(request.yield_time, request.max_output_bytes)
 }
 
+fn respond_to_terminal_cursor_queries(
+    chunk: &[u8],
+    pending: &mut Vec<u8>,
+    writer: &Arc<StdMutex<Box<dyn Write + Send>>>,
+) -> io::Result<()> {
+    const CURSOR_QUERY: &[u8] = b"\x1b[6n";
+    const CURSOR_RESPONSE: &[u8] = b"\x1b[1;1R";
+
+    for &byte in chunk {
+        if CURSOR_QUERY.get(pending.len()).copied() == Some(byte) {
+            pending.push(byte);
+            if pending.len() == CURSOR_QUERY.len() {
+                let mut writer = writer
+                    .lock()
+                    .map_err(|_| io::Error::other("PTY writer poisoned"))?;
+                writer.write_all(CURSOR_RESPONSE)?;
+                writer.flush()?;
+                pending.clear();
+            }
+        } else {
+            pending.clear();
+            if byte == CURSOR_QUERY[0] {
+                pending.push(byte);
+            }
+        }
+    }
+    Ok(())
+}
+
 fn validate_write_request(request: &ShellWriteRequest) -> Result<(), ShellManagerError> {
     if (request.input.is_empty() && !request.submit) || request.input.len() > MAX_SHELL_INPUT_BYTES
     {
@@ -1095,5 +1157,102 @@ fn validate_yield_and_output(
         Err(ShellManagerError::InvalidArguments)
     } else {
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod terminal_handshake_tests {
+    use std::io::{self, Write};
+    use std::sync::{Arc, Mutex};
+
+    use super::respond_to_terminal_cursor_queries;
+
+    type SharedWriter = Arc<Mutex<Box<dyn Write + Send>>>;
+    type SharedBytes = Arc<Mutex<Vec<u8>>>;
+
+    #[derive(Clone)]
+    struct RecordingWriter {
+        bytes: Arc<Mutex<Vec<u8>>>,
+        fail: bool,
+    }
+
+    impl Write for RecordingWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            if self.fail {
+                return Err(io::Error::other("scripted handshake failure"));
+            }
+            self.bytes.lock().expect("recording writer").extend(bytes);
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            if self.fail {
+                Err(io::Error::other("scripted handshake failure"))
+            } else {
+                Ok(())
+            }
+        }
+    }
+
+    fn writer(fail: bool) -> (SharedWriter, SharedBytes) {
+        let bytes = Arc::new(Mutex::new(Vec::new()));
+        let writer = RecordingWriter {
+            bytes: Arc::clone(&bytes),
+            fail,
+        };
+        (Arc::new(Mutex::new(Box::new(writer))), bytes)
+    }
+
+    #[test]
+    fn complete_cursor_query_receives_one_fixed_response() {
+        let (writer, bytes) = writer(false);
+        let mut pending = Vec::new();
+
+        respond_to_terminal_cursor_queries(b"\x1b[6n", &mut pending, &writer)
+            .expect("cursor response");
+
+        assert!(pending.is_empty());
+        assert_eq!(&*bytes.lock().expect("recorded response"), b"\x1b[1;1R");
+    }
+
+    #[test]
+    fn split_and_adjacent_cursor_queries_are_each_answered() {
+        let (writer, bytes) = writer(false);
+        let mut pending = Vec::new();
+
+        respond_to_terminal_cursor_queries(b"prefix\x1b[", &mut pending, &writer)
+            .expect("partial cursor query");
+        assert!(bytes.lock().expect("recorded response").is_empty());
+        respond_to_terminal_cursor_queries(b"6n\x1b[6n", &mut pending, &writer)
+            .expect("completed cursor queries");
+
+        assert!(pending.is_empty());
+        assert_eq!(
+            &*bytes.lock().expect("recorded response"),
+            b"\x1b[1;1R\x1b[1;1R"
+        );
+    }
+
+    #[test]
+    fn ordinary_terminal_content_does_not_trigger_a_response() {
+        let (writer, bytes) = writer(false);
+        let mut pending = Vec::new();
+
+        respond_to_terminal_cursor_queries(b"hello [6n \x1b[31mred", &mut pending, &writer)
+            .expect("ordinary terminal content");
+
+        assert!(pending.is_empty());
+        assert!(bytes.lock().expect("recorded response").is_empty());
+    }
+
+    #[test]
+    fn cursor_response_write_failure_is_reported_to_the_reader() {
+        let (writer, _) = writer(true);
+        let mut pending = Vec::new();
+
+        let error = respond_to_terminal_cursor_queries(b"\x1b[6n", &mut pending, &writer)
+            .expect_err("handshake write failure must be visible");
+
+        assert_eq!(error.kind(), io::ErrorKind::Other);
     }
 }

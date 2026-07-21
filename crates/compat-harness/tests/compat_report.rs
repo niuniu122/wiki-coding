@@ -14,9 +14,9 @@ use minimax_compat_harness::{
     validate_migration_source_boundary, validate_migration_source_text, validate_product_entry,
     validate_report, validate_retrieval_source_boundary, validate_retrieval_source_text,
     validate_rust_command_surface, validate_rust_provider_profiles,
-    validate_rust_retrieval_evidence, validate_rust_tool_evidence, validate_rust_vault_evidence,
-    validate_ui_source_text, validate_vault_source_boundary, validate_vault_source_text,
-    verify_fixture_compatibility,
+    validate_rust_retrieval_evidence, validate_rust_shell_evidence, validate_rust_tool_evidence,
+    validate_rust_vault_evidence, validate_ui_source_text, validate_vault_source_boundary,
+    validate_vault_source_text, verify_fixture_compatibility,
 };
 
 #[test]
@@ -369,6 +369,8 @@ fn rust_command_permission_provider_and_product_baselines_are_executable() {
     validate_rust_command_surface(&manifests.commands).expect("complete Rust command surface");
     validate_rust_tool_evidence(&root, &manifests.public_contract)
         .expect("executable Rust tool evidence");
+    validate_rust_shell_evidence(&root, &manifests.public_contract)
+        .expect("executable Rust Shell evidence");
     validate_rust_vault_evidence(&root).expect("executable Rust Vault evidence");
     validate_rust_retrieval_evidence(&root).expect("executable Rust retrieval evidence");
     validate_rust_provider_profiles(&manifests.providers)
@@ -377,6 +379,47 @@ fn rust_command_permission_provider_and_product_baselines_are_executable() {
     assert_launcher_contract(&root);
     validate_cutover_candidate(&root, &manifests.public_contract)
         .expect("hosted cutover candidate prerequisites");
+}
+
+#[test]
+fn rust_shell_evidence_rejects_missing_pending_and_missing_file_rows() {
+    let root = repository_root();
+    let manifests = load_compat_manifests(&root).expect("strict manifests");
+    validate_rust_shell_evidence(&root, &manifests.public_contract)
+        .expect("complete Rust Shell evidence");
+
+    let mut missing = manifests.public_contract.clone();
+    missing
+        .items
+        .retain(|item| item.id != "contract.requirement.SHELL-01");
+    assert_eq!(
+        validate_rust_shell_evidence(&root, &missing),
+        Err(BaselineError::ShellEvidence("SHELL-01".to_owned()))
+    );
+
+    let mut pending = manifests.public_contract.clone();
+    pending
+        .items
+        .iter_mut()
+        .find(|item| item.id == "contract.requirement.SHELL-02")
+        .expect("SHELL-02 row")
+        .status = ParityStatus::Pending;
+    assert_eq!(
+        validate_rust_shell_evidence(&root, &pending),
+        Err(BaselineError::ShellEvidence("SHELL-02".to_owned()))
+    );
+
+    let mut missing_file = manifests.public_contract.clone();
+    missing_file
+        .items
+        .iter_mut()
+        .find(|item| item.id == "contract.requirement.SHELL-03")
+        .expect("SHELL-03 row")
+        .evidence = vec!["crates/tools/tests/missing-shell-evidence.rs".to_owned()];
+    assert_eq!(
+        validate_rust_shell_evidence(&root, &missing_file),
+        Err(BaselineError::ShellEvidence("SHELL-03".to_owned()))
+    );
 }
 
 #[test]
@@ -1361,6 +1404,9 @@ impl HermeticCompatibilityFixture {
             "fixtures",
             "scripts/release",
             ".github/workflows",
+            "README.md",
+            "docs/release/subprocess-sandbox.md",
+            "docs/verification/coding-agent-execution-plane.md",
         ] {
             copy_fixture_path(repository_root, &root, relative);
         }

@@ -12,7 +12,8 @@ use crate::architecture::{
 use crate::baseline::{
     validate_cutover_candidate, validate_cutover_evidence, validate_cutover_strict_precondition,
     validate_product_entry, validate_rust_command_surface, validate_rust_provider_profiles,
-    validate_rust_retrieval_evidence, validate_rust_tool_evidence, validate_rust_vault_evidence,
+    validate_rust_retrieval_evidence, validate_rust_shell_evidence, validate_rust_tool_evidence,
+    validate_rust_vault_evidence,
 };
 use crate::manifest::{CompatManifests, ManifestError, ParityStatus};
 use crate::provider_eval::verify_provider_evaluation;
@@ -920,6 +921,8 @@ fn verify_fixture_compatibility_mode(
         crate::manifest::load_compat_manifests(root).map_err(|error| error.to_string())?;
     validate_rust_command_surface(&manifests.commands).map_err(|error| error.to_string())?;
     validate_rust_tool_evidence(root, &manifests.public_contract)
+        .map_err(|error| error.to_string())?;
+    validate_rust_shell_evidence(root, &manifests.public_contract)
         .map_err(|error| error.to_string())?;
     validate_rust_vault_evidence(root).map_err(|error| error.to_string())?;
     validate_rust_retrieval_evidence(root).map_err(|error| error.to_string())?;

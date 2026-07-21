@@ -19,6 +19,7 @@ pub enum BaselineError {
     PackageRead,
     PackageParse,
     ProductEntry,
+    ShellEvidence(String),
     ToolEvidence(String),
     VaultEvidence,
     RetrievalEvidence,
@@ -40,6 +41,12 @@ impl fmt::Display for BaselineError {
             Self::ProductEntry => formatter.write_str(
                 "the npm product entry must be the sole fixed Rust launcher with no legacy route",
             ),
+            Self::ShellEvidence(requirement) => {
+                write!(
+                    formatter,
+                    "Rust Shell evidence is incomplete: {requirement}"
+                )
+            }
             Self::ToolEvidence(requirement) => {
                 write!(formatter, "Rust tool evidence is incomplete: {requirement}")
             }
@@ -191,6 +198,29 @@ pub fn validate_rust_tool_evidence(
             || item.evidence.iter().any(|path| !root.join(path).is_file())
         {
             return Err(BaselineError::ToolEvidence(requirement.to_owned()));
+        }
+    }
+    Ok(())
+}
+
+pub fn validate_rust_shell_evidence(
+    root: &Path,
+    public_contract: &PublicContractManifest,
+) -> Result<(), BaselineError> {
+    for requirement in [
+        "SHELL-01", "SHELL-02", "SHELL-03", "SHELL-04", "SHELL-05", "SHELL-06", "SHELL-07",
+    ] {
+        let id = format!("contract.requirement.{requirement}");
+        let item = public_contract
+            .items
+            .iter()
+            .find(|item| item.id == id)
+            .ok_or_else(|| BaselineError::ShellEvidence(requirement.to_owned()))?;
+        if item.status != ParityStatus::Matched
+            || item.evidence.is_empty()
+            || item.evidence.iter().any(|path| !root.join(path).is_file())
+        {
+            return Err(BaselineError::ShellEvidence(requirement.to_owned()));
         }
     }
     Ok(())

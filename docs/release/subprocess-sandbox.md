@@ -7,9 +7,40 @@ User confirmation answers “may this tool run?” It does not by itself answer 
 | Mode | Approval | Child filesystem/network | Intended use |
 |------|----------|--------------------------|--------------|
 | `confirm` | Required for every external tool call | Linux: Bubblewrap, project workspace is the only writable project view, host-private paths are absent, child network is denied. Missing/unsupported backend: process does not start. | Default, including unfamiliar repositories |
-| `full-access` | Skipped for the current process | Subprocess sandbox disabled; child has ordinary host access. Hard tool/schema/path/secret/timeout/output/cancellation gates remain. | Projects you already trust |
+| `full-access` | Skipped for the current process | Subprocess sandbox disabled; child has ordinary host access. The original eight tools keep their hard gates; the two explicit Shell tools allow arbitrary host commands. | Projects you already trust |
 
 Restart always returns to `confirm`. There is no saved “always allow” setting.
+
+## Arbitrary Shell in full access
+
+Arbitrary Shell is disabled in `confirm`: the Provider sees only the original
+eight tools, and a forged Shell call is rejected before approval or process
+startup. `full-access` adds `shell_command` and `shell_session` without a
+per-command confirmation prompt. The first starts a command; the second polls
+only new output, writes text or Enter to an interactive prompt, or stops the
+whole process tree. Running sessions belong only to the current MiniMax Codex
+process and cannot be restored after restart.
+
+This is intentionally equivalent to giving the model the user's ordinary host
+terminal rights. A command may read, modify, or delete accessible files, use
+the host network, start programs, and read environment credentials visible to
+MiniMax Codex. Its bounded output becomes a normal `ToolResult`, is persisted
+in the local session, and is sent to the configured remote Provider for the
+next inference. The original eight tools retain the fixed path, secret,
+timeout, and sandbox rules described below; those restrictions are not applied
+to the arbitrary command text or its selected existing working directory.
+
+Windows uses ConPTY with `pwsh.exe` when available and system
+`powershell.exe` otherwise. Linux uses a PTY with an absolute executable
+`$SHELL`, then `/bin/bash` or `/bin/sh`. There is no `cmd.exe` fallback.
+macOS Shell support is deferred. The runtime is Rust-only: Pi was a design
+reference, and Pi, Node.js, tmux, and an external terminal window are not
+runtime dependencies.
+
+Explicit stop, a switch back to `confirm`, and normal application exit share
+the same bounded process-tree cleanup. An operating-system forced kill, power
+loss, or kernel crash can prevent that normal cleanup, so external programs
+cannot be guaranteed to disappear in those cases.
 
 ## What is inside the sandbox
 

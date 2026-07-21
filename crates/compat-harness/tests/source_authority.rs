@@ -851,6 +851,31 @@ fn ci_keeps_rust_authority_ahead_of_packaging_and_fails_closed() {
     );
     validate_ci_workflow_text(&source).expect("committed CI workflow should preserve authority");
 
+    let native_pty_step = "      - name: Run native PTY Shell integration\n        run: cargo test -p minimax-tools --test shell_pty --locked -- --nocapture\n";
+    let missing_native_pty = source.replace(native_pty_step, "");
+    assert_ci_rejected(
+        &missing_native_pty,
+        "CI must run native PTY Shell integration on every hosted platform",
+    );
+
+    let linux_only_native_pty = source.replace(
+        native_pty_step,
+        "      - name: Run native PTY Shell integration\n        if: runner.os == 'Linux'\n        run: cargo test -p minimax-tools --test shell_pty --locked -- --nocapture\n",
+    );
+    assert_ci_rejected(
+        &linux_only_native_pty,
+        "CI must run native PTY Shell integration on every hosted platform",
+    );
+
+    let non_blocking_native_pty = source.replace(
+        native_pty_step,
+        "      - name: Run native PTY Shell integration\n        continue-on-error: true\n        run: cargo test -p minimax-tools --test shell_pty --locked -- --nocapture\n",
+    );
+    assert_ci_rejected(
+        &non_blocking_native_pty,
+        "CI must run native PTY Shell integration on every hosted platform",
+    );
+
     let skipped_contract = source.replace(
         "run: npm run verify:rust-contracts:strict-precondition\n",
         "run: npm run verify:rust-contracts:candidate\n",

@@ -4,8 +4,9 @@ use minimax_protocol::{
     CapabilityKind, CapabilityReadiness, CapabilityWorkspaceResponse,
     CapabilityWorkspaceStatusRecord, ForgetPlan, GcClass, GcPlan, IndexDomain, IndexStatusRecord,
     RetrievalDegradedReason, RetrievalMode, RetrievalResponse, RuntimeEvent, RuntimeEventV1,
-    RuntimeTerminalOutcome, SessionRecord, SessionStatus, ToolEffect, ToolInvocation, ToolResult,
-    TraceCode, TraceEntry, VaultLintReport,
+    RuntimeTerminalOutcome, SHELL_TOOL_NAMES, SessionRecord, SessionStatus, ShellReceipt,
+    ShellSessionState, ToolEffect, ToolInvocation, ToolResult, TraceCode, TraceEntry,
+    VaultLintReport,
 };
 
 const MAX_RENDER_CHARS: usize = 16_000;
@@ -383,17 +384,53 @@ impl EventRenderer {
 
     #[must_use]
     pub fn tool_result(result: &ToolResult) -> String {
-        sanitize_bounded(&format!(
-            "tool result | call={} | tool={} | status={:?} | code={}{}",
-            result.call_id.as_str(),
-            result.tool_name,
-            result.status,
-            result.code,
-            result
-                .output
-                .as_deref()
-                .map_or_else(String::new, |output| format!(" | output={output}"))
-        ))
+        if SHELL_TOOL_NAMES.contains(&result.tool_name.as_str())
+            && let Some(output) = result.output.as_deref()
+            && let Ok(receipt) = serde_json::from_str::<ShellReceipt>(output)
+        {
+            return render_shell_receipt(result, &receipt);
+        }
+        render_generic_tool_result(result)
+    }
+}
+
+fn render_shell_receipt(_result: &ToolResult, receipt: &ShellReceipt) -> String {
+    let header = format!(
+        "shell | session={} | state={} | exit={} | truncated={}",
+        receipt.session_id.as_str(),
+        shell_state_name(receipt.state),
+        receipt
+            .exit_code
+            .map_or_else(|| "none".to_owned(), |exit_code| exit_code.to_string()),
+        receipt.output_truncated
+    );
+    if receipt.output.is_empty() {
+        sanitize_bounded(&header)
+    } else {
+        sanitize_bounded(&format!("{header}\n{}", receipt.output))
+    }
+}
+
+fn render_generic_tool_result(result: &ToolResult) -> String {
+    sanitize_bounded(&format!(
+        "tool result | call={} | tool={} | status={:?} | code={}{}",
+        result.call_id.as_str(),
+        result.tool_name,
+        result.status,
+        result.code,
+        result
+            .output
+            .as_deref()
+            .map_or_else(String::new, |output| format!(" | output={output}"))
+    ))
+}
+
+const fn shell_state_name(state: ShellSessionState) -> &'static str {
+    match state {
+        ShellSessionState::Running => "running",
+        ShellSessionState::Exited => "exited",
+        ShellSessionState::Stopped => "stopped",
+        ShellSessionState::Failed => "failed",
     }
 }
 

@@ -95,6 +95,13 @@ permission modes:
 - `confirm`: ask before each effect that requires approval;
 - `full-access`: allow effects for the current process only.
 
+`confirm` is the startup mode and does not expose arbitrary Shell tools to the
+model. Choosing `full-access` exposes exactly two additional tools:
+`shell_command` starts a command, and `shell_session` polls its new output,
+writes text or Enter to an interactive prompt, or stops it. Commands that do
+not finish during the first wait return a process-scoped session ID. Restarting
+the CLI invalidates those IDs and returns permission to `confirm`.
+
 Approval and subprocess isolation are separate. In `confirm`, Linux process
 tools require Bubblewrap with child networking denied and only the project
 workspace writable. If the backend is missing or unusable, the process fails
@@ -103,10 +110,26 @@ retrieval, Vault, and Wiki, but confirm-mode Cargo/Git/npm diagnostics fail
 closed because this release does not ship a native Windows sandbox backend.
 
 In `full-access`, approval prompts and subprocess isolation are disabled for a
-project you already trust. Schema, path, secret, destructive-operation, size,
-timeout, output, and cancellation gates remain active. Restart always returns
-to `confirm`; there is no persistent “always allow” setting. Provider HTTPS is
-host-owned and is not placed inside the child sandbox.
+project you already trust. The original eight tools keep their schema, path,
+secret, destructive-operation, size, timeout, output, and cancellation gates.
+The two Shell tools deliberately do not have a command whitelist or workspace
+boundary: they run as the user who started MiniMax Codex, without asking for
+each command. They can read, change, or delete accessible files, use the
+network, start other programs, and read environment credentials visible to the
+application.
+
+Shell output is an ordinary `ToolResult`: it is bounded, saved in the local
+session, and sent to the configured remote Provider so the model can continue
+the task. Use `/permissions confirm` to stop all active Shell sessions and hide
+the two tools again. Explicit stop, permission downgrade, and normal CLI exit
+use the same process-tree cleanup path. A forced process kill, machine power
+loss, or operating-system crash cannot guarantee cleanup of every external
+program.
+
+Native PTY/ConPTY Shell is supported on Windows and Linux; macOS is deferred.
+The product implementation is Rust-only and does not require Pi, Node.js,
+tmux, or a separate terminal window at runtime. Node remains a packaging and
+source-verification tool only.
 
 Read the [subprocess sandbox and platform boundary](docs/release/subprocess-sandbox.md)
 before testing an unfamiliar repository.

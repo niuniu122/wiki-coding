@@ -1,6 +1,6 @@
 # Coding Agent execution plane verification
 
-Verified locally on 2026-07-14 using Windows x64 and Node.js v24.14.1. CI remains pinned to Node.js 20 on both Ubuntu and Windows.
+Originally verified locally on 2026-07-14 using Windows x64 and Node.js v24.14.1. The full-access Shell contract was verified locally on 2026-07-22 with Rust 1.97 on Windows; CI remains pinned to Node.js 20 on both Ubuntu and Windows and runs the native PTY suite on both platforms.
 
 ## Current outcome
 
@@ -40,10 +40,29 @@ Provider conformance is fully offline and covers request shape, streaming text, 
 
 CI runs only dependency installation, type checking, tests, build, and the two deterministic offline reports. It does not call the live smoke command, reference a real credential, download a model, or require an embedding package.
 
+## Full-access Shell verification
+
+The runtime has exactly two permission modes. A new process starts in
+`confirm`, where arbitrary Shell is hidden and rejected. `full-access` exposes
+`shell_command` plus `shell_session` and runs them without per-command
+confirmation. The real PTY suite covers fast and exit-7 commands, incremental
+long output, prompt input, TTY detection, default/relative/outside working
+directories, Unicode and emoji, native pipes and redirects, the 1 MiB unread
+limit, explicit stop, permission downgrade, and normal shutdown. Parent and
+child process IDs are printed by cleanup fixtures and checked for survivors.
+
+Shell output is a bounded ordinary tool result. It is persisted locally and
+sent to the configured Provider; command text, input, working directory, and
+output are not copied into safe trace metadata. Windows uses ConPTY and
+PowerShell, Linux uses a PTY and a POSIX shell, and macOS is deferred. The Rust
+runtime does not embed Pi or require Node.js, tmux, or an external terminal.
+Normal stop/downgrade/shutdown cleanup is tested, but a forced application kill
+or machine/OS failure cannot guarantee cleanup.
+
 ## Security and fallback boundaries
 
 - Discovery scans only built-in definitions and explicitly managed project/user roots. It does not scan the disk, enumerate `PATH`, crawl arbitrary `node_modules`, execute discovered code, or search online.
-- v1 executors are limited to catalog metadata, bounded workspace reads, and manifest-declared npm diagnostics. There is no general shell, file-write, Git-write, install, publish, or network executor.
+- In `confirm`, executors remain limited to the original bounded tools and arbitrary Shell is unavailable. In explicitly selected, process-scoped `full-access`, the two Shell tools are a general host command executor and can perform file, Git, install, publish, or network operations with the launching user's rights.
 - Every new/resumed Session resets permission to `confirm`; model selection remains sticky in a separate user-level state file.
 - Disable `capabilityEmbedding` to retain exact + BM25. Disable `agentExecution` to retain report-only catalog commands. Disable `capabilityCatalog` to return to pure chat. `/chat` is the unconditional per-request fallback.
 - If capability catalog initialization itself fails, every dependent feature fails closed and the process keeps the ordinary chat route available.

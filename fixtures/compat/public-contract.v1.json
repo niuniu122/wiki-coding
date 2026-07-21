@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "contractVersion": "v1",
   "provenanceCommit": "84784f5",
-  "contentFingerprint": "sha256:91d2c5529ecfa978de0c6e27d2161bc9dd725bd7e263cebb75ccff3c65c6cec5",
+  "contentFingerprint": "sha256:854819e9e20e76d52ac2989bbd651ade7f5f266e43255b8ebee32171a13baf29",
   "productEntry": "bin/minimax-codex.cjs",
   "requiredItemIds": [
     "contract.command./agent",
@@ -32,6 +32,13 @@
     "contract.provider_protocol.chat_completions",
     "contract.provider_protocol.responses",
     "contract.release_gate",
+    "contract.requirement.SHELL-01",
+    "contract.requirement.SHELL-02",
+    "contract.requirement.SHELL-03",
+    "contract.requirement.SHELL-04",
+    "contract.requirement.SHELL-05",
+    "contract.requirement.SHELL-06",
+    "contract.requirement.SHELL-07",
     "contract.requirement.TOOL-01",
     "contract.requirement.TOOL-02",
     "contract.requirement.TOOL-03",
@@ -290,6 +297,63 @@
         "fixtures/compat/release/hosted-gates.v1.json",
         "scripts/release/package-rust.mjs",
         "scripts/release/verify-rust-release.mjs"
+      ]
+    },
+    {
+      "id": "contract.requirement.SHELL-01",
+      "status": "matched",
+      "evidence": [
+        "crates/protocol/tests/shell_roundtrip.rs",
+        "crates/tools/tests/tool_schemas.rs",
+        "fixtures/compat/tools/full-access-schemas.v1.json"
+      ]
+    },
+    {
+      "id": "contract.requirement.SHELL-02",
+      "status": "matched",
+      "evidence": [
+        "crates/cli/tests/tool_loop.rs",
+        "crates/tools/tests/shell_tools.rs"
+      ]
+    },
+    {
+      "id": "contract.requirement.SHELL-03",
+      "status": "matched",
+      "evidence": [
+        "crates/tools/tests/shell_manager.rs"
+      ]
+    },
+    {
+      "id": "contract.requirement.SHELL-04",
+      "status": "matched",
+      "evidence": [
+        ".github/workflows/ci.yml",
+        "crates/tools/tests/shell_pty.rs"
+      ]
+    },
+    {
+      "id": "contract.requirement.SHELL-05",
+      "status": "matched",
+      "evidence": [
+        "crates/tools/tests/shell_buffer.rs",
+        "crates/tools/tests/shell_manager.rs"
+      ]
+    },
+    {
+      "id": "contract.requirement.SHELL-06",
+      "status": "matched",
+      "evidence": [
+        "crates/cli/tests/tool_loop.rs",
+        "crates/tools/tests/shell_pty.rs"
+      ]
+    },
+    {
+      "id": "contract.requirement.SHELL-07",
+      "status": "matched",
+      "evidence": [
+        "README.md",
+        "docs/release/subprocess-sandbox.md",
+        "docs/verification/coding-agent-execution-plane.md"
       ]
     },
     {

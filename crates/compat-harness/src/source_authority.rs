@@ -466,6 +466,15 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
     if !normalized.contains("run: bash scripts/ci-linux-sandbox-canary.sh") {
         return violation("CI must retain the Linux adversarial sandbox canary");
     }
+    let native_pty_name = "- name: Run native PTY Shell integration";
+    let native_pty_command = "cargo test -p minimax-tools --test shell_pty --locked -- --nocapture";
+    let native_pty_step = format!("{native_pty_name}\n        run: {native_pty_command}");
+    if normalized.matches(native_pty_name).count() != 1
+        || normalized.matches(native_pty_command).count() != 1
+        || !normalized.contains(&native_pty_step)
+    {
+        return violation("CI must run native PTY Shell integration on every hosted platform");
+    }
     if normalized.contains("continue-on-error:") {
         return violation("CI authority and package gates must fail closed");
     }
@@ -553,7 +562,13 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
     }
     let test_gate = command_lines[1].max(command_lines[2]);
     let contract_gate = command_lines[5].max(command_lines[6]);
-    let ordered = command_lines[0] < test_gate
+    let native_pty_line = run_commands
+        .iter()
+        .find(|(_, command)| *command == native_pty_command)
+        .map(|(line, _)| *line)
+        .expect("the exact native PTY command was required above");
+    let ordered = command_lines[0] < native_pty_line
+        && native_pty_line < test_gate
         && test_gate < command_lines[3]
         && command_lines[3] < command_lines[4]
         && command_lines[4] < contract_gate

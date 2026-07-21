@@ -27,7 +27,8 @@ pub use baseline::{
     validate_hosted_candidate_gate, validate_hosted_candidate_gate_document,
     validate_hosted_release_gate, validate_hosted_release_gate_document, validate_product_entry,
     validate_rust_command_surface, validate_rust_provider_profiles,
-    validate_rust_retrieval_evidence, validate_rust_tool_evidence, validate_rust_vault_evidence,
+    validate_rust_retrieval_evidence, validate_rust_shell_evidence, validate_rust_tool_evidence,
+    validate_rust_vault_evidence,
 };
 pub use coverage::{
     CoverageCategory, CoverageDisposition, CoverageError, CoverageEvidence, CoverageMatrix,

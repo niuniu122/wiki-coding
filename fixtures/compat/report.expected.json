@@ -1,7 +1,7 @@
 {
   "schemaVersion": 1,
   "contractVersion": "v1",
-  "contractFingerprint": "sha256:91d2c5529ecfa978de0c6e27d2161bc9dd725bd7e263cebb75ccff3c65c6cec5",
+  "contractFingerprint": "sha256:854819e9e20e76d52ac2989bbd651ade7f5f266e43255b8ebee32171a13baf29",
   "entries": [
     {
       "id": "contract.command./agent",
@@ -287,6 +287,63 @@
         "fixtures/compat/release/hosted-gates.v1.json",
         "scripts/release/package-rust.mjs",
         "scripts/release/verify-rust-release.mjs"
+      ]
+    },
+    {
+      "id": "contract.requirement.SHELL-01",
+      "rustStatus": "matched",
+      "rustEvidence": [
+        "crates/protocol/tests/shell_roundtrip.rs",
+        "crates/tools/tests/tool_schemas.rs",
+        "fixtures/compat/tools/full-access-schemas.v1.json"
+      ]
+    },
+    {
+      "id": "contract.requirement.SHELL-02",
+      "rustStatus": "matched",
+      "rustEvidence": [
+        "crates/cli/tests/tool_loop.rs",
+        "crates/tools/tests/shell_tools.rs"
+      ]
+    },
+    {
+      "id": "contract.requirement.SHELL-03",
+      "rustStatus": "matched",
+      "rustEvidence": [
+        "crates/tools/tests/shell_manager.rs"
+      ]
+    },
+    {
+      "id": "contract.requirement.SHELL-04",
+      "rustStatus": "matched",
+      "rustEvidence": [
+        ".github/workflows/ci.yml",
+        "crates/tools/tests/shell_pty.rs"
+      ]
+    },
+    {
+      "id": "contract.requirement.SHELL-05",
+      "rustStatus": "matched",
+      "rustEvidence": [
+        "crates/tools/tests/shell_buffer.rs",
+        "crates/tools/tests/shell_manager.rs"
+      ]
+    },
+    {
+      "id": "contract.requirement.SHELL-06",
+      "rustStatus": "matched",
+      "rustEvidence": [
+        "crates/cli/tests/tool_loop.rs",
+        "crates/tools/tests/shell_pty.rs"
+      ]
+    },
+    {
+      "id": "contract.requirement.SHELL-07",
+      "rustStatus": "matched",
+      "rustEvidence": [
+        "README.md",
+        "docs/release/subprocess-sandbox.md",
+        "docs/verification/coding-agent-execution-plane.md"
       ]
     },
     {
