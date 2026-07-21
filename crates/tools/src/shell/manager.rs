@@ -379,10 +379,7 @@ impl ShellSessionManager {
                 .iter()
                 .filter_map(|(id, session)| {
                     session.lock().ok().and_then(|session| {
-                        (session.state == ShellSessionState::Running
-                            || session.cleanup_started
-                            || session.cleanup_result.is_some_and(|result| result.is_err()))
-                        .then(|| id.clone())
+                        (session.cleanup_result != Some(Ok(()))).then(|| id.clone())
                     })
                 })
                 .collect::<Vec<_>>()
@@ -623,29 +620,43 @@ impl ShellSessionManager {
                     if running {
                         session.stopping = true;
                     }
-                    CleanupRole::Owner { running }
+                    CleanupRole::Start { running }
                 }
             };
             match role {
                 CleanupRole::Complete(result) => return result,
                 CleanupRole::Wait => notified.as_mut().await,
-                CleanupRole::Owner { running } => {
-                    let result = if running {
-                        self.cleanup_running_session(session).await
-                    } else if self.close_handles_and_join_reader(session).await {
-                        Ok(())
-                    } else {
-                        Err(ShellManagerError::Indeterminate)
-                    };
-                    if let Ok(mut session) = session.lock() {
-                        session.cleanup_started = false;
-                        session.cleanup_result = Some(result);
-                    }
-                    notify.notify_waiters();
-                    return result;
+                CleanupRole::Start { running } => {
+                    let manager = self.clone();
+                    let session = Arc::clone(session);
+                    let cleanup_notify = Arc::clone(&notify);
+                    drop(tokio::spawn(async move {
+                        manager.run_cleanup(session, running, cleanup_notify).await;
+                    }));
+                    notified.as_mut().await;
                 }
             }
         }
+    }
+
+    async fn run_cleanup(
+        &self,
+        session: Arc<StdMutex<ShellSession>>,
+        running: bool,
+        notify: Arc<tokio::sync::Notify>,
+    ) {
+        let result = if running {
+            self.cleanup_running_session(&session).await
+        } else if self.close_handles_and_join_reader(&session).await {
+            Ok(())
+        } else {
+            Err(ShellManagerError::Indeterminate)
+        };
+        if let Ok(mut session) = session.lock() {
+            session.cleanup_started = false;
+            session.cleanup_result = Some(result);
+        }
+        notify.notify_waiters();
     }
 
     async fn cleanup_running_session(
@@ -825,7 +836,7 @@ impl ShellSessionManager {
                 let sequence = session.terminal_sequence?;
                 (session.state != ShellSessionState::Running
                     && !session.cleanup_started
-                    && !session.cleanup_result.is_some_and(|result| result.is_err()))
+                    && session.cleanup_result.is_some())
                 .then(|| (id.clone(), terminal_at, sequence))
             })
             .collect::<Vec<_>>();
@@ -914,7 +925,7 @@ impl OwnedSessionResources {
 }
 
 enum CleanupRole {
-    Owner { running: bool },
+    Start { running: bool },
     Wait,
     Complete(Result<(), ShellManagerError>),
 }

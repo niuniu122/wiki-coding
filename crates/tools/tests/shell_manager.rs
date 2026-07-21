@@ -107,6 +107,7 @@ struct FakeShared {
     exit_on_interrupt: AtomicBool,
     flush_hook: Mutex<Option<FlushHook>>,
     flush_error: Mutex<Option<io::ErrorKind>>,
+    guard_drops: AtomicUsize,
 }
 
 impl FakeShared {
@@ -206,6 +207,10 @@ impl FakeControl {
 
     fn is_running(&self) -> bool {
         self.shared.exit_code.lock().expect("exit lock").is_none()
+    }
+
+    fn guard_drops(&self) -> usize {
+        self.shared.guard_drops.load(Ordering::Acquire)
     }
 }
 
@@ -396,6 +401,7 @@ impl FakeBackend {
             exit_on_interrupt: AtomicBool::new(true),
             flush_hook: Mutex::new(None),
             flush_error: Mutex::new(None),
+            guard_drops: AtomicUsize::new(0),
         });
         self.plans.lock().expect("plans lock").push_back(FakePlan {
             shared: Arc::clone(&shared),
@@ -464,7 +470,9 @@ impl PtyBackend for FakeBackend {
             writer: Box::new(FakeWriter {
                 shared: Arc::clone(&plan.shared),
             }),
-            guard: Box::new(()),
+            guard: Box::new(FakeGuard {
+                shared: Arc::clone(&plan.shared),
+            }),
         })
     }
 
@@ -497,6 +505,16 @@ impl PtyBackend for FakeBackend {
 
 struct FakeChild {
     shared: Arc<FakeShared>,
+}
+
+struct FakeGuard {
+    shared: Arc<FakeShared>,
+}
+
+impl Drop for FakeGuard {
+    fn drop(&mut self) {
+        self.shared.guard_drops.fetch_add(1, Ordering::AcqRel);
+    }
 }
 
 impl PtyChild for FakeChild {
@@ -886,6 +904,44 @@ async fn real_interrupted_flush_without_cancellation_is_not_cancelled() {
 }
 
 #[tokio::test]
+async fn write_observed_exit_is_cleaned_by_shutdown() {
+    let backend = Arc::new(FakeBackend::default());
+    let control = backend.queue_process();
+    let manager = enabled_manager(Arc::clone(&backend), Arc::new(ManualClock::default())).await;
+    let started = manager
+        .start(
+            command_request("interactive", Duration::ZERO),
+            &NeverCancelled,
+        )
+        .await
+        .expect("interactive command starts");
+    control.exit(0);
+
+    assert_eq!(
+        manager
+            .write(
+                ShellWriteRequest {
+                    session_id: started.session_id,
+                    input: "too late".to_owned(),
+                    submit: false,
+                    yield_time: Duration::ZERO,
+                    max_output_bytes: OUTPUT_LIMIT,
+                },
+                &NeverCancelled,
+            )
+            .await,
+        Err(ShellManagerError::SessionNotFound)
+    );
+    assert_eq!(control.guard_drops(), 0);
+
+    manager
+        .shutdown()
+        .await
+        .expect("shutdown cleans observed exit");
+    assert_eq!(control.guard_drops(), 1);
+}
+
+#[tokio::test]
 async fn stop_is_terminal_and_idempotent() {
     let backend = Arc::new(FakeBackend::default());
     let control = backend.queue_process();
@@ -953,35 +1009,134 @@ async fn concurrent_stop_has_one_cleanup_owner() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn cleanup_failure_is_sticky_for_stop_disable_and_shutdown() {
+async fn aborted_cleanup_owner_does_not_strand_waiters() {
     let backend = Arc::new(FakeBackend::default());
     let control = backend.queue_process();
     control.set_exit_on_interrupt(false);
-    backend.set_termination_error(true);
-    let clock = Arc::new(ManualClock::default());
-    let manager = enabled_manager(Arc::clone(&backend), Arc::clone(&clock)).await;
+    let termination_gate = TerminationGate::new();
+    backend.set_termination_gate(termination_gate.clone());
+    let manager = enabled_manager(Arc::clone(&backend), Arc::new(ManualClock::default())).await;
     let started = manager
         .start(command_request("long", Duration::ZERO), &NeverCancelled)
         .await
         .expect("long command starts");
 
-    assert_eq!(
-        manager.stop(&started.session_id).await,
-        Err(ShellManagerError::Indeterminate)
+    let owner_manager = manager.clone();
+    let owner_id = started.session_id.clone();
+    let owner = tokio::spawn(async move { owner_manager.stop(&owner_id).await });
+    tokio::time::advance(Duration::from_secs(2)).await;
+    termination_gate.wait_for_entries(1).await;
+    owner.abort();
+    assert!(
+        owner
+            .await
+            .expect_err("owner caller is aborted")
+            .is_cancelled()
     );
-    clock.advance(TERMINAL_RECEIPT_TTL + Duration::from_millis(1));
-    assert_eq!(
-        manager.stop(&started.session_id).await,
-        Err(ShellManagerError::Indeterminate)
-    );
-    let expected = ShellCleanupError {
-        session_ids: vec![started.session_id.clone()],
-    };
-    assert_eq!(manager.disable_and_stop_all().await, Err(expected.clone()));
-    assert_eq!(manager.shutdown().await, Err(expected));
+
+    termination_gate.release();
+    let receipt = tokio::time::timeout(
+        Duration::from_millis(100),
+        manager.stop(&started.session_id),
+    )
+    .await
+    .expect("aborted owner must not strand later cleanup waiters")
+    .expect("manager-owned cleanup succeeds");
+    assert_eq!(receipt.state, ShellSessionState::Stopped);
     assert_eq!(control.interrupts(), 1);
     assert_eq!(backend.termination_count(), 1);
     assert_eq!(control.kills(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn cleanup_failure_is_sticky_for_stop_disable_and_shutdown() {
+    let backend = Arc::new(FakeBackend::default());
+    backend.set_termination_error(true);
+    let clock = Arc::new(ManualClock::default());
+    let manager = enabled_manager(Arc::clone(&backend), Arc::clone(&clock)).await;
+    let mut controls = Vec::new();
+    let mut session_ids = Vec::new();
+    for index in 0..MAX_RUNNING_SHELL_SESSIONS {
+        let control = backend.queue_process();
+        control.set_exit_on_interrupt(false);
+        control.emit(vec![b'x'; MAX_SHELL_UNREAD_BYTES]);
+        let started = manager
+            .start(
+                command_request(&format!("sticky-{index}"), Duration::ZERO),
+                &NeverCancelled,
+            )
+            .await
+            .expect("sticky command starts");
+        assert_eq!(
+            manager.stop(&started.session_id).await,
+            Err(ShellManagerError::Indeterminate)
+        );
+        controls.push(control);
+        session_ids.push(started.session_id);
+    }
+
+    assert_eq!(
+        manager.stop(&session_ids[0]).await,
+        Err(ShellManagerError::Indeterminate)
+    );
+    let expected = ShellCleanupError {
+        session_ids: session_ids.clone(),
+    };
+    assert_eq!(manager.disable_and_stop_all().await, Err(expected.clone()));
+    assert_eq!(manager.shutdown().await, Err(expected));
+    assert!(controls.iter().all(|control| control.interrupts() == 1));
+    assert_eq!(backend.termination_count(), MAX_RUNNING_SHELL_SESSIONS);
+    assert!(controls.iter().all(|control| control.kills() == 1));
+
+    clock.advance(TERMINAL_RECEIPT_TTL + Duration::from_millis(1));
+    assert_eq!(
+        manager.stop(&session_ids[0]).await,
+        Err(ShellManagerError::SessionNotFound)
+    );
+
+    manager.enable().await;
+    backend.queue_fast(&vec![b'f'; 2 * OUTPUT_LIMIT], 0);
+    let fresh = manager
+        .start(command_request("fresh", Duration::ZERO), &NeverCancelled)
+        .await
+        .expect("fresh command exits after failed tombstone GC");
+    assert_eq!(fresh.output, "f".repeat(OUTPUT_LIMIT));
+    assert!(!fresh.output_truncated);
+}
+
+#[tokio::test(start_paused = true)]
+async fn failed_cleanup_tombstones_are_bounded_by_count() {
+    let backend = Arc::new(FakeBackend::default());
+    backend.set_termination_error(true);
+    let manager = enabled_manager(Arc::clone(&backend), Arc::new(ManualClock::default())).await;
+    let mut session_ids = Vec::new();
+    for index in 0..=MAX_TERMINAL_SHELL_RECEIPTS {
+        let control = backend.queue_process();
+        control.set_exit_on_interrupt(false);
+        let started = manager
+            .start(
+                command_request(&format!("failed-{index}"), Duration::ZERO),
+                &NeverCancelled,
+            )
+            .await
+            .expect("failed-cleanup command starts");
+        assert_eq!(
+            manager.stop(&started.session_id).await,
+            Err(ShellManagerError::Indeterminate)
+        );
+        session_ids.push(started.session_id);
+    }
+
+    assert_eq!(
+        manager.stop(&session_ids[0]).await,
+        Err(ShellManagerError::SessionNotFound)
+    );
+    assert_eq!(
+        manager
+            .stop(session_ids.last().expect("newest failed tombstone"))
+            .await,
+        Err(ShellManagerError::Indeterminate)
+    );
 }
 
 #[tokio::test(start_paused = true)]
