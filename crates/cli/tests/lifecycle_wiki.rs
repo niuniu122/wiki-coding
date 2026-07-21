@@ -1,12 +1,12 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 use minimax_cli::{
-    DriverIds, ProviderPort, RuntimeDriver, finalize_active_session_wiki, resolve_project_vault,
-    wiki_search,
+    DriverIds, HttpProviderPort, ProviderPort, RuntimeDriver, finalize_active_session_wiki,
+    resolve_project_vault, wiki_search,
 };
 use minimax_core::{WikiGenerationFuture, WikiGenerationOutput, WikiGenerationPort};
 use minimax_protocol::{
@@ -14,12 +14,18 @@ use minimax_protocol::{
     PageId, ProjectId, ProviderId, ProviderProtocolKind, RuntimeFailure, SchemaVersion,
     SourceCitation, StreamEvent, TerminalOutcome, TopicId, Usage,
 };
+use minimax_provider::{
+    ConfigLayer, CredentialMode, CredentialResolver, HttpProviderClient, resolve_config,
+};
+use tokio::io::{AsyncReadExt as _, AsyncWriteExt as _};
+use tokio::net::TcpListener;
 use tokio_util::sync::CancellationToken;
 
 #[derive(Clone)]
 struct ProductProvider {
     runtime: Arc<Mutex<VecDeque<Vec<StreamEvent>>>>,
     wiki_calls: Arc<AtomicUsize>,
+    binding: Arc<Mutex<ModelBinding>>,
 }
 
 impl ProductProvider {
@@ -35,6 +41,7 @@ impl ProductProvider {
                 },
             ]]))),
             wiki_calls: Arc::new(AtomicUsize::new(0)),
+            binding: Arc::new(Mutex::new(binding())),
         }
     }
 
@@ -49,11 +56,19 @@ impl ProductProvider {
                 },
             ]]))),
             wiki_calls: Arc::new(AtomicUsize::new(0)),
+            binding: Arc::new(Mutex::new(binding())),
         }
     }
 }
 
 impl ProviderPort for ProductProvider {
+    fn rebind(&mut self, binding: &ModelBinding) {
+        self.binding
+            .lock()
+            .expect("provider binding")
+            .clone_from(binding);
+    }
+
     fn stream<'a>(
         &'a mut self,
         _request: &'a minimax_protocol::TurnRequest,
@@ -77,6 +92,9 @@ impl WikiGenerationPort for ProductProvider {
         &'a self,
         request: &'a minimax_core::WikiGenerationRequest,
     ) -> WikiGenerationFuture<'a> {
+        if *self.binding.lock().expect("provider binding") != request.job.model_binding {
+            return Box::pin(async { Err(minimax_core::WikiGenerationError::BindingMismatch) });
+        }
         self.wiki_calls.fetch_add(1, Ordering::SeqCst);
         let patch = KnowledgePatch {
             schema_version: SchemaVersion,
@@ -105,6 +123,163 @@ impl WikiGenerationPort for ProductProvider {
             })
         })
     }
+}
+
+#[tokio::test]
+async fn chat_think_blocks_are_absent_from_runtime_and_raw_vault_evidence() {
+    let project = tempfile::tempdir().expect("project");
+    let vault = tempfile::tempdir().expect("vault");
+    let resolved = resolve_project_vault(
+        project.path(),
+        Some(vault.path()),
+        Some("project:reasoning-boundary"),
+        1,
+    )
+    .expect("Vault binding");
+    let endpoint = chat_fixture_server(concat!(
+        "data: {\"choices\":[{\"delta\":{\"content\":\"prefix<th\"}}]}\n\n",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"ink>PRIVATE_REASONING\"}}]}\n\n",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"</thi\"}}]}\n\n",
+        "data: {\"choices\":[{\"delta\":{\"content\":\"nk>suffix\"}}]}\n\n",
+        "data: [DONE]\n\n"
+    ))
+    .await;
+    let environment = BTreeMap::from([("MINIMAX_API_KEY".to_owned(), "fixture-secret".to_owned())]);
+    let config =
+        resolve_config(None, None, &environment, ConfigLayer::default()).expect("provider config");
+    let credential = CredentialResolver::new(&environment, None)
+        .resolve(&config, CredentialMode::Headless)
+        .expect("credential");
+    let binding = ModelBinding {
+        provider_id: ProviderId::new("provider:test").expect("provider"),
+        model_id: ModelId::new("model:reasoning-boundary").expect("model"),
+        protocol: ProviderProtocolKind::ChatCompletions,
+    };
+    let provider = HttpProviderPort::new(
+        HttpProviderClient::new(&endpoint, Some(std::time::Duration::from_secs(2)))
+            .expect("HTTP provider"),
+        credential,
+        binding.clone(),
+    );
+    let mut driver = RuntimeDriver::open(
+        project.path(),
+        binding,
+        provider,
+        DriverIds::new("reasoning-boundary", 10),
+    )
+    .expect("driver");
+    let report = driver
+        .run_prompt("safe user prompt", 128)
+        .await
+        .expect("runtime turn");
+    let visible = report
+        .events
+        .iter()
+        .filter_map(|event| match &event.event {
+            minimax_protocol::RuntimeEvent::VisibleTextDelta { delta } => Some(delta.as_str()),
+            _ => None,
+        })
+        .collect::<String>();
+    assert_eq!(visible, "prefixsuffix");
+
+    let project_vault = resolved.binding.open().expect("open Vault");
+    driver
+        .finalize_active_session(&project_vault, 20)
+        .expect("finalize raw evidence");
+    let runtime =
+        std::fs::read_to_string(project.path().join(".minimax/runtime/v1/sessions.jsonl"))
+            .expect("runtime journal");
+    let raw = read_tree_text(project_vault.root().join("raw"));
+    for evidence in [&runtime, &raw] {
+        assert!(evidence.contains("prefixsuffix"));
+        assert!(!evidence.contains("PRIVATE_REASONING"));
+        assert!(!evidence.contains("<think>"));
+        assert!(!evidence.contains("</think>"));
+        assert!(!evidence.contains("fixture-secret"));
+    }
+}
+
+#[tokio::test]
+async fn creating_a_model_session_rebinds_runtime_and_wiki_generation() {
+    let project = tempfile::tempdir().expect("project");
+    let vault = tempfile::tempdir().expect("vault");
+    let resolved = resolve_project_vault(
+        project.path(),
+        Some(vault.path()),
+        Some("project:model-switch"),
+        1,
+    )
+    .expect("binding");
+    let provider = ProductProvider::completed("We selected the switched model architecture.");
+    let provider_binding = Arc::clone(&provider.binding);
+    let mut driver = RuntimeDriver::open(
+        project.path(),
+        binding(),
+        provider,
+        DriverIds::new("model-switch", 10),
+    )
+    .expect("driver");
+
+    let original_session = driver.active_session_id().expect("original session");
+    let switched = switched_binding();
+    let switched_session = driver
+        .create_session(switched.clone())
+        .expect("model session");
+    driver
+        .run_prompt("We decided to use the switched model architecture", 128)
+        .await
+        .expect("runtime turn");
+
+    assert_eq!(
+        driver
+            .active_session_id()
+            .and_then(|session_id| driver.session(&session_id))
+            .map(|session| session.binding),
+        Some(switched.clone())
+    );
+    assert_eq!(
+        *provider_binding.lock().expect("provider binding"),
+        switched
+    );
+    drop(driver);
+
+    let reopened_provider = ProductProvider::completed("unused");
+    let reopened_binding = Arc::clone(&reopened_provider.binding);
+    let mut driver = RuntimeDriver::open(
+        project.path(),
+        binding(),
+        reopened_provider,
+        DriverIds::new("model-switch-reopen", 15),
+    )
+    .expect("reopened driver");
+    assert_eq!(
+        *reopened_binding.lock().expect("reopened provider binding"),
+        switched_binding()
+    );
+    driver
+        .resume(original_session)
+        .expect("resume original model");
+    assert_eq!(
+        *reopened_binding.lock().expect("original provider binding"),
+        binding()
+    );
+    driver
+        .resume(switched_session)
+        .expect("resume switched model");
+    assert_eq!(
+        *reopened_binding.lock().expect("switched provider binding"),
+        switched_binding()
+    );
+
+    let report = finalize_active_session_wiki(&driver, &resolved.binding, 20)
+        .await
+        .expect("Wiki lifecycle")
+        .expect("Wiki report");
+    assert_eq!(
+        report.receipt.outcome,
+        minimax_protocol::KnowledgeReceiptOutcome::Synthesized
+    );
+    assert_eq!(report.receipt.model_binding, switched_binding());
 }
 
 #[tokio::test]
@@ -273,6 +448,56 @@ fn binding() -> ModelBinding {
         model_id: ModelId::new("model:pinned").expect("model"),
         protocol: ProviderProtocolKind::Responses,
     }
+}
+
+fn switched_binding() -> ModelBinding {
+    ModelBinding {
+        provider_id: ProviderId::new("provider:test").expect("provider"),
+        model_id: ModelId::new("model:switched").expect("model"),
+        protocol: ProviderProtocolKind::Responses,
+    }
+}
+
+async fn chat_fixture_server(body: &'static str) -> String {
+    let listener = TcpListener::bind("127.0.0.1:0")
+        .await
+        .expect("bind fixture");
+    let address = listener.local_addr().expect("fixture address");
+    tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.expect("accept fixture");
+        let mut request = vec![0_u8; 16 * 1024];
+        let _ = socket.read(&mut request).await.expect("read request");
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        );
+        socket
+            .write_all(response.as_bytes())
+            .await
+            .expect("write fixture response");
+        let _ = socket.shutdown().await;
+    });
+    format!("http://{address}")
+}
+
+fn read_tree_text(root: std::path::PathBuf) -> String {
+    let mut pending = vec![root];
+    let mut text = String::new();
+    while let Some(path) = pending.pop() {
+        if path.is_dir() {
+            let mut entries = std::fs::read_dir(path)
+                .expect("read evidence directory")
+                .collect::<Result<Vec<_>, _>>()
+                .expect("evidence entries");
+            entries.sort_by_key(std::fs::DirEntry::file_name);
+            pending.extend(entries.into_iter().map(|entry| entry.path()));
+        } else {
+            text.push_str(&String::from_utf8_lossy(
+                &std::fs::read(path).expect("read evidence file"),
+            ));
+        }
+    }
+    text
 }
 
 const fn usage() -> Usage {

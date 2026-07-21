@@ -208,17 +208,17 @@ fn fixture_manifest_rejects_tamper_missing_extra_duplicate_and_metadata_self_ent
 }
 
 #[test]
-fn support_window_is_counted_from_distinct_ordered_public_releases_after_v3() {
+fn support_window_is_counted_from_distinct_ordered_public_releases_after_v0_1_0() {
     let root = repository_root();
     let status = validate_migration_support_window(&root).expect("checked-in support window");
-    assert_eq!(status.cutover_release, "3.0.0");
+    assert_eq!(status.cutover_release, "0.1.0");
     assert_eq!(status.minimum_subsequent_public_releases, 2);
     assert_eq!(status.observed_subsequent_public_releases, 0);
     assert!(!status.removal_eligible);
 
     let fixture = FixtureCopy::new();
     let mut support = read_json(&fixture.support_window_path());
-    support["observedPublicReleases"] = json!(["3.0.1", "3.1.0"]);
+    support["observedPublicReleases"] = json!(["0.1.1", "0.2.0"]);
     support["removalEligible"] = Value::Bool(true);
     write_json(&fixture.support_window_path(), &support);
     let eligible =
@@ -228,15 +228,15 @@ fn support_window_is_counted_from_distinct_ordered_public_releases_after_v3() {
 }
 
 #[test]
-fn support_window_rejects_premature_duplicate_pre_v3_unordered_and_non_public_evidence() {
+fn support_window_rejects_premature_duplicate_pre_cutover_unordered_and_non_public_evidence() {
     let cases = [
-        ("premature", json!(["3.0.1"]), true),
-        ("duplicate", json!(["3.0.1", "3.0.1"]), false),
-        ("cutover", json!(["3.0.0", "3.0.1"]), false),
-        ("pre-v3", json!(["2.9.9", "3.0.1"]), false),
-        ("unordered", json!(["3.1.0", "3.0.1"]), true),
-        ("prerelease", json!(["3.0.1-rc.1", "3.0.1"]), true),
-        ("computed mismatch", json!(["3.0.1", "3.1.0"]), false),
+        ("premature", json!(["0.1.1"]), true),
+        ("duplicate", json!(["0.1.1", "0.1.1"]), false),
+        ("cutover", json!(["0.1.0", "0.1.1"]), false),
+        ("pre-cutover", json!(["0.0.9", "0.1.1"]), false),
+        ("unordered", json!(["0.2.0", "0.1.1"]), true),
+        ("prerelease", json!(["0.1.1-rc.1", "0.1.1"]), true),
+        ("computed mismatch", json!(["0.1.1", "0.2.0"]), false),
     ];
     for (name, releases, claimed_eligible) in cases {
         let fixture = FixtureCopy::new();

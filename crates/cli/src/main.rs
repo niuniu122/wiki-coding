@@ -36,7 +36,11 @@ use minimax_vault::{
 
 #[tokio::main]
 async fn main() -> ExitCode {
-    let exit = match Cli::try_parse() {
+    let mut arguments = std::env::args_os().collect::<Vec<_>>();
+    if arguments.len() == 1 {
+        arguments.push("chat".into());
+    }
+    let exit = match Cli::try_parse_from(arguments) {
         Ok(cli) => execute(cli).await,
         Err(error) => {
             let exit = if error.exit_code() == 0 {
@@ -759,6 +763,7 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
     else {
         return ExitClass::Usage;
     };
+    let mut active_binding = config.binding();
     let Some(vault_binding) = prepare_project_vault(&args.common) else {
         return ExitClass::Workspace;
     };
@@ -795,7 +800,7 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
     )));
     let mut driver = match RuntimeDriver::open_with_builtin_tools(
         &args.common.project,
-        config.binding(),
+        active_binding.clone(),
         provider,
         DriverIds::system(),
         Box::new(approval),
@@ -806,6 +811,9 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
             return exit_for_error(&error);
         }
     };
+    if let Some(binding) = driver.active_binding() {
+        active_binding = binding;
+    }
     println!("MiniMax Codex Rust shell. Use /exit to leave.");
     let mut trace_expanded = false;
     loop {
@@ -920,7 +928,7 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
                                 continue;
                             }
                         }
-                        match driver.create_session(config.binding()) {
+                        match driver.create_session(active_binding.clone()) {
                             Ok(id) => println!("new session: {}", id.as_str()),
                             Err(error) => eprintln!("new session failed: {error}"),
                         }
@@ -944,7 +952,12 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
                     },
                     CommandIntent::Resume(raw) => match SessionId::new(raw) {
                         Ok(id) => match driver.resume(id) {
-                            Ok(()) => println!("session resumed"),
+                            Ok(()) => {
+                                if let Some(binding) = driver.active_binding() {
+                                    active_binding = binding;
+                                }
+                                println!("session resumed");
+                            }
                             Err(error) => eprintln!("session resume failed: {error}"),
                         },
                         Err(_) => eprintln!("session resume failed: invalid session id"),
@@ -961,21 +974,24 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
                     },
                     CommandIntent::Provider(None) => println!(
                         "provider: {} | protocol: {:?}",
-                        config.provider_id.as_str(),
-                        config.protocol
+                        active_binding.provider_id.as_str(),
+                        active_binding.protocol
                     ),
                     CommandIntent::Provider(Some(_)) => println!(
                         "provider switching requires a validated config and a new shell process"
                     ),
                     CommandIntent::ListModels => {
-                        println!("selected model: {}", config.model_id.as_str());
+                        println!("selected model: {}", active_binding.model_id.as_str());
                     }
                     CommandIntent::SwitchModel(raw) => match ModelId::new(raw) {
                         Ok(model_id) => {
-                            let mut binding = config.binding();
+                            let mut binding = active_binding.clone();
                             binding.model_id = model_id;
-                            match driver.create_session(binding) {
-                                Ok(id) => println!("model session created: {}", id.as_str()),
+                            match driver.create_session(binding.clone()) {
+                                Ok(id) => {
+                                    active_binding = binding;
+                                    println!("model session created: {}", id.as_str());
+                                }
                                 Err(error) => eprintln!("model switch failed: {error}"),
                             }
                         }
@@ -987,10 +1003,16 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
                             "safe trace display: {}",
                             if trace_expanded { "expanded" } else { "folded" }
                         );
+                        let entries = driver.active_trace_entries();
+                        if entries.is_empty() {
+                            println!("safe trace: empty");
+                        } else {
+                            println!("{}", EventRenderer::trace(&entries, trace_expanded));
+                        }
                     }
-                    CommandIntent::ApiSetup => println!(
-                        "credential setup uses the configured environment key or OS keyring; plaintext files are disabled"
-                    ),
+                    CommandIntent::ApiSetup => {
+                        println!("{}", credential_setup_guidance(&config.environment_key))
+                    }
                     CommandIntent::RetryInitialization => {
                         if let Some(turn_id) = driver.latest_retryable_turn_id() {
                             match driver.retry_turn(turn_id, config.max_output_tokens).await {
@@ -1008,9 +1030,9 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
                             );
                         }
                     }
-                    CommandIntent::Vault(command) => println!(
-                        "vault maintenance is process-isolated; run the top-level command: minimax-codex-rust vault --project <project> --vault <vault> --project-id <id> {command}"
-                    ),
+                    CommandIntent::Vault(command) => {
+                        println!("{}", vault_command_guidance(&command))
+                    }
                     CommandIntent::Interrupt => println!(
                         "press Ctrl-C during a turn to persist an interrupted terminal outcome"
                     ),
@@ -1209,7 +1231,10 @@ fn prepare_provider(
     let credential = match resolver.resolve(&config, mode) {
         Ok(credential) => credential,
         Err(error) => {
-            eprintln!("credential resolution failed: {error}");
+            eprintln!(
+                "credential resolution failed: {error}\n{}",
+                credential_setup_guidance(&config.environment_key)
+            );
             return None;
         }
     };
@@ -1222,6 +1247,18 @@ fn prepare_provider(
     };
     let binding = config.binding();
     Some((config, HttpProviderPort::new(client, credential, binding)))
+}
+
+fn credential_setup_guidance(environment_key: &str) -> String {
+    format!(
+        "Set {environment_key} before starting chat. PowerShell: $env:{environment_key} = \"<your-key>\" | POSIX shell: export {environment_key}=\"<your-key>\". Then run minimax-codex doctor. Secrets are not stored in plaintext project files."
+    )
+}
+
+fn vault_command_guidance(command: &str) -> String {
+    format!(
+        "vault maintenance is process-isolated; run the top-level command: minimax-codex vault --project <project> --vault <vault> --project-id <id> {command}"
+    )
 }
 
 fn resolve_common(
@@ -1254,4 +1291,21 @@ fn default_user_config_path() -> PathBuf {
 
 fn environment() -> BTreeMap<String, String> {
     std::env::vars().collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{credential_setup_guidance, vault_command_guidance};
+
+    #[test]
+    fn installed_command_guidance_is_secret_safe_and_uses_the_npm_binary_name() {
+        let credential = credential_setup_guidance("MINIMAX_API_KEY");
+        assert!(credential.contains("MINIMAX_API_KEY"));
+        assert!(credential.contains("minimax-codex doctor"));
+        assert!(!credential.contains("fixture-secret"));
+
+        let vault = vault_command_guidance("status");
+        assert!(vault.contains("minimax-codex vault"));
+        assert!(!vault.contains("minimax-codex-rust vault"));
+    }
 }

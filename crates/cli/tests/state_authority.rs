@@ -22,6 +22,8 @@ type TreeSnapshot = BTreeMap<String, String>;
 struct NeverProvider;
 
 impl ProviderPort for NeverProvider {
+    fn rebind(&mut self, _binding: &ModelBinding) {}
+
     fn stream<'a>(
         &'a mut self,
         _request: &'a minimax_protocol::TurnRequest,

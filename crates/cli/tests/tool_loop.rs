@@ -34,6 +34,8 @@ struct ScriptedProvider {
 }
 
 impl ProviderPort for ScriptedProvider {
+    fn rebind(&mut self, _binding: &ModelBinding) {}
+
     fn stream<'a>(
         &'a mut self,
         request: &'a TurnRequest,

@@ -53,11 +53,26 @@ publication.
 
 After any installation:
 
-```bash
+```powershell
+# PowerShell: configure the key for this terminal session.
+$env:MINIMAX_API_KEY = "<your-key>"
 minimax-codex doctor
 minimax-codex run --prompt "inspect this project"
-minimax-codex chat
+minimax-codex
 ```
+
+```bash
+# POSIX shell: configure the key for this terminal session.
+export MINIMAX_API_KEY="<your-key>"
+minimax-codex doctor
+minimax-codex run --prompt "inspect this project"
+minimax-codex
+```
+
+Running `minimax-codex` without a subcommand starts chat. The credential is
+read from `MINIMAX_API_KEY` (or an already configured OS keyring entry); it is
+not written to project configuration or session files. `/api` prints the same
+secret-safe setup guidance.
 
 The npm command launches only the fixed sibling Rust binary. It never searches
 `PATH`, reads a binary override, invokes a shell, downloads a runtime, or falls
@@ -165,7 +180,7 @@ Credentials, private reasoning, caches, locks, databases, and unknown records
 are excluded. There is no `--force` path.
 
 Static TypeScript-era migration fixtures remain supported until at least two
-distinct, ordered public releases after cutover release `3.0.0` have been
+distinct, ordered public releases after cutover release `0.1.0` have been
 recorded by the machine-checkable support-window fixture. This is a data
 compatibility window, not an executable legacy runtime.
 

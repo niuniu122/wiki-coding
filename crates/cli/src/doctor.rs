@@ -4,7 +4,7 @@ use minimax_core::PermissionMode;
 use minimax_protocol::RuntimeErrorCode;
 use minimax_provider::{ConfigSource, CredentialError, CredentialSource, ResolvedConfig};
 use minimax_tools::{SandboxCapability, SandboxCapabilityState};
-use minimax_vault::{RuntimeStore, RuntimeStoreError};
+use minimax_vault::{RuntimeInspection, RuntimeStore, RuntimeStoreError};
 use serde::Serialize;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -99,22 +99,34 @@ pub fn inspect(
 
     if project_root.is_dir() {
         checks.push(pass("project_root", "the project root is accessible"));
-        match RuntimeStore::open(project_root) {
-            Ok(store) => {
+        match RuntimeStore::inspect_read_only(project_root) {
+            Ok(RuntimeInspection::Healthy) => {
                 checks.push(pass(
                     "runtime_lease",
                     "the runtime writer lease is available",
                 ));
-                checks.push(if store.journal_path().is_file() {
-                    pass("runtime_journal", "the runtime journal is recoverable")
-                } else {
-                    fail("runtime_journal", "the runtime journal is unavailable")
-                });
-                checks.push(if store.current_index_path().is_file() {
-                    pass("runtime_index", "the derived runtime index is consistent")
-                } else {
-                    fail("runtime_index", "the derived runtime index is unavailable")
-                });
+                checks.push(pass(
+                    "runtime_journal",
+                    "the runtime journal is recoverable",
+                ));
+                checks.push(pass(
+                    "runtime_index",
+                    "the derived runtime index is consistent",
+                ));
+            }
+            Ok(RuntimeInspection::Uninitialized) => {
+                checks.push(pass(
+                    "runtime_lease",
+                    "runtime state is not initialized; no writer lease is required",
+                ));
+                checks.push(warn(
+                    "runtime_journal",
+                    "runtime state is not initialized; the first chat will create it",
+                ));
+                checks.push(warn(
+                    "runtime_index",
+                    "runtime state is not initialized; no derived index exists yet",
+                ));
             }
             Err(RuntimeStoreError::Busy) => checks.push(fail(
                 "runtime_lease",

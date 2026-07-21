@@ -11,7 +11,7 @@ const FIXTURE_RELATIVE: &str = "fixtures/compat/migration/typescript-v1";
 const MANIFEST_NAME: &str = "manifest.v1.json";
 const SUPPORT_WINDOW_NAME: &str = "support-window.v1.json";
 const FIXTURE_VERSION: &str = "typescript-v1";
-const CUTOVER_RELEASE: &str = "3.0.0";
+const CUTOVER_RELEASE: &str = "0.1.0";
 const MAX_METADATA_BYTES: u64 = 1024 * 1024;
 const METADATA_FILES: [&str; 2] = [MANIFEST_NAME, SUPPORT_WINDOW_NAME];
 

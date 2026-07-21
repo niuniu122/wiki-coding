@@ -15,6 +15,13 @@ pub(crate) struct JournalLoad {
     pub(crate) records: Vec<SessionRecordV1>,
 }
 
+pub(crate) struct JournalSnapshot {
+    pub(crate) records: Vec<SessionRecordV1>,
+    pub(crate) len: u64,
+    pub(crate) record_count: u64,
+    pub(crate) hash: u64,
+}
+
 pub(crate) struct RuntimeJournal {
     path: PathBuf,
     file: File,
@@ -180,6 +187,54 @@ impl RuntimeJournal {
     pub(crate) const fn hash(&self) -> u64 {
         self.hash
     }
+}
+
+pub(crate) fn inspect_read_only(path: &Path) -> Result<JournalSnapshot, RuntimeStoreError> {
+    let file = File::open(path).map_err(|_| RuntimeStoreError::Io)?;
+    let mut reader = BufReader::new(file);
+    let mut records = Vec::new();
+    let mut records_by_id = BTreeMap::new();
+    let mut len = 0_u64;
+    let mut hash = FNV_OFFSET;
+
+    loop {
+        let mut line = Vec::new();
+        let read = reader
+            .read_until(b'\n', &mut line)
+            .map_err(|_| RuntimeStoreError::Io)?;
+        if read == 0 {
+            break;
+        }
+        if line.len() > MAX_RECORD_BYTES {
+            return Err(RuntimeStoreError::RecordTooLarge);
+        }
+        std::str::from_utf8(&line).map_err(|_| RuntimeStoreError::Recovery)?;
+        if !line.ends_with(b"\n") {
+            return Err(RuntimeStoreError::Recovery);
+        }
+        let json = std::str::from_utf8(&line[..line.len() - 1])
+            .map_err(|_| RuntimeStoreError::Recovery)?;
+        let record = parse_session_record_v1(json).map_err(|_| RuntimeStoreError::Recovery)?;
+        if records_by_id
+            .get(&record.record_id)
+            .is_some_and(|existing| existing != &record)
+        {
+            return Err(RuntimeStoreError::Recovery);
+        }
+        records_by_id.insert(record.record_id.clone(), record.clone());
+        hash = hash_bytes(hash, &line);
+        len = len
+            .checked_add(line.len() as u64)
+            .ok_or(RuntimeStoreError::Recovery)?;
+        records.push(record);
+    }
+
+    Ok(JournalSnapshot {
+        record_count: records.len() as u64,
+        records,
+        len,
+        hash,
+    })
 }
 
 pub(crate) fn stable_hash(bytes: &[u8]) -> u64 {

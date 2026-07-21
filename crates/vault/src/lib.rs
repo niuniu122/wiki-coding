@@ -28,7 +28,7 @@ pub use page::{normalize_wiki_slug, parse_wiki_page, read_wiki_pages, render_wik
 pub use path::content_hash as hash_vault_bytes;
 pub use raw::{FinalizedSessionEvidence, finalize_runtime_session, read_finalized_session};
 pub use rebuild::rebuild_compiled_wiki;
-pub use runtime::{RuntimeStore, RuntimeStoreError};
+pub use runtime::{RuntimeInspection, RuntimeStore, RuntimeStoreError};
 pub use transaction::{
     PreparedWikiTransaction, TransactionFaultPoint, WikiChange, recover_wiki_transaction,
     wiki_transaction_exists,

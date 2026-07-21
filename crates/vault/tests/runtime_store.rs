@@ -11,7 +11,7 @@ use minimax_protocol::{
     ToolDecisionKind, ToolEffect, ToolInvocation, ToolResult, ToolTerminalStatus, TraceCode,
     TurnId, TurnStatus,
 };
-use minimax_vault::{RuntimeStore, RuntimeStoreError};
+use minimax_vault::{RuntimeInspection, RuntimeStore, RuntimeStoreError};
 use tempfile::TempDir;
 
 fn record_id(value: &str) -> RecordId {
@@ -151,6 +151,57 @@ fn a_second_writer_is_busy_and_reopen_after_drop_succeeds() {
     ));
     drop(first);
     RuntimeStore::open(project.path()).expect("reopen after drop");
+}
+
+#[test]
+fn read_only_inspection_never_initializes_repairs_or_reindexes_runtime_state() {
+    let fresh = root();
+    assert_eq!(
+        RuntimeStore::inspect_read_only(fresh.path()).expect("fresh inspection"),
+        RuntimeInspection::Uninitialized
+    );
+    assert!(!fresh.path().join(".minimax").exists());
+
+    let project = root();
+    let mut policy = SessionMachine::new();
+    let create = create_record(&mut policy, "read-only-inspection");
+    let (journal_path, index_path) = {
+        let mut store = RuntimeStore::open(project.path()).expect("open");
+        store.append(create).expect("append");
+        assert!(matches!(
+            RuntimeStore::inspect_read_only(project.path()),
+            Err(RuntimeStoreError::Busy)
+        ));
+        (
+            store.journal_path().to_path_buf(),
+            store.current_index_path().to_path_buf(),
+        )
+    };
+    let journal_before = std::fs::read(&journal_path).expect("journal before");
+    let index_before = std::fs::read(&index_path).expect("index before");
+    assert_eq!(
+        RuntimeStore::inspect_read_only(project.path()).expect("healthy inspection"),
+        RuntimeInspection::Healthy
+    );
+    assert_eq!(
+        std::fs::read(&journal_path).expect("journal after"),
+        journal_before
+    );
+    assert_eq!(
+        std::fs::read(&index_path).expect("index after"),
+        index_before
+    );
+
+    std::fs::write(&index_path, b"{}\n").expect("corrupt index");
+    let corrupt_before = std::fs::read(&index_path).expect("corrupt before");
+    assert!(matches!(
+        RuntimeStore::inspect_read_only(project.path()),
+        Err(RuntimeStoreError::IndexConflict)
+    ));
+    assert_eq!(
+        std::fs::read(&index_path).expect("corrupt after"),
+        corrupt_before
+    );
 }
 
 #[test]

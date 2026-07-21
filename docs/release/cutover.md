@@ -195,7 +195,7 @@ modified targets, the receipt, and `.mini-codex` remain. There is no force path.
 Migration fixture retention is machine-checkable in
 `fixtures/compat/migration/typescript-v1/support-window.v1.json`:
 
-- cutover release: `3.0.0`;
+- cutover release: `0.1.0`;
 - minimum: two distinct, ordered subsequent public releases;
 - removal eligibility remains false until both releases are recorded and the
   fixture fingerprint still matches.
