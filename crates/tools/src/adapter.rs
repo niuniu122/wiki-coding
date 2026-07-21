@@ -1,12 +1,16 @@
 use std::path::Path;
+use std::sync::Arc;
 
-use minimax_core::{CancellationPort, ToolExecutionContext, ToolFuture, ToolPort};
-use minimax_protocol::{ToolDefinition, ToolInvocation, ToolResult, ToolValidationError};
+use minimax_core::{CancellationPort, PermissionMode, ToolExecutionContext, ToolFuture, ToolPort};
+use minimax_protocol::{
+    SHELL_TOOL_NAMES, ToolDefinition, ToolInvocation, ToolResult, ToolValidationError,
+};
 
 use crate::{
     ApplyPatchTool, BoundedProcess, GitDiffTool, GitStatusTool, ListDirectoryTool,
-    NpmDiagnosticTool, Preflight, ReadFileTool, RunDiagnosticTool, ToolDenial, ToolRegistry,
-    WorkspaceRoot, WriteFileTool,
+    NativePtyBackend, NpmDiagnosticTool, Preflight, ProcessShellSessionIds, ReadFileTool,
+    RunDiagnosticTool, ShellCommandTool, ShellSessionManager, ShellSessionTool, SystemShellClock,
+    ToolDenial, ToolDenialCode, ToolRegistry, WorkspaceRoot, WriteFileTool,
 };
 
 /// Concrete V1 tool boundary used by the CLI agent loop.
@@ -17,13 +21,30 @@ use crate::{
 pub struct BuiltinToolPort {
     workspace: WorkspaceRoot,
     process: BoundedProcess,
+    shell_manager: ShellSessionManager,
 }
 
 impl BuiltinToolPort {
     pub fn new(root: impl AsRef<Path>, process: BoundedProcess) -> Result<Self, ToolDenial> {
+        let ids = ProcessShellSessionIds::new()
+            .map_err(|_| ToolDenial::failed(ToolDenialCode::ShellLaunchFailed))?;
+        let shell_manager = ShellSessionManager::new(
+            Arc::new(NativePtyBackend),
+            Arc::new(ids),
+            Arc::new(SystemShellClock),
+        );
+        Self::with_shell_manager(root, process, shell_manager)
+    }
+
+    pub fn with_shell_manager(
+        root: impl AsRef<Path>,
+        process: BoundedProcess,
+        shell_manager: ShellSessionManager,
+    ) -> Result<Self, ToolDenial> {
         Ok(Self {
             workspace: WorkspaceRoot::new(root)?,
             process,
+            shell_manager,
         })
     }
 
@@ -32,7 +53,14 @@ impl BuiltinToolPort {
     }
 
     pub fn definitions() -> Result<Vec<ToolDefinition>, ToolValidationError> {
-        ToolRegistry::specs().map(|specs| specs.into_iter().map(|spec| spec.definition).collect())
+        Self::definitions_for(PermissionMode::Confirm)
+    }
+
+    pub fn definitions_for(
+        mode: PermissionMode,
+    ) -> Result<Vec<ToolDefinition>, ToolValidationError> {
+        ToolRegistry::specs_for(mode)
+            .map(|specs| specs.into_iter().map(|spec| spec.definition).collect())
     }
 
     async fn dispatch(
@@ -42,6 +70,11 @@ impl BuiltinToolPort {
         cancellation: &dyn CancellationPort,
     ) -> ToolResult {
         let sandbox_policy = context.sandbox_policy();
+        if SHELL_TOOL_NAMES.contains(&invocation.call.name.as_str())
+            && let Err(error) = Preflight::check_with_context(invocation, context, cancellation)
+        {
+            return error.into_result(invocation);
+        }
         match invocation.call.name.as_str() {
             "read_file" => ReadFileTool::execute(&self.workspace, invocation, cancellation),
             "list_directory" => {
@@ -69,7 +102,17 @@ impl BuiltinToolPort {
                     .execute_with_policy(&self.workspace, invocation, sandbox_policy, cancellation)
                     .await
             }
-            _ => unreachable!("common preflight rejects tools outside the V1 registry"),
+            "shell_command" => {
+                ShellCommandTool::new(self.shell_manager.clone())
+                    .execute(&self.workspace, invocation, cancellation)
+                    .await
+            }
+            "shell_session" => {
+                ShellSessionTool::new(self.shell_manager.clone())
+                    .execute(invocation, cancellation)
+                    .await
+            }
+            _ => unreachable!("common preflight rejects tools outside the registered lists"),
         }
     }
 }
@@ -78,10 +121,10 @@ impl ToolPort for BuiltinToolPort {
     fn preflight(
         &self,
         invocation: &ToolInvocation,
-        _context: ToolExecutionContext,
+        context: ToolExecutionContext,
         cancellation: &dyn CancellationPort,
     ) -> Result<(), ToolResult> {
-        Preflight::check(invocation, cancellation)
+        Preflight::check_with_context(invocation, context, cancellation)
             .map(|_| ())
             .map_err(|error| error.into_result(invocation))
     }

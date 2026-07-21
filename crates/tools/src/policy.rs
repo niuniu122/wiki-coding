@@ -1,7 +1,10 @@
-use minimax_core::{CancellationFuture, CancellationPort};
+use minimax_core::{
+    CancellationFuture, CancellationPort, PermissionMode, ToolExecutionContext, ToolSandboxPolicy,
+};
 use minimax_protocol::{
-    MAX_TOOL_ARGUMENT_BYTES, MAX_TOOL_RESULT_BYTES, ToolDefinition, ToolEffect, ToolInvocation,
-    ToolValidationError, V1_TOOL_NAMES,
+    FULL_ACCESS_TOOL_NAMES, MAX_SHELL_COMMAND_BYTES, MAX_SHELL_CWD_BYTES, MAX_SHELL_INPUT_BYTES,
+    MAX_SHELL_SESSION_ID_BYTES, MAX_TOOL_ARGUMENT_BYTES, MAX_TOOL_RESULT_BYTES, SHELL_TOOL_NAMES,
+    ToolDefinition, ToolEffect, ToolInvocation, ToolValidationError, V1_TOOL_NAMES,
 };
 use serde_json::{Value, json};
 
@@ -32,23 +35,38 @@ pub struct ToolRegistry;
 
 impl ToolRegistry {
     pub fn specs() -> Result<Vec<ToolSpec>, ToolValidationError> {
-        V1_TOOL_NAMES
-            .iter()
-            .map(|name| {
-                let (description, parameters, effect) = schema_for(name);
-                Ok(ToolSpec {
-                    definition: ToolDefinition::new(*name, description, parameters)?,
-                    effect,
-                })
-            })
-            .collect()
+        specs_for_names(&V1_TOOL_NAMES)
+    }
+
+    pub fn all_specs() -> Result<Vec<ToolSpec>, ToolValidationError> {
+        Self::specs()
+    }
+
+    pub fn specs_for(mode: PermissionMode) -> Result<Vec<ToolSpec>, ToolValidationError> {
+        match mode {
+            PermissionMode::Confirm => Self::all_specs(),
+            PermissionMode::FullAccess => specs_for_names(&FULL_ACCESS_TOOL_NAMES),
+        }
     }
 
     pub fn find(name: &str) -> Result<Option<ToolSpec>, ToolValidationError> {
-        Ok(Self::specs()?
+        Ok(specs_for_names(&FULL_ACCESS_TOOL_NAMES)?
             .into_iter()
             .find(|spec| spec.definition.name == name))
     }
+}
+
+fn specs_for_names(names: &[&str]) -> Result<Vec<ToolSpec>, ToolValidationError> {
+    names
+        .iter()
+        .map(|name| {
+            let (description, parameters, effect) = schema_for(name);
+            Ok(ToolSpec {
+                definition: ToolDefinition::new(*name, description, parameters)?,
+                effect,
+            })
+        })
+        .collect()
 }
 
 #[derive(Clone, Copy, Debug, Default)]
@@ -57,6 +75,18 @@ pub struct Preflight;
 impl Preflight {
     pub fn check(
         invocation: &ToolInvocation,
+        cancellation: &dyn CancellationPort,
+    ) -> Result<ToolSpec, ToolDenial> {
+        Self::check_with_context(
+            invocation,
+            ToolExecutionContext::for_permission_mode(PermissionMode::Confirm),
+            cancellation,
+        )
+    }
+
+    pub fn check_with_context(
+        invocation: &ToolInvocation,
+        context: ToolExecutionContext,
         cancellation: &dyn CancellationPort,
     ) -> Result<ToolSpec, ToolDenial> {
         if cancellation.is_cancelled() {
@@ -78,11 +108,27 @@ impl Preflight {
             .call
             .arguments_value()
             .map_err(|_| ToolDenial::rejected(ToolDenialCode::InvalidArguments))?;
+        if shell_argument_exceeds_limit(&invocation.call.name, &arguments) {
+            return Err(ToolDenial::rejected(ToolDenialCode::InputLimit));
+        }
         if !validate_schema_value(
             &Value::Object(arguments.clone()),
             &spec.definition.parameters,
         ) {
             return Err(ToolDenial::rejected(ToolDenialCode::InvalidArguments));
+        }
+        if SHELL_TOOL_NAMES.contains(&invocation.call.name.as_str()) {
+            if context.permission_mode() != PermissionMode::FullAccess
+                || context.sandbox_policy() != ToolSandboxPolicy::Disabled
+            {
+                return Err(ToolDenial::rejected(
+                    ToolDenialCode::ShellRequiresFullAccess,
+                ));
+            }
+            if cancellation.is_cancelled() {
+                return Err(ToolDenial::cancelled());
+            }
+            return Ok(spec);
         }
         if let Some(path) = arguments.get("path") {
             let path = path
@@ -109,6 +155,25 @@ impl Preflight {
             return Err(ToolDenial::rejected(ToolDenialCode::SecretContent));
         }
         Ok(())
+    }
+}
+
+fn shell_argument_exceeds_limit(name: &str, arguments: &serde_json::Map<String, Value>) -> bool {
+    let exceeds = |key: &str, maximum: usize| {
+        arguments
+            .get(key)
+            .and_then(Value::as_str)
+            .is_some_and(|value| value.len() > maximum)
+    };
+    match name {
+        "shell_command" => {
+            exceeds("command", MAX_SHELL_COMMAND_BYTES) || exceeds("cwd", MAX_SHELL_CWD_BYTES)
+        }
+        "shell_session" => {
+            exceeds("session_id", MAX_SHELL_SESSION_ID_BYTES)
+                || exceeds("input", MAX_SHELL_INPUT_BYTES)
+        }
+        _ => false,
     }
 }
 
@@ -425,6 +490,34 @@ fn schema_for(name: &str) -> (&'static str, Value, ToolEffect) {
             object_schema(json!({"script": {"type": "string"}}), &["script"]),
             ToolEffect::Process,
         ),
-        _ => unreachable!("V1_TOOL_NAMES contains only registered tools"),
+        "shell_command" => (
+            "Run one arbitrary host Shell command with full access.",
+            object_schema(
+                json!({
+                    "command": {"minLength": 1, "maxLength": 32768, "type": "string"},
+                    "cwd": {"maxLength": 4096, "minLength": 1, "type": "string"},
+                    "yield_time_ms": {"minimum": 250, "maximum": 60000, "type": "integer"},
+                    "max_output_bytes": {"minimum": 1024, "maximum": 49152, "type": "integer"}
+                }),
+                &["command"],
+            ),
+            ToolEffect::Process,
+        ),
+        "shell_session" => (
+            "Poll, write to, or stop one full-access Shell session.",
+            object_schema(
+                json!({
+                    "session_id": {"minLength": 1, "maxLength": 128, "type": "string"},
+                    "action": {"enum": ["poll", "write", "stop"], "type": "string"},
+                    "input": {"maxLength": 16384, "type": "string"},
+                    "submit": {"type": "boolean"},
+                    "yield_time_ms": {"minimum": 0, "maximum": 60000, "type": "integer"},
+                    "max_output_bytes": {"minimum": 1024, "maximum": 49152, "type": "integer"}
+                }),
+                &["session_id", "action"],
+            ),
+            ToolEffect::Process,
+        ),
+        _ => unreachable!("tool name lists contain only registered tools"),
     }
 }

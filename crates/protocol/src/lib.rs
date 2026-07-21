@@ -47,10 +47,10 @@ pub use shell::{
     ShellSessionState,
 };
 pub use tool::{
-    MAX_TOOL_ARGUMENT_BYTES, MAX_TOOL_CODE_BYTES, MAX_TOOL_DESCRIPTION_BYTES, MAX_TOOL_NAME_BYTES,
-    MAX_TOOL_RESULT_BYTES, ToolCall, ToolDecision, ToolDecisionKind, ToolDefinition, ToolEffect,
-    ToolInvocation, ToolResult, ToolTerminalStatus, ToolValidationError, V1_TOOL_NAMES,
-    validate_unique_call_ids,
+    FULL_ACCESS_TOOL_NAMES, MAX_TOOL_ARGUMENT_BYTES, MAX_TOOL_CODE_BYTES,
+    MAX_TOOL_DESCRIPTION_BYTES, MAX_TOOL_NAME_BYTES, MAX_TOOL_RESULT_BYTES, SHELL_TOOL_NAMES,
+    ToolCall, ToolDecision, ToolDecisionKind, ToolDefinition, ToolEffect, ToolInvocation,
+    ToolResult, ToolTerminalStatus, ToolValidationError, V1_TOOL_NAMES, validate_unique_call_ids,
 };
 pub use vault::{
     ContentHash, ForgetId, ForgetPlan, ForgetReceipt, GcCandidate, GcClass, GcId, GcPlan,

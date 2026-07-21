@@ -33,6 +33,11 @@ pub enum ToolDenialCode {
     TimedOut,
     UnsafeScript,
     CleanupUnknown,
+    ShellRequiresFullAccess,
+    ShellSessionNotFound,
+    ShellSessionLimit,
+    ShellLaunchFailed,
+    ShellStopIndeterminate,
 }
 
 impl ToolDenialCode {
@@ -68,6 +73,11 @@ impl ToolDenialCode {
             Self::TimedOut => "timed_out",
             Self::UnsafeScript => "unsafe_script",
             Self::CleanupUnknown => "cleanup_unknown",
+            Self::ShellRequiresFullAccess => "shell_requires_full_access",
+            Self::ShellSessionNotFound => "shell_session_not_found",
+            Self::ShellSessionLimit => "shell_session_limit",
+            Self::ShellLaunchFailed => "shell_launch_failed",
+            Self::ShellStopIndeterminate => "shell_stop_indeterminate",
         }
     }
 }
@@ -100,6 +110,14 @@ impl ToolDenial {
         Self {
             code: ToolDenialCode::Cancelled,
             status: ToolTerminalStatus::Cancelled,
+        }
+    }
+
+    #[must_use]
+    pub const fn indeterminate(code: ToolDenialCode) -> Self {
+        Self {
+            code,
+            status: ToolTerminalStatus::Indeterminate,
         }
     }
 

@@ -1,7 +1,7 @@
 //! Bounded tool adapters and effect boundaries for the Rust runtime.
 //!
-//! Permission modes never enter the policy API. Both `confirm` and
-//! `full-access` therefore cross the same preflight before any effect.
+//! Existing bounded tools cross the same policy gates in both permission modes.
+//! Arbitrary Shell tools additionally require a full-access execution context.
 
 mod adapter;
 mod error;
@@ -13,6 +13,10 @@ mod process;
 mod read;
 mod sandbox;
 mod shell;
+#[path = "shell/command.rs"]
+mod shell_command;
+#[path = "shell/session.rs"]
+mod shell_session;
 mod write;
 
 pub use error::{ToolDenial, ToolDenialCode};
@@ -35,6 +39,10 @@ pub use shell::{
     ShellPollRequest, ShellSessionIdSource, ShellSessionManager, ShellSpawnRequest,
     ShellWriteRequest, SpawnedPty, SystemReaderSpawner, SystemShellClock, TERMINAL_RECEIPT_TTL,
 };
+pub use shell_command::{
+    SHELL_EXITED, SHELL_NONZERO_EXIT, SHELL_RUNNING, SHELL_STOPPED, ShellCommandTool,
+};
+pub use shell_session::ShellSessionTool;
 pub use write::{ApplyPatchTool, WriteFileTool};
 
 /// Human-readable boundary used by architecture checks and documentation.

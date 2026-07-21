@@ -21,6 +21,19 @@ pub const V1_TOOL_NAMES: [&str; 8] = [
     "git_diff",
     "npm_diagnostic",
 ];
+pub const SHELL_TOOL_NAMES: [&str; 2] = ["shell_command", "shell_session"];
+pub const FULL_ACCESS_TOOL_NAMES: [&str; 10] = [
+    "read_file",
+    "list_directory",
+    "apply_patch",
+    "write_file",
+    "run_diagnostic",
+    "git_status",
+    "git_diff",
+    "npm_diagnostic",
+    "shell_command",
+    "shell_session",
+];
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
