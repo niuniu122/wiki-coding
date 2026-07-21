@@ -10,8 +10,8 @@ use minimax_core::{CancellationPort, ToolSandboxPolicy};
 use minimax_protocol::{SchemaVersion, ToolInvocation, ToolResult, ToolTerminalStatus};
 use serde::Deserialize;
 use serde::Serialize;
-use tokio::io::AsyncReadExt as _;
-use tokio::process::{Child, ChildStderr, ChildStdout, Command};
+use tokio::io::{AsyncRead, AsyncReadExt as _};
+use tokio::process::{Child, Command};
 
 use crate::WorkspaceRoot;
 use crate::error::{ToolDenial, ToolDenialCode};
@@ -343,9 +343,9 @@ impl ProcessLauncher for TokioProcessLauncher {
             .take()
             .ok_or_else(|| ProcessLaunchError::Io(std::io::Error::other("missing child stderr")))?;
         Ok(Box::new(TokioDirectChild {
-            child,
-            stdout,
-            stderr,
+            child: Box::new(SystemTokioChildProcessHandle { child }),
+            stdout: Box::new(stdout),
+            stderr: Box::new(stderr),
             stdout_closed: false,
             stderr_closed: false,
             exit_emitted: false,
@@ -394,10 +394,34 @@ impl TokioProcessTree {
     }
 }
 
-struct TokioDirectChild {
+type TokioChildWaitFuture<'a> =
+    Pin<Box<dyn Future<Output = std::io::Result<Option<i32>>> + Send + 'a>>;
+
+trait TokioChildProcessHandle: Send {
+    fn start_kill(&mut self) -> std::io::Result<()>;
+    fn wait<'a>(&'a mut self) -> TokioChildWaitFuture<'a>;
+}
+
+struct SystemTokioChildProcessHandle {
     child: Child,
-    stdout: ChildStdout,
-    stderr: ChildStderr,
+}
+
+impl TokioChildProcessHandle for SystemTokioChildProcessHandle {
+    fn start_kill(&mut self) -> std::io::Result<()> {
+        self.child.start_kill()
+    }
+
+    fn wait<'a>(&'a mut self) -> TokioChildWaitFuture<'a> {
+        Box::pin(async move { self.child.wait().await.map(|status| status.code()) })
+    }
+}
+
+type TokioChildOutput = Box<dyn AsyncRead + Send + Unpin>;
+
+struct TokioDirectChild {
+    child: Box<dyn TokioChildProcessHandle>,
+    stdout: TokioChildOutput,
+    stderr: TokioChildOutput,
     stdout_closed: bool,
     stderr_closed: bool,
     exit_emitted: bool,
@@ -433,9 +457,9 @@ impl DirectChild for TokioDirectChild {
                     }
                 }
                 result = self.child.wait(), if wait_open => {
-                    let status = result?;
+                    let exit_code = result?;
                     self.exit_emitted = true;
-                    Ok(ChildEvent::Exited(status.code()))
+                    Ok(ChildEvent::Exited(exit_code))
                 }
                 else => Err(std::io::Error::other("child emitted no terminal event")),
             }
@@ -1071,6 +1095,7 @@ fn strings(values: &[&str]) -> Vec<String> {
 
 #[cfg(test)]
 mod termination_delegation_tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
 
     use super::*;
@@ -1092,17 +1117,55 @@ mod termination_delegation_tests {
         }
     }
 
+    #[derive(Default)]
+    struct ImmediateChildProcess {
+        kill_calls: Arc<AtomicUsize>,
+        wait_calls: Arc<AtomicUsize>,
+    }
+
+    impl TokioChildProcessHandle for ImmediateChildProcess {
+        fn start_kill(&mut self) -> std::io::Result<()> {
+            self.kill_calls.fetch_add(1, Ordering::SeqCst);
+            Ok(())
+        }
+
+        fn wait<'a>(&'a mut self) -> TokioChildWaitFuture<'a> {
+            Box::pin(async move {
+                self.wait_calls.fetch_add(1, Ordering::SeqCst);
+                Ok(Some(17))
+            })
+        }
+    }
+
     #[tokio::test]
     async fn tokio_direct_child_tree_termination_delegates_once_with_the_exact_pid() {
         let terminator = Arc::new(RecordingTerminator::default());
-        let process_tree = TokioProcessTree::new_with_terminator(42_424, terminator.clone());
+        let kill_calls = Arc::new(AtomicUsize::new(0));
+        let wait_calls = Arc::new(AtomicUsize::new(0));
+        let mut child = TokioDirectChild {
+            child: Box::new(ImmediateChildProcess {
+                kill_calls: Arc::clone(&kill_calls),
+                wait_calls: Arc::clone(&wait_calls),
+            }),
+            stdout: Box::new(tokio::io::empty()),
+            stderr: Box::new(tokio::io::empty()),
+            stdout_closed: false,
+            stderr_closed: false,
+            exit_emitted: false,
+            process_tree: TokioProcessTree::new_with_terminator(42_424, terminator.clone()),
+            _sandbox_home: None,
+        };
 
-        process_tree.terminate().await.expect("tree termination");
+        let terminal_result = DirectChild::terminate_and_wait(&mut child).await;
 
+        assert!(terminal_result.is_ok(), "termination must complete");
+        assert!(child.exit_emitted, "wait completion must be terminal");
         assert_eq!(
             *terminator.process_ids.lock().expect("recorded process IDs"),
             [42_424]
         );
+        assert_eq!(kill_calls.load(Ordering::SeqCst), 1);
+        assert_eq!(wait_calls.load(Ordering::SeqCst), 1);
     }
 }
 

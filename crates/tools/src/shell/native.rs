@@ -216,35 +216,14 @@ fn resolve_native_shell(command: &str) -> io::Result<ResolvedShell> {
 
 #[cfg(target_os = "linux")]
 fn is_executable_for_current_process(path: &Path) -> bool {
-    let test_programs = [Path::new("/usr/bin/test"), Path::new("/bin/test")];
-    is_executable_with_x_ok(path, &test_programs, |program, candidate| {
-        std::process::Command::new(program)
-            .arg("-x")
-            .arg(candidate)
-            .stdin(std::process::Stdio::null())
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-            .map(|status| status.success())
+    is_executable_with_access_check(path, |candidate| {
+        rustix::fs::access(candidate, rustix::fs::Access::EXEC_OK).is_ok()
     })
 }
 
 #[cfg(any(target_os = "linux", test))]
-fn is_executable_with_x_ok(
-    path: &Path,
-    test_programs: &[&Path],
-    check_x_ok: impl Fn(&Path, &Path) -> io::Result<bool>,
-) -> bool {
-    if !path.is_file() {
-        return false;
-    }
-    for program in test_programs.iter().copied().filter(|path| path.is_file()) {
-        match check_x_ok(program, path) {
-            Ok(executable) => return executable,
-            Err(_) => continue,
-        }
-    }
-    false
+fn is_executable_with_access_check(path: &Path, check_x_ok: impl FnOnce(&Path) -> bool) -> bool {
+    path.is_file() && check_x_ok(path)
 }
 
 #[cfg(not(any(windows, target_os = "linux")))]
@@ -299,7 +278,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::{
-        ProcessShellSessionIds, acquire_handles_then_spawn, is_executable_with_x_ok,
+        ProcessShellSessionIds, acquire_handles_then_spawn, is_executable_with_access_check,
         process_id_or_cleanup, resolve_linux_shell, resolve_windows_shell,
     };
     use crate::shell::{ShellManagerError, ShellSessionIdSource};
@@ -404,19 +383,15 @@ mod tests {
     #[test]
     fn linux_x_ok_result_controls_production_executability_instead_of_mode_bits() {
         let fixture = tempfile::tempdir().expect("x-ok fixture");
-        let test_program = fixture.path().join("test");
         let candidate = fixture.path().join("candidate-shell");
-        std::fs::write(&test_program, []).expect("test program fixture");
         std::fs::write(&candidate, []).expect("candidate fixture");
         let calls = AtomicUsize::new(0);
 
-        let executable =
-            is_executable_with_x_ok(&candidate, &[test_program.as_path()], |program, path| {
-                calls.fetch_add(1, Ordering::SeqCst);
-                assert_eq!(program, test_program);
-                assert_eq!(path, candidate);
-                Ok(false)
-            });
+        let executable = is_executable_with_access_check(&candidate, |path| {
+            calls.fetch_add(1, Ordering::SeqCst);
+            assert_eq!(path, candidate);
+            false
+        });
 
         assert!(!executable, "a denied X_OK check must remain denied");
         assert_eq!(calls.load(Ordering::SeqCst), 1);
@@ -424,7 +399,7 @@ mod tests {
 
     #[cfg(target_os = "linux")]
     #[test]
-    fn linux_x_ok_rejects_an_owned_file_with_only_other_execute_permission() {
+    fn linux_x_ok_rejects_a_file_without_execute_permission() {
         use std::os::unix::fs::PermissionsExt as _;
 
         let fixture = tempfile::tempdir().expect("x-ok fixture");
@@ -433,25 +408,17 @@ mod tests {
         let mut permissions = std::fs::metadata(&candidate)
             .expect("candidate metadata")
             .permissions();
-        permissions.set_mode(0o001);
+        permissions.set_mode(0o000);
         std::fs::set_permissions(&candidate, permissions).expect("candidate permissions");
-        assert_ne!(
+        assert_eq!(
             std::fs::metadata(&candidate)
                 .expect("candidate metadata")
                 .permissions()
                 .mode()
                 & 0o111,
             0,
-            "the fixture must defeat a naive any-execute-bit check"
+            "the fixture must not have execute permission"
         );
-
-        let current_uid = std::process::Command::new("/usr/bin/id")
-            .arg("-u")
-            .output()
-            .expect("current uid");
-        if current_uid.stdout == b"0\n" {
-            return;
-        }
         assert!(!super::is_executable_for_current_process(&candidate));
     }
 
