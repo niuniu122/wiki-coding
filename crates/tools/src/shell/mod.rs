@@ -3,8 +3,8 @@ mod buffer;
 mod manager;
 
 pub use backend::{
-    PtyBackend, PtyChild, PtyGuard, PtyTerminateFuture, ShellSessionIdSource, ShellSpawnRequest,
-    SpawnedPty, SystemShellClock,
+    PtyBackend, PtyChild, PtyGuard, PtyTerminateFuture, ReaderSpawner, ReaderTask,
+    ShellSessionIdSource, ShellSpawnRequest, SpawnedPty, SystemReaderSpawner, SystemShellClock,
 };
 pub use buffer::{ShellOutputBudget, ShellOutputBuffer, ShellOutputChunk};
 pub use manager::{

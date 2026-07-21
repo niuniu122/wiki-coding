@@ -29,11 +29,11 @@ pub use process::{
 pub use read::{ListDirectoryTool, ReadFileTool};
 pub use shell::{
     DEFAULT_COMMAND_YIELD, DEFAULT_POLL_YIELD, DEFAULT_WRITE_YIELD, MAX_RUNNING_SHELL_SESSIONS,
-    MAX_TERMINAL_SHELL_RECEIPTS, PtyBackend, PtyChild, PtyGuard, PtyTerminateFuture,
-    ShellCleanupError, ShellCommandRequest, ShellManagerError, ShellOutputBudget,
+    MAX_TERMINAL_SHELL_RECEIPTS, PtyBackend, PtyChild, PtyGuard, PtyTerminateFuture, ReaderSpawner,
+    ReaderTask, ShellCleanupError, ShellCommandRequest, ShellManagerError, ShellOutputBudget,
     ShellOutputBuffer, ShellOutputChunk, ShellPollRequest, ShellSessionIdSource,
-    ShellSessionManager, ShellSpawnRequest, ShellWriteRequest, SpawnedPty, SystemShellClock,
-    TERMINAL_RECEIPT_TTL,
+    ShellSessionManager, ShellSpawnRequest, ShellWriteRequest, SpawnedPty, SystemReaderSpawner,
+    SystemShellClock, TERMINAL_RECEIPT_TTL,
 };
 pub use write::{ApplyPatchTool, WriteFileTool};
 

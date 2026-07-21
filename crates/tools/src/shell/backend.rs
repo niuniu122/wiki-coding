@@ -2,6 +2,7 @@ use std::future::Future;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::pin::Pin;
+use std::thread;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use minimax_core::Clock;
@@ -32,6 +33,21 @@ pub struct SpawnedPty {
     pub reader: Box<dyn Read + Send>,
     pub writer: Box<dyn Write + Send>,
     pub guard: Box<dyn PtyGuard>,
+}
+
+pub type ReaderTask = Box<dyn FnOnce() + Send + 'static>;
+
+pub trait ReaderSpawner: Send + Sync {
+    fn spawn(&self, name: String, task: ReaderTask) -> io::Result<thread::JoinHandle<()>>;
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct SystemReaderSpawner;
+
+impl ReaderSpawner for SystemReaderSpawner {
+    fn spawn(&self, name: String, task: ReaderTask) -> io::Result<thread::JoinHandle<()>> {
+        thread::Builder::new().name(name).spawn(task)
+    }
 }
 
 pub type PtyTerminateFuture<'a> = Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>>;
