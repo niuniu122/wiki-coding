@@ -650,6 +650,19 @@ where
     }
 }
 
+async fn activate_run_permission<P>(
+    driver: &mut RuntimeDriver<P>,
+    requested: PermissionMode,
+    capability: SandboxCapability,
+) -> Result<Option<String>, minimax_cli::DriverError>
+where
+    P: minimax_cli::ProviderPort,
+{
+    driver.set_permission_mode(requested).await?;
+    Ok((driver.permission_mode() == PermissionMode::FullAccess)
+        .then(|| permission_status(driver.permission_mode(), capability)))
+}
+
 async fn execute_run(args: RunArgs) -> ExitClass {
     let Some((config, provider)) = prepare_provider(&args.common, CredentialMode::Headless) else {
         return ExitClass::Usage;
@@ -680,12 +693,23 @@ async fn execute_run(args: RunArgs) -> ExitClass {
             return exit_for_error(&error);
         }
     };
-    if args.agent
-        && let Err(error) = driver.set_permission_mode(args.permission.into()).await
-    {
-        eprintln!("permission transition failed: {error}");
-        let exit = exit_for_error(&error);
-        return finish_chat_session(&mut driver, &vault_binding, exit, args.jsonl).await;
+    if args.agent {
+        match activate_run_permission(
+            &mut driver,
+            args.permission.into(),
+            SandboxCapability::detect(&args.common.project),
+        )
+        .await
+        {
+            Ok(Some(status)) if args.jsonl => eprintln!("{status}"),
+            Ok(Some(status)) => println!("{status}"),
+            Ok(None) => {}
+            Err(error) => {
+                eprintln!("permission transition failed: {error}");
+                let exit = exit_for_error(&error);
+                return finish_chat_session(&mut driver, &vault_binding, exit, args.jsonl).await;
+            }
+        }
     }
     let prompt = if args.agent {
         match augment_agent_prompt(
@@ -1338,11 +1362,11 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use minimax_cli::{
-        DriverIds, ExitClass, HeadlessApprovalPort, ProjectVaultBinding, ProviderPort,
+        DriverError, DriverIds, ExitClass, HeadlessApprovalPort, ProjectVaultBinding, ProviderPort,
         RuntimeDriver,
     };
     use minimax_core::{
-        CancellationPort, ToolExecutionContext, ToolFuture, ToolLifecycleError,
+        CancellationPort, PermissionMode, ToolExecutionContext, ToolFuture, ToolLifecycleError,
         ToolLifecycleFuture, ToolPort, WikiGenerationError, WikiGenerationFuture,
         WikiGenerationPort, WikiGenerationRequest,
     };
@@ -1352,7 +1376,12 @@ mod tests {
     };
     use tokio_util::sync::CancellationToken;
 
-    use super::{credential_setup_guidance, finish_chat_session, vault_command_guidance};
+    use minimax_tools::SandboxCapability;
+
+    use super::{
+        activate_run_permission, credential_setup_guidance, finish_chat_session, permission_status,
+        vault_command_guidance,
+    };
 
     #[test]
     fn installed_command_guidance_is_secret_safe_and_uses_the_npm_binary_name() {
@@ -1390,6 +1419,45 @@ mod tests {
     struct ShutdownSpy {
         calls: Arc<AtomicUsize>,
         fail: bool,
+    }
+
+    struct StartupSpy {
+        calls: Arc<AtomicUsize>,
+        fail: bool,
+    }
+
+    impl ToolPort for StartupSpy {
+        fn preflight(
+            &self,
+            _invocation: &ToolInvocation,
+            _context: ToolExecutionContext,
+            _cancellation: &dyn CancellationPort,
+        ) -> Result<(), ToolResult> {
+            unreachable!("startup test has no tool calls")
+        }
+
+        fn execute<'a>(
+            &'a self,
+            _invocation: &'a ToolInvocation,
+            _context: ToolExecutionContext,
+            _cancellation: &'a dyn CancellationPort,
+        ) -> ToolFuture<'a> {
+            Box::pin(async { unreachable!("startup test has no tool calls") })
+        }
+
+        fn transition_permission<'a>(&'a self, _mode: PermissionMode) -> ToolLifecycleFuture<'a> {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                if self.fail {
+                    Err(ToolLifecycleError {
+                        code: "shell_enable_failed",
+                        session_ids: Vec::new(),
+                    })
+                } else {
+                    Ok(())
+                }
+            })
+        }
     }
 
     impl ToolPort for ShutdownSpy {
@@ -1472,6 +1540,50 @@ mod tests {
 
             assert_eq!(exit, base_exit);
             assert_eq!(calls.load(Ordering::SeqCst), 1);
+        }
+    }
+
+    #[tokio::test]
+    async fn run_permission_disclosure_exists_only_after_successful_enable() {
+        for (index, fail) in [false, true].into_iter().enumerate() {
+            let project = tempfile::tempdir().expect("project");
+            let calls = Arc::new(AtomicUsize::new(0));
+            let mut driver = RuntimeDriver::open_with_agent_ports(
+                project.path(),
+                test_binding(),
+                NoopProvider,
+                DriverIds::new(format!("startup-{index}"), 60_000),
+                Box::new(HeadlessApprovalPort),
+                Box::new(StartupSpy {
+                    calls: Arc::clone(&calls),
+                    fail,
+                }),
+                Vec::new(),
+                AgentLimits::default(),
+            )
+            .expect("driver");
+
+            let result = activate_run_permission(
+                &mut driver,
+                PermissionMode::FullAccess,
+                SandboxCapability::detect(project.path()),
+            )
+            .await;
+
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+            if fail {
+                assert!(matches!(result, Err(DriverError::ToolLifecycle(_))));
+                assert_eq!(driver.permission_mode(), PermissionMode::Confirm);
+            } else {
+                assert_eq!(
+                    result.expect("successful transition"),
+                    Some(permission_status(
+                        PermissionMode::FullAccess,
+                        SandboxCapability::detect(project.path()),
+                    ))
+                );
+                assert_eq!(driver.permission_mode(), PermissionMode::FullAccess);
+            }
         }
     }
 }

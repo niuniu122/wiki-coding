@@ -299,6 +299,11 @@ impl InvocationMachine {
         result: ToolResult,
     ) -> Result<Vec<InvocationEffect>, InvocationError> {
         validate_result(&self.invocation, &result)?;
+        if result.status == ToolTerminalStatus::Rejected
+            && !late_shell_rejection_is_legal(&result.tool_name, &result.code)
+        {
+            return Err(InvocationError::InvalidTerminal);
+        }
         self.state = InvocationState::Terminal {
             result: result.clone(),
         };
@@ -361,6 +366,20 @@ impl InvocationMachine {
             InvocationEffect::PublishTerminal(result),
         ]
     }
+}
+
+pub(crate) fn late_shell_rejection_is_legal(tool_name: &str, code: &str) -> bool {
+    matches!(tool_name, "shell_command" | "shell_session")
+        && matches!(
+            code,
+            "invalid_arguments"
+                | "input_limit"
+                | "path_not_found"
+                | "wrong_file_type"
+                | "shell_requires_full_access"
+                | "shell_session_not_found"
+                | "shell_session_limit"
+        )
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

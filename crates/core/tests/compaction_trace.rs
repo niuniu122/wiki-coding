@@ -232,6 +232,7 @@ fn trace_keeps_only_bounded_allowlisted_safe_facts_and_folds_deterministically()
 
 #[test]
 fn shell_completion_trace_keeps_only_bounded_metadata() {
+    const PRODUCTION_SESSION_ID: &str = "shell-0123456789abcdef-fedcba9876543210";
     let entry = SafeTraceRecorder::record(
         42,
         TraceCode::ToolCompleted,
@@ -242,7 +243,7 @@ fn shell_completion_trace_keeps_only_bounded_metadata() {
             ),
             (
                 "session_id".to_owned(),
-                SafeTraceFact::String("shell-a1b2c3d4e5f6a7b8c9d0-0001".to_owned()),
+                SafeTraceFact::String(PRODUCTION_SESSION_ID.to_owned()),
             ),
             (
                 "state".to_owned(),
@@ -270,7 +271,8 @@ fn shell_completion_trace_keeps_only_bounded_metadata() {
             ),
         ]),
     );
-    assert_eq!(entry.facts["session_id"], "shell-a1b2c3d4e5f6a7b8c9d0-0001");
+    assert_eq!(PRODUCTION_SESSION_ID.len(), 39);
+    assert_eq!(entry.facts["session_id"], PRODUCTION_SESSION_ID);
 
     assert_eq!(
         entry.facts.keys().map(String::as_str).collect::<Vec<_>>(),
@@ -297,4 +299,47 @@ fn shell_completion_trace_keeps_only_bounded_metadata() {
             "trace leaked {prohibited}"
         );
     }
+
+    let fake_session = SafeTraceRecorder::record(
+        43,
+        TraceCode::ToolCompleted,
+        BTreeMap::from([(
+            "session_id".to_owned(),
+            SafeTraceFact::String("not-a-session-0123456789abcdef-fedcba9876543210".to_owned()),
+        )]),
+    );
+    assert_eq!(fake_session.facts["session_id"], "[REDACTED]");
+
+    let parseable_but_non_production_session = SafeTraceRecorder::record(
+        43,
+        TraceCode::ToolCompleted,
+        BTreeMap::from([(
+            "session_id".to_owned(),
+            SafeTraceFact::String("shell-nothexnothexnotx-0123456789abcdef".to_owned()),
+        )]),
+    );
+    assert_eq!(
+        parseable_but_non_production_session.facts["session_id"],
+        "[REDACTED]"
+    );
+
+    let wrong_key = SafeTraceRecorder::record(
+        44,
+        TraceCode::ToolCompleted,
+        BTreeMap::from([(
+            "tool".to_owned(),
+            SafeTraceFact::String(PRODUCTION_SESSION_ID.to_owned()),
+        )]),
+    );
+    assert_eq!(wrong_key.facts["tool"], "[REDACTED]");
+
+    let other_event = SafeTraceRecorder::record(
+        45,
+        TraceCode::CommandRejected,
+        BTreeMap::from([(
+            "command".to_owned(),
+            SafeTraceFact::String(PRODUCTION_SESSION_ID.to_owned()),
+        )]),
+    );
+    assert_eq!(other_event.facts["command"], "[REDACTED]");
 }

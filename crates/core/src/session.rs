@@ -8,6 +8,8 @@ use minimax_protocol::{
     TurnRequest, TurnStatus, VisibleMessage,
 };
 
+use crate::tool::late_shell_rejection_is_legal;
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SessionSummary {
     pub session_id: SessionId,
@@ -679,7 +681,7 @@ impl SessionMachine {
                     find_tool_mut(&mut self.sessions, session_id, turn_id, &result.call_id)?;
                 if invocation.terminal_result.is_some()
                     || invocation.invocation.call.name != result.tool_name
-                    || !terminal_is_legal(invocation, result.status)
+                    || !terminal_is_legal(invocation, &result)
                 {
                     return Err(RuntimeErrorCode::Recovery);
                 }
@@ -929,20 +931,21 @@ fn find_tool_mut<'a>(
         .ok_or(RuntimeErrorCode::Recovery)
 }
 
-fn terminal_is_legal(invocation: &ToolInvocationRecord, status: ToolTerminalStatus) -> bool {
-    match status {
+fn terminal_is_legal(invocation: &ToolInvocationRecord, result: &ToolResult) -> bool {
+    match result.status {
         ToolTerminalStatus::Succeeded => invocation.started_at_unix_ms.is_some(),
         ToolTerminalStatus::Failed => true,
         ToolTerminalStatus::Rejected => {
-            invocation.started_at_unix_ms.is_some()
-                || (invocation.started_at_unix_ms.is_none()
-                    && !matches!(
-                        invocation
-                            .decision
-                            .as_ref()
-                            .map(|decision| decision.decision),
-                        Some(ToolDecisionKind::Approved)
-                    ))
+            invocation.started_at_unix_ms.is_some_and(|_| {
+                late_shell_rejection_is_legal(&invocation.invocation.call.name, &result.code)
+            }) || (invocation.started_at_unix_ms.is_none()
+                && !matches!(
+                    invocation
+                        .decision
+                        .as_ref()
+                        .map(|decision| decision.decision),
+                    Some(ToolDecisionKind::Approved)
+                ))
         }
         ToolTerminalStatus::Cancelled => invocation.started_at_unix_ms.is_none(),
         ToolTerminalStatus::Indeterminate => invocation.started_at_unix_ms.is_some(),

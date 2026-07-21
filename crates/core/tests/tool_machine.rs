@@ -1,21 +1,27 @@
 use minimax_core::{
     AgentBudget, BudgetKind, InvocationEffect, InvocationError, InvocationInput, InvocationMachine,
-    InvocationRegistry, InvocationState, PermissionMode, ToolExecutionContext, ToolSandboxPolicy,
+    InvocationRegistry, InvocationState, PermissionMode, SessionCommand, SessionMachine,
+    ToolExecutionContext, ToolSandboxPolicy,
 };
 use minimax_protocol::{
-    AgentLimits, SchemaVersion, ToolCall, ToolCallId, ToolDecision, ToolDecisionKind, ToolEffect,
-    ToolInvocation, ToolResult, ToolTerminalStatus,
+    AgentLimits, ModelBinding, ModelId, ProviderId, ProviderProtocolKind, RecordId, RequestId,
+    RuntimeErrorCode, SchemaVersion, SessionId, ToolCall, ToolCallId, ToolDecision,
+    ToolDecisionKind, ToolEffect, ToolInvocation, ToolResult, ToolTerminalStatus, TurnId,
 };
 
 fn invocation(id: &str) -> ToolInvocation {
+    invocation_for(id, "read_file", ToolEffect::Read)
+}
+
+fn invocation_for(id: &str, tool_name: &str, effect: ToolEffect) -> ToolInvocation {
     ToolInvocation::new(
         ToolCall::new(
             ToolCallId::new(id).expect("call ID"),
-            "read_file",
+            tool_name,
             r#"{"path":"README.md"}"#,
         )
         .expect("call"),
-        ToolEffect::Read,
+        effect,
     )
     .expect("invocation")
 }
@@ -30,14 +36,79 @@ fn decision(id: &str, kind: ToolDecisionKind, code: &str) -> ToolDecision {
 }
 
 fn result(id: &str, status: ToolTerminalStatus, code: &str) -> ToolResult {
+    result_for_tool(id, "read_file", status, code)
+}
+
+fn result_for_tool(
+    id: &str,
+    tool_name: &str,
+    status: ToolTerminalStatus,
+    code: &str,
+) -> ToolResult {
     ToolResult {
         schema_version: SchemaVersion,
         call_id: ToolCallId::new(id).expect("result ID"),
-        tool_name: "read_file".to_owned(),
+        tool_name: tool_name.to_owned(),
         status,
         code: code.to_owned(),
         output: None,
     }
+}
+
+fn started_session_machine(
+    call_id: &str,
+    tool_name: &str,
+    effect: ToolEffect,
+) -> (SessionMachine, TurnId) {
+    let mut machine = SessionMachine::new();
+    machine
+        .apply(SessionCommand::Create {
+            record_id: RecordId::new(format!("record-create-{call_id}")).expect("record"),
+            session_id: SessionId::new(format!("session-{call_id}")).expect("session"),
+            binding: ModelBinding {
+                provider_id: ProviderId::new("provider-test").expect("provider"),
+                model_id: ModelId::new("model-test").expect("model"),
+                protocol: ProviderProtocolKind::Responses,
+            },
+            now_unix_ms: 1,
+        })
+        .expect("create session");
+    let turn_id = TurnId::new(format!("turn-{call_id}")).expect("turn");
+    machine
+        .apply(SessionCommand::Continue {
+            record_id: RecordId::new(format!("record-turn-{call_id}")).expect("record"),
+            turn_id: turn_id.clone(),
+            request_id: RequestId::new(format!("request-{call_id}")).expect("request"),
+            user_input: "test".to_owned(),
+            max_output_tokens: 128,
+            now_unix_ms: 2,
+        })
+        .expect("continue session");
+    machine
+        .apply(SessionCommand::RecordToolRequested {
+            record_id: RecordId::new(format!("record-request-{call_id}")).expect("record"),
+            turn_id: turn_id.clone(),
+            invocation: invocation_for(call_id, tool_name, effect),
+            now_unix_ms: 3,
+        })
+        .expect("request tool");
+    machine
+        .apply(SessionCommand::RecordToolDecision {
+            record_id: RecordId::new(format!("record-decision-{call_id}")).expect("record"),
+            turn_id: turn_id.clone(),
+            decision: decision(call_id, ToolDecisionKind::Approved, "policy_approved"),
+            now_unix_ms: 4,
+        })
+        .expect("approve tool");
+    machine
+        .apply(SessionCommand::RecordToolStarted {
+            record_id: RecordId::new(format!("record-start-{call_id}")).expect("record"),
+            turn_id: turn_id.clone(),
+            call_id: ToolCallId::new(call_id).expect("call"),
+            now_unix_ms: 5,
+        })
+        .expect("start tool");
+    (machine, turn_id)
 }
 
 #[test]
@@ -380,7 +451,7 @@ fn a_pre_start_budget_failure_is_terminal_without_started_or_execute_effects() {
 }
 
 #[test]
-fn a_late_adapter_rejection_after_start_is_one_legal_terminal_result() {
+fn a_late_adapter_rejection_after_start_remains_illegal_for_non_shell_tools() {
     let (mut machine, _) = InvocationMachine::request(invocation("call-late-rejection"));
     machine
         .apply(InvocationInput::PreflightAllowed {
@@ -395,15 +466,132 @@ fn a_late_adapter_rejection_after_start_is_one_legal_terminal_result() {
     );
 
     assert_eq!(
-        machine
-            .apply(InvocationInput::Complete {
-                result: rejected.clone(),
-            })
-            .expect("late adapter rejection"),
-        vec![
-            InvocationEffect::PersistTerminal(rejected.clone()),
-            InvocationEffect::PublishTerminal(rejected),
-        ]
+        machine.apply(InvocationInput::Complete { result: rejected }),
+        Err(InvocationError::InvalidTerminal)
     );
-    assert!(matches!(machine.state(), InvocationState::Terminal { .. }));
+    assert!(matches!(machine.state(), InvocationState::Started { .. }));
+}
+
+#[test]
+fn shell_tools_accept_only_real_late_adapter_rejection_codes_after_start() {
+    let allowed_codes = [
+        "invalid_arguments",
+        "input_limit",
+        "path_not_found",
+        "wrong_file_type",
+        "shell_requires_full_access",
+        "shell_session_not_found",
+        "shell_session_limit",
+    ];
+
+    for tool_name in ["shell_command", "shell_session"] {
+        for (index, code) in allowed_codes.into_iter().enumerate() {
+            let call_id = format!("call-{tool_name}-{index}");
+            let (mut machine, _) = InvocationMachine::request(invocation_for(
+                &call_id,
+                tool_name,
+                ToolEffect::Process,
+            ));
+            machine
+                .apply(InvocationInput::PreflightAllowed {
+                    permission_mode: PermissionMode::FullAccess,
+                })
+                .expect("policy approval");
+            machine.apply(InvocationInput::Start).expect("start");
+            let rejected = result_for_tool(&call_id, tool_name, ToolTerminalStatus::Rejected, code);
+
+            let effects = machine
+                .apply(InvocationInput::Complete {
+                    result: rejected.clone(),
+                })
+                .expect("real late Shell rejection");
+            assert_eq!(
+                effects,
+                vec![
+                    InvocationEffect::PersistTerminal(rejected.clone()),
+                    InvocationEffect::PublishTerminal(rejected),
+                ]
+            );
+        }
+    }
+}
+
+#[test]
+fn shell_tools_reject_forged_late_adapter_rejection_codes() {
+    for tool_name in ["shell_command", "shell_session"] {
+        let call_id = format!("call-forged-{tool_name}");
+        let (mut machine, _) =
+            InvocationMachine::request(invocation_for(&call_id, tool_name, ToolEffect::Process));
+        machine
+            .apply(InvocationInput::PreflightAllowed {
+                permission_mode: PermissionMode::FullAccess,
+            })
+            .expect("policy approval");
+        machine.apply(InvocationInput::Start).expect("start");
+
+        assert_eq!(
+            machine.apply(InvocationInput::Complete {
+                result: result_for_tool(
+                    &call_id,
+                    tool_name,
+                    ToolTerminalStatus::Rejected,
+                    "forged_rejection",
+                ),
+            }),
+            Err(InvocationError::InvalidTerminal)
+        );
+    }
+}
+
+#[test]
+fn durable_session_projection_matches_late_shell_rejection_policy() {
+    let (mut read_machine, read_turn) =
+        started_session_machine("call-durable-read", "read_file", ToolEffect::Read);
+    assert_eq!(
+        read_machine.apply(SessionCommand::RecordToolTerminal {
+            record_id: RecordId::new("record-terminal-read").expect("record"),
+            turn_id: read_turn,
+            result: result_for_tool(
+                "call-durable-read",
+                "read_file",
+                ToolTerminalStatus::Rejected,
+                "shell_session_not_found",
+            ),
+            now_unix_ms: 6,
+        }),
+        Err(RuntimeErrorCode::Recovery)
+    );
+
+    let (mut shell_machine, shell_turn) =
+        started_session_machine("call-durable-shell", "shell_session", ToolEffect::Process);
+    shell_machine
+        .apply(SessionCommand::RecordToolTerminal {
+            record_id: RecordId::new("record-terminal-shell").expect("record"),
+            turn_id: shell_turn,
+            result: result_for_tool(
+                "call-durable-shell",
+                "shell_session",
+                ToolTerminalStatus::Rejected,
+                "shell_session_not_found",
+            ),
+            now_unix_ms: 6,
+        })
+        .expect("durable late Shell rejection");
+
+    let (mut forged_machine, forged_turn) =
+        started_session_machine("call-durable-forged", "shell_command", ToolEffect::Process);
+    assert_eq!(
+        forged_machine.apply(SessionCommand::RecordToolTerminal {
+            record_id: RecordId::new("record-terminal-forged").expect("record"),
+            turn_id: forged_turn,
+            result: result_for_tool(
+                "call-durable-forged",
+                "shell_command",
+                ToolTerminalStatus::Rejected,
+                "forged_rejection",
+            ),
+            now_unix_ms: 6,
+        }),
+        Err(RuntimeErrorCode::Recovery)
+    );
 }

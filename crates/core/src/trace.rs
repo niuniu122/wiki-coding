@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 
-use minimax_protocol::{TraceCode, TraceEntry};
+use minimax_protocol::{ShellSessionId, TraceCode, TraceEntry};
 
 const MAX_FACT_VALUE_BYTES: usize = 128;
 
@@ -33,7 +33,7 @@ impl SafeTraceRecorder {
         let facts = input
             .into_iter()
             .filter(|(key, _)| allowed.contains(&key.as_str()))
-            .filter_map(|(key, value)| sanitize_fact(value).map(|value| (key, value)))
+            .filter_map(|(key, value)| sanitize_fact(code, &key, value).map(|value| (key, value)))
             .collect();
         TraceEntry {
             recorded_at_unix_ms,
@@ -83,10 +83,12 @@ fn allowed_facts(code: TraceCode) -> &'static [&'static str] {
     }
 }
 
-fn sanitize_fact(value: SafeTraceFact) -> Option<String> {
+fn sanitize_fact(code: TraceCode, key: &str, value: SafeTraceFact) -> Option<String> {
     let rendered = match value {
         SafeTraceFact::String(value) => {
-            if contains_prohibited_material(&value) {
+            if !is_valid_tool_completed_session_id(code, key, &value)
+                && contains_prohibited_material(&value)
+            {
                 "[REDACTED]".to_owned()
             } else {
                 value
@@ -98,6 +100,29 @@ fn sanitize_fact(value: SafeTraceFact) -> Option<String> {
         SafeTraceFact::Null => "null".to_owned(),
     };
     (rendered.len() <= MAX_FACT_VALUE_BYTES).then_some(rendered)
+}
+
+fn is_valid_tool_completed_session_id(code: TraceCode, key: &str, value: &str) -> bool {
+    if code != TraceCode::ToolCompleted || key != "session_id" {
+        return false;
+    }
+    let Ok(session_id) = ShellSessionId::new(value.to_owned()) else {
+        return false;
+    };
+    let Some(encoded) = session_id.as_str().strip_prefix("shell-") else {
+        return false;
+    };
+    let mut parts = encoded.split('-');
+    let nonce = parts.next().unwrap_or_default();
+    let counter = parts.next().unwrap_or_default();
+    parts.next().is_none() && is_lower_hex_16(nonce) && is_lower_hex_16(counter)
+}
+
+fn is_lower_hex_16(value: &str) -> bool {
+    value.len() == 16
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
 }
 
 fn contains_prohibited_material(value: &str) -> bool {

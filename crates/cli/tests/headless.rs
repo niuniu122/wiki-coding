@@ -1,7 +1,12 @@
 use std::collections::{BTreeMap, VecDeque};
 use std::future::Future;
+use std::io::{Read as _, Write as _};
+use std::net::{TcpListener, TcpStream};
 use std::pin::Pin;
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 use clap::Parser as _;
 use minimax_cli::{
@@ -336,6 +341,91 @@ fn permission_status_separates_approval_from_subprocess_isolation() {
 }
 
 #[test]
+fn full_access_agent_run_enables_shell_and_discloses_risk_on_jsonl_stderr() {
+    let project = tempfile::tempdir().expect("temporary project");
+    let vault = tempfile::tempdir().expect("temporary Vault");
+    let (endpoint, requests, server) = provider_fixture_server(vec![
+        concat!(
+            "data: {\"type\":\"response.output_item.done\",\"item\":{\"type\":\"function_call\",\"id\":\"item-shell\",\"call_id\":\"call-shell\",\"name\":\"shell_session\",\"arguments\":\"{\\\"session_id\\\":\\\"shell-fixture-missing\\\",\\\"action\\\":\\\"write\\\",\\\"input\\\":\\\"x\\\"}\"}}\n\n",
+            "data: {\"type\":\"response.completed\"}\n\n"
+        ),
+        concat!(
+            "data: {\"type\":\"response.output_text.delta\",\"delta\":\"ok\"}\n\n",
+            "data: {\"type\":\"response.completed\"}\n\n"
+        ),
+    ]);
+
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_minimax-cli"))
+        .args([
+            "run",
+            "--agent",
+            "--permission",
+            "full-access",
+            "--jsonl",
+            "--prompt",
+            "execute the fixture command",
+            "--project",
+        ])
+        .arg(project.path())
+        .arg("--vault")
+        .arg(vault.path())
+        .args([
+            "--project-id",
+            "project-full-access-entry",
+            "--provider-id",
+            "provider-fixture",
+            "--endpoint",
+            &endpoint,
+            "--protocol",
+            "responses",
+            "--model",
+            "model-fixture",
+            "--environment-key",
+            "MINIMAX_ENTRY_TEST_KEY",
+            "--allow-insecure-loopback",
+            "--timeout-ms",
+            "5000",
+        ])
+        .env("MINIMAX_ENTRY_TEST_KEY", "fixture-key")
+        .output()
+        .expect("full-access agent run");
+    let stdout = String::from_utf8(output.stdout).expect("stdout UTF-8");
+    let stderr = String::from_utf8(output.stderr).expect("stderr UTF-8");
+    let server_result = server.join();
+    let request_count = requests.lock().expect("fixture requests").len();
+    assert!(
+        server_result.is_ok(),
+        "fixture server failed after {request_count} requests\nstatus={:?}\nstdout={stdout}\nstderr={stderr}",
+        output.status.code()
+    );
+    assert!(
+        output.status.success(),
+        "status={:?}\nstdout={stdout}\nstderr={stderr}",
+        output.status.code()
+    );
+    let expected_disclosure = permission_status(
+        PermissionMode::FullAccess,
+        SandboxCapability::detect(project.path()),
+    );
+    assert!(stderr.contains(&expected_disclosure), "{stderr}");
+    assert!(!stdout.contains(&expected_disclosure), "{stdout}");
+    for line in stdout.lines().filter(|line| !line.trim().is_empty()) {
+        serde_json::from_str::<serde_json::Value>(line)
+            .unwrap_or_else(|error| panic!("non-JSON stdout line {line:?}: {error}"));
+    }
+
+    let requests = requests.lock().expect("fixture requests");
+    assert_eq!(requests.len(), 2);
+    assert!(requests[0].contains("shell_session"), "{}", requests[0]);
+    assert!(
+        requests[1].contains("shell_session_not_found"),
+        "{}",
+        requests[1]
+    );
+    assert!(!requests[1].contains("shell_requires_full_access"));
+}
+
+#[test]
 fn npm_product_entry_uses_only_rust_launcher() {
     let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
         .ancestors()
@@ -417,6 +507,79 @@ fn binding() -> ModelBinding {
         provider_id: ProviderId::new("fixture").expect("provider id"),
         model_id: ModelId::new("fixture-model").expect("model id"),
         protocol: ProviderProtocolKind::Responses,
+    }
+}
+
+fn provider_fixture_server(
+    responses: Vec<&'static str>,
+) -> (String, Arc<Mutex<Vec<String>>>, JoinHandle<()>) {
+    let listener = TcpListener::bind("127.0.0.1:0").expect("bind fixture server");
+    listener
+        .set_nonblocking(true)
+        .expect("nonblocking fixture listener");
+    let address = listener.local_addr().expect("fixture address");
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let captured = Arc::clone(&requests);
+    let server = std::thread::spawn(move || {
+        for (response_index, body) in responses.into_iter().enumerate() {
+            let deadline = Instant::now() + Duration::from_secs(15);
+            let mut socket = loop {
+                match listener.accept() {
+                    Ok((socket, _)) => break socket,
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        assert!(
+                            Instant::now() < deadline,
+                            "fixture accept {response_index} timed out"
+                        );
+                        std::thread::sleep(Duration::from_millis(10));
+                    }
+                    Err(error) => panic!("fixture accept failed: {error}"),
+                }
+            };
+            socket
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .expect("fixture read timeout");
+            captured
+                .lock()
+                .expect("fixture requests")
+                .push(read_http_request(&mut socket));
+            write!(
+                socket,
+                "HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                body.len(),
+                body
+            )
+            .expect("fixture response");
+            socket.flush().expect("flush fixture response");
+        }
+    });
+    (format!("http://{address}"), requests, server)
+}
+
+fn read_http_request(socket: &mut TcpStream) -> String {
+    let mut request = Vec::new();
+    let mut expected_len = None;
+    loop {
+        let mut chunk = [0_u8; 4096];
+        let read = socket.read(&mut chunk).expect("read fixture request");
+        assert!(read > 0, "fixture request ended before body was complete");
+        request.extend_from_slice(&chunk[..read]);
+        if expected_len.is_none()
+            && let Some(header_end) = request.windows(4).position(|value| value == b"\r\n\r\n")
+        {
+            let body_start = header_end + 4;
+            let headers = String::from_utf8_lossy(&request[..header_end]);
+            let content_length = headers
+                .lines()
+                .filter_map(|line| line.split_once(':'))
+                .find(|(name, _)| name.eq_ignore_ascii_case("content-length"))
+                .and_then(|(_, value)| value.trim().parse::<usize>().ok())
+                .expect("fixture Content-Length");
+            expected_len = Some(body_start + content_length);
+        }
+        if expected_len.is_some_and(|length| request.len() >= length) {
+            return String::from_utf8(request).expect("fixture request UTF-8");
+        }
     }
 }
 
