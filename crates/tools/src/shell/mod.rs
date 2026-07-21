@@ -1,6 +1,7 @@
 mod backend;
 mod buffer;
 mod manager;
+mod native;
 
 pub use backend::{
     PtyBackend, PtyChild, PtyGuard, PtyTerminateFuture, ReaderSpawner, ReaderTask,
@@ -12,3 +13,4 @@ pub use manager::{
     MAX_TERMINAL_SHELL_RECEIPTS, ShellCleanupError, ShellCommandRequest, ShellManagerError,
     ShellPollRequest, ShellSessionManager, ShellWriteRequest, TERMINAL_RECEIPT_TTL,
 };
+pub use native::{NativePtyBackend, ProcessShellSessionIds};

@@ -376,6 +376,7 @@ fn protocol_error_from_tool_validation(error: ToolValidationError) -> ProtocolEr
         | ToolValidationError::UnknownArgument
         | ToolValidationError::MissingArgument
         | ToolValidationError::InvalidCode
+        | ToolValidationError::InvalidShellReceipt
         | ToolValidationError::ResultTooLarge => ProtocolErrorCode::MalformedJson,
     }
 }

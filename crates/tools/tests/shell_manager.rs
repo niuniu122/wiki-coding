@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -8,13 +8,41 @@ use std::time::Duration;
 use minimax_core::{CancellationFuture, CancellationPort, Clock};
 use minimax_protocol::{MAX_SHELL_UNREAD_BYTES, ShellSessionId, ShellSessionState};
 use minimax_tools::{
-    MAX_RUNNING_SHELL_SESSIONS, MAX_TERMINAL_SHELL_RECEIPTS, PtyBackend, PtyChild,
-    PtyTerminateFuture, ReaderSpawner, ReaderTask, ShellCleanupError, ShellCommandRequest,
-    ShellManagerError, ShellPollRequest, ShellSessionIdSource, ShellSessionManager,
-    ShellSpawnRequest, ShellWriteRequest, SpawnedPty, TERMINAL_RECEIPT_TTL,
+    MAX_RUNNING_SHELL_SESSIONS, MAX_TERMINAL_SHELL_RECEIPTS, ProcessShellSessionIds, PtyBackend,
+    PtyChild, PtyTerminateFuture, ReaderSpawner, ReaderTask, ShellCleanupError,
+    ShellCommandRequest, ShellManagerError, ShellPollRequest, ShellSessionIdSource,
+    ShellSessionManager, ShellSpawnRequest, ShellWriteRequest, SpawnedPty, TERMINAL_RECEIPT_TTL,
 };
 
 const OUTPUT_LIMIT: usize = 1024;
+
+#[test]
+fn process_shell_session_ids_are_unique_lowercase_hex_and_well_formed() {
+    let ids = ProcessShellSessionIds::new().expect("process shell session ID source");
+    let mut seen = HashSet::new();
+
+    for _ in 0..256 {
+        let id = ids.next_session_id().expect("next shell session ID");
+        let value = id.as_str();
+        assert!(
+            seen.insert(value.to_owned()),
+            "duplicate session ID: {value}"
+        );
+        let (nonce, counter) = value
+            .strip_prefix("shell-")
+            .and_then(|suffix| suffix.split_once('-'))
+            .expect("shell-<nonce>-<counter> format");
+        assert_eq!(nonce.len(), 16);
+        assert_eq!(counter.len(), 16);
+        assert!(
+            nonce
+                .bytes()
+                .chain(counter.bytes())
+                .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte)),
+            "session ID must use lowercase hexadecimal: {value}"
+        );
+    }
+}
 
 #[derive(Default)]
 struct ManualClock {

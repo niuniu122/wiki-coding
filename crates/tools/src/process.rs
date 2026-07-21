@@ -417,7 +417,7 @@ impl DirectChild for TokioDirectChild {
 }
 
 #[cfg(unix)]
-async fn terminate_process_tree(process_id: u32) -> std::io::Result<()> {
+pub(crate) async fn terminate_process_tree(process_id: u32) -> std::io::Result<()> {
     let process_group = format!("-{process_id}");
     let terminate = Command::new(kill_program())
         .args(["-TERM", "--", &process_group])
@@ -454,7 +454,7 @@ fn kill_program() -> &'static str {
 }
 
 #[cfg(windows)]
-async fn terminate_process_tree(process_id: u32) -> std::io::Result<()> {
+pub(crate) async fn terminate_process_tree(process_id: u32) -> std::io::Result<()> {
     let system_root = std::env::var_os("SystemRoot")
         .ok_or_else(|| std::io::Error::other("missing SystemRoot"))?;
     let taskkill = PathBuf::from(system_root)

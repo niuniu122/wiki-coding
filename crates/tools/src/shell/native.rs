@@ -1,0 +1,364 @@
+use std::io;
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use minimax_protocol::ShellSessionId;
+use portable_pty::{CommandBuilder, MasterPty, PtySize};
+
+use super::{
+    PtyBackend, PtyChild, PtyTerminateFuture, ShellManagerError, ShellSessionIdSource,
+    ShellSpawnRequest, SpawnedPty,
+};
+
+const PROCESS_NONCE_BYTES: usize = 8;
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct NativePtyBackend;
+
+impl PtyBackend for NativePtyBackend {
+    fn spawn(&self, request: &ShellSpawnRequest) -> io::Result<SpawnedPty> {
+        let resolved = resolve_native_shell(&request.command)?;
+        let pair = portable_pty::native_pty_system()
+            .openpty(PtySize {
+                rows: request.rows,
+                cols: request.cols,
+                pixel_width: 0,
+                pixel_height: 0,
+            })
+            .map_err(pty_error)?;
+        let mut command = CommandBuilder::new(&resolved.program);
+        command.args(&resolved.args);
+        command.cwd(&request.cwd);
+        let mut child = pair.slave.spawn_command(command).map_err(pty_error)?;
+        drop(pair.slave);
+
+        let Some(process_id) = child.process_id() else {
+            let _ = child.kill();
+            return Err(io::Error::other("PTY child did not expose a process ID"));
+        };
+        let reader = match pair.master.try_clone_reader() {
+            Ok(reader) => reader,
+            Err(error) => {
+                let _ = child.kill();
+                return Err(pty_error(error));
+            }
+        };
+        let writer = match pair.master.take_writer() {
+            Ok(writer) => writer,
+            Err(error) => {
+                let _ = child.kill();
+                return Err(pty_error(error));
+            }
+        };
+
+        Ok(SpawnedPty {
+            child: Box::new(NativePtyChild { child, process_id }),
+            reader,
+            writer,
+            guard: Box::new(NativePtyGuard {
+                _master: pair.master,
+            }),
+        })
+    }
+
+    fn terminate_tree<'a>(&'a self, process_id: u32) -> PtyTerminateFuture<'a> {
+        Box::pin(crate::process::terminate_process_tree(process_id))
+    }
+}
+
+struct NativePtyChild {
+    child: Box<dyn portable_pty::Child + Send + Sync>,
+    process_id: u32,
+}
+
+impl PtyChild for NativePtyChild {
+    fn process_id(&self) -> u32 {
+        self.process_id
+    }
+
+    fn try_wait(&mut self) -> io::Result<Option<i32>> {
+        self.child
+            .try_wait()
+            .map(|status| status.map(|status| status.exit_code() as i32))
+    }
+
+    fn kill(&mut self) -> io::Result<()> {
+        self.child.kill()
+    }
+}
+
+struct NativePtyGuard {
+    _master: Box<dyn MasterPty + Send>,
+}
+
+#[derive(Debug)]
+pub struct ProcessShellSessionIds {
+    nonce: String,
+    counter: AtomicU64,
+}
+
+impl ProcessShellSessionIds {
+    pub fn new() -> Result<Self, ShellManagerError> {
+        let mut nonce = [0_u8; PROCESS_NONCE_BYTES];
+        getrandom::fill(&mut nonce).map_err(|_| ShellManagerError::Identifier)?;
+        Ok(Self::from_nonce_and_counter(nonce, 0))
+    }
+
+    fn from_nonce_and_counter(nonce: [u8; PROCESS_NONCE_BYTES], counter: u64) -> Self {
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let mut encoded = String::with_capacity(PROCESS_NONCE_BYTES * 2);
+        for byte in nonce {
+            encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+            encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+        }
+        Self {
+            nonce: encoded,
+            counter: AtomicU64::new(counter),
+        }
+    }
+}
+
+impl ShellSessionIdSource for ProcessShellSessionIds {
+    fn next_session_id(&self) -> Result<ShellSessionId, ShellManagerError> {
+        let previous = self
+            .counter
+            .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |counter| {
+                counter.checked_add(1)
+            })
+            .map_err(|_| ShellManagerError::Identifier)?;
+        let counter = previous
+            .checked_add(1)
+            .ok_or(ShellManagerError::Identifier)?;
+        ShellSessionId::new(format!("shell-{}-{counter:016x}", self.nonce))
+            .map_err(|_| ShellManagerError::Identifier)
+    }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct ResolvedShell {
+    program: PathBuf,
+    args: Vec<String>,
+}
+
+#[cfg(any(windows, test))]
+fn resolve_windows_shell(
+    command: &str,
+    pwsh_candidates: &[PathBuf],
+    powershell_candidate: &Path,
+    is_executable: impl Fn(&Path) -> bool,
+) -> io::Result<ResolvedShell> {
+    let program = pwsh_candidates
+        .iter()
+        .find(|candidate| is_executable(candidate))
+        .cloned()
+        .or_else(|| is_executable(powershell_candidate).then(|| powershell_candidate.to_owned()))
+        .ok_or_else(|| {
+            io::Error::new(io::ErrorKind::NotFound, "PowerShell executable not found")
+        })?;
+    Ok(ResolvedShell {
+        program,
+        args: vec![
+            "-NoLogo".to_owned(),
+            "-NoProfile".to_owned(),
+            "-Command".to_owned(),
+            command.to_owned(),
+        ],
+    })
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn resolve_linux_shell(
+    command: &str,
+    requested_shell: Option<&Path>,
+    bash_candidate: &Path,
+    sh_candidate: &Path,
+    is_executable: impl Fn(&Path) -> bool,
+) -> io::Result<ResolvedShell> {
+    let requested_shell = requested_shell
+        .filter(|candidate| is_posix_absolute(candidate) && is_executable(candidate));
+    let program = requested_shell
+        .or_else(|| is_executable(bash_candidate).then_some(bash_candidate))
+        .or_else(|| is_executable(sh_candidate).then_some(sh_candidate))
+        .map(Path::to_owned)
+        .ok_or_else(|| {
+            io::Error::new(io::ErrorKind::NotFound, "POSIX shell executable not found")
+        })?;
+    Ok(ResolvedShell {
+        program,
+        args: vec!["-lc".to_owned(), command.to_owned()],
+    })
+}
+
+#[cfg(any(target_os = "linux", test))]
+fn is_posix_absolute(path: &Path) -> bool {
+    path.as_os_str().as_encoded_bytes().first() == Some(&b'/')
+}
+
+#[cfg(windows)]
+fn resolve_native_shell(command: &str) -> io::Result<ResolvedShell> {
+    let pwsh_candidates = std::env::var_os("PATH")
+        .map(|path| {
+            std::env::split_paths(&path)
+                .map(|directory| directory.join("pwsh.exe"))
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let powershell = std::env::var_os("SystemRoot")
+        .map(PathBuf::from)
+        .map(|root| {
+            root.join("System32")
+                .join("WindowsPowerShell")
+                .join("v1.0")
+                .join("powershell.exe")
+        })
+        .unwrap_or_default();
+    resolve_windows_shell(command, &pwsh_candidates, &powershell, Path::is_file)
+}
+
+#[cfg(target_os = "linux")]
+fn resolve_native_shell(command: &str) -> io::Result<ResolvedShell> {
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let requested_shell = std::env::var_os("SHELL").map(PathBuf::from);
+    resolve_linux_shell(
+        command,
+        requested_shell.as_deref(),
+        Path::new("/bin/bash"),
+        Path::new("/bin/sh"),
+        |candidate| {
+            candidate.metadata().is_ok_and(|metadata| {
+                metadata.is_file() && metadata.permissions().mode() & 0o111 != 0
+            })
+        },
+    )
+}
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn resolve_native_shell(_command: &str) -> io::Result<ResolvedShell> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "native PTY shell is supported only on Windows and Linux",
+    ))
+}
+
+fn pty_error(error: impl std::fmt::Display) -> io::Error {
+    io::Error::other(error.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+    use std::path::{Path, PathBuf};
+
+    use super::{ProcessShellSessionIds, resolve_linux_shell, resolve_windows_shell};
+    use crate::shell::{ShellManagerError, ShellSessionIdSource};
+
+    #[test]
+    fn native_shell_resolution_windows_prefers_pwsh_then_powershell_and_never_cmd() {
+        let fixture = tempfile::tempdir().expect("shell fixture");
+        let pwsh = fixture.path().join("pwsh.exe");
+        let powershell = fixture.path().join("powershell.exe");
+        let cmd = fixture.path().join("cmd.exe");
+        for executable in [&pwsh, &powershell, &cmd] {
+            std::fs::write(executable, []).expect("shell executable fixture");
+        }
+
+        let resolved = resolve_windows_shell(
+            "Write-Output ok",
+            std::slice::from_ref(&pwsh),
+            &powershell,
+            Path::is_file,
+        )
+        .expect("pwsh resolution");
+        assert_eq!(resolved.program, pwsh);
+        assert_eq!(
+            resolved.args,
+            ["-NoLogo", "-NoProfile", "-Command", "Write-Output ok"]
+        );
+
+        std::fs::remove_file(&resolved.program).expect("remove pwsh fixture");
+        let resolved = resolve_windows_shell(
+            "Write-Output fallback",
+            std::slice::from_ref(&resolved.program),
+            &powershell,
+            Path::is_file,
+        )
+        .expect("Windows PowerShell resolution");
+        assert_eq!(resolved.program, powershell);
+        assert_eq!(
+            resolved.args,
+            ["-NoLogo", "-NoProfile", "-Command", "Write-Output fallback"]
+        );
+
+        std::fs::remove_file(&resolved.program).expect("remove powershell fixture");
+        let error = resolve_windows_shell(
+            "echo must-not-use-cmd",
+            &[fixture.path().join("pwsh.exe")],
+            &fixture.path().join("powershell.exe"),
+            Path::is_file,
+        )
+        .expect_err("cmd.exe must never be selected");
+        assert_eq!(error.kind(), std::io::ErrorKind::NotFound);
+        assert!(
+            cmd.is_file(),
+            "cmd fixture proves it was deliberately ignored"
+        );
+    }
+
+    #[test]
+    fn native_shell_resolution_linux_prefers_absolute_executable_shell_then_bash_then_sh() {
+        let requested = PathBuf::from("/opt/user/bin/zsh");
+        let relative = PathBuf::from("opt/user/bin/fish");
+        let bash = PathBuf::from("/bin/bash");
+        let sh = PathBuf::from("/bin/sh");
+
+        let executable = HashSet::from([
+            requested.clone(),
+            relative.clone(),
+            bash.clone(),
+            sh.clone(),
+        ]);
+        let resolved = resolve_linux_shell(
+            "printf ok",
+            Some(requested.as_path()),
+            &bash,
+            &sh,
+            |candidate| executable.contains(candidate),
+        )
+        .expect("absolute executable SHELL");
+        assert_eq!(resolved.program, requested);
+        assert_eq!(resolved.args, ["-lc", "printf ok"]);
+
+        let resolved = resolve_linux_shell(
+            "printf bash",
+            Some(relative.as_path()),
+            &bash,
+            &sh,
+            |candidate| executable.contains(candidate),
+        )
+        .expect("relative SHELL must be ignored");
+        assert_eq!(resolved.program, bash);
+        assert_eq!(resolved.args, ["-lc", "printf bash"]);
+
+        let only_sh = HashSet::from([sh.clone()]);
+        let resolved = resolve_linux_shell(
+            "printf sh",
+            Some(Path::new("/missing/shell")),
+            Path::new("/missing/bash"),
+            &sh,
+            |candidate| only_sh.contains(candidate),
+        )
+        .expect("sh fallback");
+        assert_eq!(resolved.program, sh);
+        assert_eq!(resolved.args, ["-lc", "printf sh"]);
+    }
+
+    #[test]
+    fn process_shell_session_ids_report_identifier_when_the_counter_is_exhausted() {
+        let ids = ProcessShellSessionIds::from_nonce_and_counter([0xab; 8], u64::MAX);
+        assert!(matches!(
+            ids.next_session_id(),
+            Err(ShellManagerError::Identifier)
+        ));
+    }
+}
