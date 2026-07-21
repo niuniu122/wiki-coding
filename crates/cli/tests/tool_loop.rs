@@ -8,8 +8,8 @@ use minimax_cli::{
     DriverIds, HeadlessApprovalPort, InteractiveApprovalPort, ProviderPort, RuntimeDriver,
 };
 use minimax_core::{
-    ApprovalFuture, ApprovalPort, CancellationPort, PermissionMode, ToolFuture, ToolPort,
-    ToolSandboxPolicy,
+    ApprovalFuture, ApprovalPort, CancellationPort, PermissionMode, ToolExecutionContext,
+    ToolFuture, ToolPort, ToolSandboxPolicy,
 };
 use minimax_protocol::{
     AgentLimits, ConversationItem, JournalRecord, ModelBinding, ModelId, ProviderId,
@@ -109,9 +109,8 @@ impl ApprovalPort for ApprovalSpy {
 }
 
 struct ToolSpy {
-    preflight_calls: Arc<Mutex<Vec<ToolCallId>>>,
-    execute_calls: Arc<Mutex<Vec<ToolCallId>>>,
-    sandbox_policies: Arc<Mutex<Vec<ToolSandboxPolicy>>>,
+    preflight_calls: Arc<Mutex<Vec<(ToolCallId, ToolExecutionContext)>>>,
+    execute_calls: Arc<Mutex<Vec<(ToolCallId, ToolExecutionContext)>>>,
     deny_preflight: bool,
 }
 
@@ -140,13 +139,14 @@ impl ApprovalPort for CancellingApproval {
 
 struct CancellingTool {
     cancellation: Arc<Mutex<Option<CancellationToken>>>,
-    execute_calls: Arc<Mutex<Vec<ToolCallId>>>,
+    execute_calls: Arc<Mutex<Vec<(ToolCallId, ToolExecutionContext)>>>,
 }
 
 impl ToolPort for CancellingTool {
     fn preflight(
         &self,
         _invocation: &ToolInvocation,
+        _context: ToolExecutionContext,
         _cancellation: &dyn CancellationPort,
     ) -> Result<(), ToolResult> {
         Ok(())
@@ -155,14 +155,14 @@ impl ToolPort for CancellingTool {
     fn execute<'a>(
         &'a self,
         invocation: &'a ToolInvocation,
-        _sandbox_policy: ToolSandboxPolicy,
+        context: ToolExecutionContext,
         cancellation: &'a dyn CancellationPort,
     ) -> ToolFuture<'a> {
         Box::pin(async move {
             self.execute_calls
                 .lock()
                 .expect("execute calls")
-                .push(invocation.call.call_id.clone());
+                .push((invocation.call.call_id.clone(), context));
             self.cancellation
                 .lock()
                 .expect("cancellation")
@@ -184,12 +184,13 @@ impl ToolPort for ToolSpy {
     fn preflight(
         &self,
         invocation: &ToolInvocation,
+        context: ToolExecutionContext,
         _cancellation: &dyn CancellationPort,
     ) -> Result<(), ToolResult> {
         self.preflight_calls
             .lock()
             .expect("preflight calls")
-            .push(invocation.call.call_id.clone());
+            .push((invocation.call.call_id.clone(), context));
         if self.deny_preflight {
             Err(result_for(
                 invocation,
@@ -205,18 +206,14 @@ impl ToolPort for ToolSpy {
     fn execute<'a>(
         &'a self,
         invocation: &'a ToolInvocation,
-        sandbox_policy: ToolSandboxPolicy,
+        context: ToolExecutionContext,
         _cancellation: &'a dyn CancellationPort,
     ) -> ToolFuture<'a> {
         Box::pin(async move {
             self.execute_calls
                 .lock()
                 .expect("execute calls")
-                .push(invocation.call.call_id.clone());
-            self.sandbox_policies
-                .lock()
-                .expect("sandbox policies")
-                .push(sandbox_policy);
+                .push((invocation.call.call_id.clone(), context));
             result_for(
                 invocation,
                 ToolTerminalStatus::Succeeded,
@@ -371,7 +368,6 @@ async fn confirm_mode_preserves_order_ids_and_durability_for_both_provider_proto
         let approvals = Arc::new(Mutex::new(Vec::new()));
         let preflights = Arc::new(Mutex::new(Vec::new()));
         let executions = Arc::new(Mutex::new(Vec::new()));
-        let sandbox_policies = Arc::new(Mutex::new(Vec::new()));
         let provider = ScriptedProvider {
             rounds: VecDeque::from([
                 tool_round(&[("call-a", "A.md"), ("call-b", "B.md")]),
@@ -391,7 +387,6 @@ async fn confirm_mode_preserves_order_ids_and_durability_for_both_provider_proto
         let tools = ToolSpy {
             preflight_calls: Arc::clone(&preflights),
             execute_calls: Arc::clone(&executions),
-            sandbox_policies: Arc::clone(&sandbox_policies),
             deny_preflight: false,
         };
         let mut driver = RuntimeDriver::open_with_agent_ports(
@@ -428,7 +423,7 @@ async fn confirm_mode_preserves_order_ids_and_durability_for_both_provider_proto
                 .lock()
                 .expect("preflights")
                 .iter()
-                .map(ToolCallId::as_str)
+                .map(|(call_id, _)| call_id.as_str())
                 .collect::<Vec<_>>(),
             ["call-a", "call-b"]
         );
@@ -437,16 +432,26 @@ async fn confirm_mode_preserves_order_ids_and_durability_for_both_provider_proto
                 .lock()
                 .expect("executions")
                 .iter()
-                .map(ToolCallId::as_str)
+                .map(|(call_id, _)| call_id.as_str())
                 .collect::<Vec<_>>(),
             ["call-b"]
         );
         assert_eq!(
-            sandbox_policies
+            executions
                 .lock()
-                .expect("sandbox policies")
-                .as_slice(),
+                .expect("executions")
+                .iter()
+                .map(|(_, context)| context.sandbox_policy())
+                .collect::<Vec<_>>(),
             [ToolSandboxPolicy::Restricted]
+        );
+        assert!(
+            preflights
+                .lock()
+                .expect("preflights")
+                .iter()
+                .all(|(_, context)| *context
+                    == ToolExecutionContext::for_permission_mode(PermissionMode::Confirm))
         );
 
         let captured = requests.lock().expect("requests");
@@ -527,7 +532,6 @@ async fn full_access_skips_prompt_but_still_preflights_persists_and_executes() {
     let approvals = Arc::new(Mutex::new(Vec::new()));
     let preflights = Arc::new(Mutex::new(Vec::new()));
     let executions = Arc::new(Mutex::new(Vec::new()));
-    let sandbox_policies = Arc::new(Mutex::new(Vec::new()));
     let provider = ScriptedProvider {
         rounds: VecDeque::from([tool_round(&[("call-full", "README.md")]), final_round(1)]),
         requests,
@@ -546,7 +550,6 @@ async fn full_access_skips_prompt_but_still_preflights_persists_and_executes() {
         Box::new(ToolSpy {
             preflight_calls: Arc::clone(&preflights),
             execute_calls: Arc::clone(&executions),
-            sandbox_policies: Arc::clone(&sandbox_policies),
             deny_preflight: false,
         }),
         vec![definition()],
@@ -559,11 +562,17 @@ async fn full_access_skips_prompt_but_still_preflights_persists_and_executes() {
     assert_eq!(preflights.lock().expect("preflights").len(), 1);
     assert_eq!(executions.lock().expect("executions").len(), 1);
     assert_eq!(
-        sandbox_policies
+        executions
             .lock()
-            .expect("sandbox policies")
-            .as_slice(),
+            .expect("executions")
+            .iter()
+            .map(|(_, context)| context.sandbox_policy())
+            .collect::<Vec<_>>(),
         [ToolSandboxPolicy::Disabled]
+    );
+    assert_eq!(
+        preflights.lock().expect("preflights")[0].1,
+        executions.lock().expect("executions")[0].1
     );
     drop(driver);
 
@@ -585,7 +594,6 @@ async fn full_access_skips_prompt_but_still_preflights_persists_and_executes() {
         Box::new(ToolSpy {
             preflight_calls: Arc::new(Mutex::new(Vec::new())),
             execute_calls: Arc::new(Mutex::new(Vec::new())),
-            sandbox_policies: Arc::new(Mutex::new(Vec::new())),
             deny_preflight: false,
         }),
         vec![definition()],
@@ -627,7 +635,6 @@ async fn unavailable_approval_returns_rejection_and_invokes_zero_tools() {
         Box::new(ToolSpy {
             preflight_calls: Arc::new(Mutex::new(Vec::new())),
             execute_calls: Arc::clone(&executions),
-            sandbox_policies: Arc::new(Mutex::new(Vec::new())),
             deny_preflight: false,
         }),
         vec![definition()],
@@ -672,7 +679,6 @@ async fn full_access_cannot_bypass_a_preflight_denial() {
         Box::new(ToolSpy {
             preflight_calls: Arc::new(Mutex::new(Vec::new())),
             execute_calls: Arc::clone(&executions),
-            sandbox_policies: Arc::new(Mutex::new(Vec::new())),
             deny_preflight: true,
         }),
         vec![definition()],
@@ -713,7 +719,6 @@ async fn provider_round_budget_exhaustion_is_one_durable_terminal_failure() {
         Box::new(ToolSpy {
             preflight_calls: Arc::new(Mutex::new(Vec::new())),
             execute_calls: Arc::new(Mutex::new(Vec::new())),
-            sandbox_policies: Arc::new(Mutex::new(Vec::new())),
             deny_preflight: false,
         }),
         vec![definition()],
@@ -768,7 +773,6 @@ async fn cancellation_during_confirmation_persists_cancelled_and_executes_nothin
         Box::new(ToolSpy {
             preflight_calls: Arc::new(Mutex::new(Vec::new())),
             execute_calls: Arc::clone(&executions),
-            sandbox_policies: Arc::new(Mutex::new(Vec::new())),
             deny_preflight: false,
         }),
         vec![definition()],

@@ -1,6 +1,6 @@
 use minimax_core::{
     AgentBudget, BudgetKind, InvocationEffect, InvocationError, InvocationInput, InvocationMachine,
-    InvocationRegistry, InvocationState, PermissionMode, ToolSandboxPolicy,
+    InvocationRegistry, InvocationState, PermissionMode, ToolExecutionContext, ToolSandboxPolicy,
 };
 use minimax_protocol::{
     AgentLimits, SchemaVersion, ToolCall, ToolCallId, ToolDecision, ToolDecisionKind, ToolEffect,
@@ -55,42 +55,50 @@ fn permission_mode_has_only_confirm_and_full_access_and_defaults_to_confirm() {
 }
 
 #[test]
-fn execution_effect_carries_the_permission_snapshot_as_an_independent_sandbox_policy() {
-    for (mode, expected_policy) in [
-        (PermissionMode::Confirm, ToolSandboxPolicy::Restricted),
-        (PermissionMode::FullAccess, ToolSandboxPolicy::Disabled),
-    ] {
-        let (mut machine, _) = InvocationMachine::request(invocation("call-policy"));
-        let decision_effects = machine
-            .apply(InvocationInput::PreflightAllowed {
-                permission_mode: mode,
-            })
-            .expect("preflight");
-        if mode == PermissionMode::Confirm {
-            assert!(matches!(
-                decision_effects.as_slice(),
-                [InvocationEffect::RequestApproval(_)]
-            ));
-            machine
-                .apply(InvocationInput::Decision {
-                    decision: decision("call-policy", ToolDecisionKind::Approved, "approved"),
-                    permission_mode: mode,
-                })
-                .expect("confirm decision");
-        }
+fn execution_context_maps_permission_to_sandbox_once() {
+    let confirm = ToolExecutionContext::for_permission_mode(PermissionMode::Confirm);
+    assert_eq!(confirm.permission_mode(), PermissionMode::Confirm);
+    assert_eq!(confirm.sandbox_policy(), ToolSandboxPolicy::Restricted);
 
-        let effects = machine.apply(InvocationInput::Start).expect("start");
-        assert!(matches!(
-            effects.as_slice(),
-            [
-                InvocationEffect::PersistStarted(_),
-                InvocationEffect::Execute {
-                    sandbox_policy,
-                    ..
-                }
-            ] if *sandbox_policy == expected_policy
-        ));
-    }
+    let full = ToolExecutionContext::for_permission_mode(PermissionMode::FullAccess);
+    assert_eq!(full.permission_mode(), PermissionMode::FullAccess);
+    assert_eq!(full.sandbox_policy(), ToolSandboxPolicy::Disabled);
+}
+
+#[test]
+fn approved_invocation_executes_with_the_recorded_permission_snapshot() {
+    let (mut machine, _) = InvocationMachine::request(invocation("context-snapshot"));
+    let context = ToolExecutionContext::for_permission_mode(PermissionMode::Confirm);
+    let effects = machine
+        .apply(InvocationInput::PreflightAllowed {
+            permission_mode: context.permission_mode(),
+        })
+        .expect("preflight");
+    assert!(matches!(
+        effects.as_slice(),
+        [InvocationEffect::RequestApproval(_)]
+    ));
+    let effects = machine
+        .apply(InvocationInput::Decision {
+            decision: decision("context-snapshot", ToolDecisionKind::Approved, "approved"),
+            permission_mode: context.permission_mode(),
+        })
+        .expect("decision");
+    assert!(matches!(
+        effects.as_slice(),
+        [InvocationEffect::PersistDecision(_)]
+    ));
+    let effects = machine.apply(InvocationInput::Start).expect("start");
+    assert!(matches!(
+        effects.as_slice(),
+        [
+            InvocationEffect::PersistStarted(_),
+            InvocationEffect::Execute {
+                context: actual,
+                ..
+            }
+        ] if *actual == context
+    ));
 }
 
 #[test]

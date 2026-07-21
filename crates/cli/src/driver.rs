@@ -12,8 +12,8 @@ use minimax_core::{
     CompactionError, InvocationEffect, InvocationError, InvocationInput, InvocationMachine,
     InvocationRegistry, InvocationState, LocalCompactor, PermissionMode, RunEffect, RunInput,
     RunMachine, RunState, SafeTraceFact, SafeTraceRecorder, SessionCommand, SessionEffect,
-    SessionSummary, ToolPort, WikiGenerationError, WikiGenerationFuture, WikiGenerationOutput,
-    WikiGenerationPort, WikiGenerationRequest,
+    SessionSummary, ToolExecutionContext, ToolPort, WikiGenerationError, WikiGenerationFuture,
+    WikiGenerationOutput, WikiGenerationPort, WikiGenerationRequest,
 };
 use minimax_protocol::{
     AgentLimits, AssistantToolCallBatch, CompactionId, CompactionRecord, ConversationItem,
@@ -297,6 +297,7 @@ impl ToolPort for ToolUnavailable {
     fn preflight(
         &self,
         invocation: &ToolInvocation,
+        _context: ToolExecutionContext,
         _cancellation: &dyn CancellationPort,
     ) -> Result<(), ToolResult> {
         Err(ToolResult {
@@ -312,7 +313,7 @@ impl ToolPort for ToolUnavailable {
     fn execute<'a>(
         &'a self,
         invocation: &'a ToolInvocation,
-        _sandbox_policy: minimax_core::ToolSandboxPolicy,
+        _context: ToolExecutionContext,
         _cancellation: &'a dyn CancellationPort,
     ) -> minimax_core::ToolFuture<'a> {
         Box::pin(async move {
@@ -970,9 +971,10 @@ impl<P: ProviderPort> RuntimeDriver<P> {
         budget: &mut AgentBudget,
         cancellation: &CancellationToken,
     ) -> Result<ToolResult, DriverError> {
+        let context = ToolExecutionContext::for_permission_mode(self.permission_mode);
         let (mut machine, initial) = InvocationMachine::request(invocation.clone());
         let _ = self
-            .apply_invocation_effects(&mut machine, initial, budget, cancellation)
+            .apply_invocation_effects(&mut machine, initial, context, budget, cancellation)
             .await?;
         let preflight = if cancellation.is_cancelled() {
             machine
@@ -980,10 +982,10 @@ impl<P: ProviderPort> RuntimeDriver<P> {
                 .map_err(DriverError::Invocation)?
         } else {
             let cancellation = DriverCancellation(cancellation);
-            match self.tools.preflight(&invocation, &cancellation) {
+            match self.tools.preflight(&invocation, context, &cancellation) {
                 Ok(()) => machine
                     .apply(InvocationInput::PreflightAllowed {
-                        permission_mode: self.permission_mode,
+                        permission_mode: context.permission_mode(),
                     })
                     .map_err(DriverError::Invocation)?,
                 Err(result) => {
@@ -994,7 +996,7 @@ impl<P: ProviderPort> RuntimeDriver<P> {
                 }
             }
         };
-        self.apply_invocation_effects(&mut machine, preflight, budget, cancellation)
+        self.apply_invocation_effects(&mut machine, preflight, context, budget, cancellation)
             .await?
             .ok_or(DriverError::Runtime(RuntimeErrorCode::Recovery))
     }
@@ -1003,6 +1005,7 @@ impl<P: ProviderPort> RuntimeDriver<P> {
         &mut self,
         machine: &mut InvocationMachine,
         effects: Vec<InvocationEffect>,
+        context: ToolExecutionContext,
         budget: &mut AgentBudget,
         cancellation: &CancellationToken,
     ) -> Result<Option<ToolResult>, DriverError> {
@@ -1025,7 +1028,7 @@ impl<P: ProviderPort> RuntimeDriver<P> {
                             let decision = normalize_decision(&invocation, decision);
                             machine.apply(InvocationInput::Decision {
                                 decision,
-                                permission_mode: self.permission_mode,
+                                permission_mode: context.permission_mode(),
                             })
                         }
                         () = cancellation.cancelled() => machine.apply(InvocationInput::Cancel),
@@ -1064,8 +1067,9 @@ impl<P: ProviderPort> RuntimeDriver<P> {
                 }
                 InvocationEffect::Execute {
                     invocation,
-                    sandbox_policy,
+                    context: recorded_context,
                 } => {
+                    debug_assert_eq!(recorded_context, context);
                     if cancellation.is_cancelled() {
                         pending.extend(
                             machine
@@ -1077,7 +1081,7 @@ impl<P: ProviderPort> RuntimeDriver<P> {
                     let cancellation = DriverCancellation(cancellation);
                     let result = self
                         .tools
-                        .execute(&invocation, sandbox_policy, &cancellation)
+                        .execute(&invocation, context, &cancellation)
                         .await;
                     let result = normalize_execution_result(&invocation, result);
                     let result_bytes = serde_json::to_vec(&result)

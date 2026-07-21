@@ -28,6 +28,32 @@ impl PermissionMode {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct ToolExecutionContext {
+    permission_mode: PermissionMode,
+    sandbox_policy: ToolSandboxPolicy,
+}
+
+impl ToolExecutionContext {
+    #[must_use]
+    pub const fn for_permission_mode(permission_mode: PermissionMode) -> Self {
+        Self {
+            permission_mode,
+            sandbox_policy: permission_mode.sandbox_policy(),
+        }
+    }
+
+    #[must_use]
+    pub const fn permission_mode(self) -> PermissionMode {
+        self.permission_mode
+    }
+
+    #[must_use]
+    pub const fn sandbox_policy(self) -> ToolSandboxPolicy {
+        self.sandbox_policy
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DecisionSnapshot {
     pub decision: ToolDecision,
@@ -74,7 +100,7 @@ pub enum InvocationEffect {
     PersistStarted(ToolCallId),
     Execute {
         invocation: ToolInvocation,
-        sandbox_policy: ToolSandboxPolicy,
+        context: ToolExecutionContext,
     },
     PersistTerminal(ToolResult),
     PublishTerminal(ToolResult),
@@ -157,13 +183,13 @@ impl InvocationMachine {
             ) => self.record_decision(decision, permission_mode),
             (InvocationState::Approved { snapshot }, InvocationInput::Start) => {
                 let snapshot = snapshot.clone();
-                let sandbox_policy = snapshot.permission_mode.sandbox_policy();
+                let context = ToolExecutionContext::for_permission_mode(snapshot.permission_mode);
                 self.state = InvocationState::Started { snapshot };
                 Ok(vec![
                     InvocationEffect::PersistStarted(self.invocation.call.call_id.clone()),
                     InvocationEffect::Execute {
                         invocation: self.invocation.clone(),
-                        sandbox_policy,
+                        context,
                     },
                 ])
             }

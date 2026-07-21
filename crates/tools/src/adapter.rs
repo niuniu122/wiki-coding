@@ -1,6 +1,6 @@
 use std::path::Path;
 
-use minimax_core::{CancellationPort, ToolFuture, ToolPort, ToolSandboxPolicy};
+use minimax_core::{CancellationPort, ToolExecutionContext, ToolFuture, ToolPort};
 use minimax_protocol::{ToolDefinition, ToolInvocation, ToolResult, ToolValidationError};
 
 use crate::{
@@ -38,9 +38,10 @@ impl BuiltinToolPort {
     async fn dispatch(
         &self,
         invocation: &ToolInvocation,
-        sandbox_policy: ToolSandboxPolicy,
+        context: ToolExecutionContext,
         cancellation: &dyn CancellationPort,
     ) -> ToolResult {
+        let sandbox_policy = context.sandbox_policy();
         match invocation.call.name.as_str() {
             "read_file" => ReadFileTool::execute(&self.workspace, invocation, cancellation),
             "list_directory" => {
@@ -77,6 +78,7 @@ impl ToolPort for BuiltinToolPort {
     fn preflight(
         &self,
         invocation: &ToolInvocation,
+        _context: ToolExecutionContext,
         cancellation: &dyn CancellationPort,
     ) -> Result<(), ToolResult> {
         Preflight::check(invocation, cancellation)
@@ -87,9 +89,9 @@ impl ToolPort for BuiltinToolPort {
     fn execute<'a>(
         &'a self,
         invocation: &'a ToolInvocation,
-        sandbox_policy: ToolSandboxPolicy,
+        context: ToolExecutionContext,
         cancellation: &'a dyn CancellationPort,
     ) -> ToolFuture<'a> {
-        Box::pin(self.dispatch(invocation, sandbox_policy, cancellation))
+        Box::pin(self.dispatch(invocation, context, cancellation))
     }
 }
