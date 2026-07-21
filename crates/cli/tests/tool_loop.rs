@@ -223,10 +223,6 @@ impl PtyBackend for DriverShellBackend {
             }),
         })
     }
-
-    fn terminate_tree<'a>(&'a self, _process_id: u32) -> PtyTerminateFuture<'a> {
-        Box::pin(async { Ok(()) })
-    }
 }
 
 struct DriverShellChild {
@@ -291,6 +287,17 @@ struct DriverShellGuard {
 }
 
 impl PtyGuard for DriverShellGuard {
+    fn terminate<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+        Box::pin(async move {
+            self.process.exit();
+            Ok(())
+        })
+    }
+
+    fn confirm<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+        Box::pin(async { Ok(()) })
+    }
+
     fn disarm(&mut self) {
         self.armed = false;
     }

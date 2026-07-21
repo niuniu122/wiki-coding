@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{HashSet, VecDeque};
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -543,14 +543,20 @@ impl SpawnGate {
 #[derive(Default)]
 struct FakeBackend {
     plans: Mutex<VecDeque<FakePlan>>,
-    processes: Mutex<HashMap<u32, Arc<FakeShared>>>,
     cursor_handshake_required: AtomicBool,
     spawns: AtomicUsize,
-    terminations: AtomicUsize,
-    termination_error: AtomicBool,
-    termination_gate: Mutex<Option<TerminationGate>>,
+    termination: Arc<FakeTermination>,
     spawn_notify: tokio::sync::Notify,
     next_process_id: AtomicU64,
+}
+
+#[derive(Default)]
+struct FakeTermination {
+    count: AtomicUsize,
+    error: AtomicBool,
+    gate: Mutex<Option<TerminationGate>>,
+    confirmation_count: AtomicUsize,
+    confirmation_error: AtomicBool,
 }
 
 impl FakeBackend {
@@ -613,15 +619,25 @@ impl FakeBackend {
     }
 
     fn set_termination_error(&self, enabled: bool) {
-        self.termination_error.store(enabled, Ordering::Release);
+        self.termination.error.store(enabled, Ordering::Release);
     }
 
     fn set_termination_gate(&self, gate: TerminationGate) {
-        *self.termination_gate.lock().expect("termination gate lock") = Some(gate);
+        *self.termination.gate.lock().expect("termination gate lock") = Some(gate);
+    }
+
+    fn set_confirmation_error(&self, enabled: bool) {
+        self.termination
+            .confirmation_error
+            .store(enabled, Ordering::Release);
     }
 
     fn termination_count(&self) -> usize {
-        self.terminations.load(Ordering::Acquire)
+        self.termination.count.load(Ordering::Acquire)
+    }
+
+    fn confirmation_count(&self) -> usize {
+        self.termination.confirmation_count.load(Ordering::Acquire)
     }
 
     async fn wait_for_spawn_count(&self, expected: usize) {
@@ -655,10 +671,6 @@ impl PtyBackend for FakeBackend {
         }
         self.spawns.fetch_add(1, Ordering::AcqRel);
         self.spawn_notify.notify_waiters();
-        self.processes
-            .lock()
-            .expect("processes lock")
-            .insert(plan.shared.process_id, Arc::clone(&plan.shared));
         Ok(SpawnedPty {
             child: Box::new(FakeChild {
                 shared: Arc::clone(&plan.shared),
@@ -672,34 +684,10 @@ impl PtyBackend for FakeBackend {
             }),
             guard: Box::new(FakeGuard {
                 shared: Arc::clone(&plan.shared),
+                termination: Arc::clone(&self.termination),
                 armed: true,
+                destructive_complete: false,
             }),
-        })
-    }
-
-    fn terminate_tree<'a>(&'a self, process_id: u32) -> PtyTerminateFuture<'a> {
-        Box::pin(async move {
-            self.terminations.fetch_add(1, Ordering::AcqRel);
-            let gate = self
-                .termination_gate
-                .lock()
-                .expect("termination gate lock")
-                .clone();
-            if let Some(gate) = gate {
-                gate.enter().await;
-            }
-            if self.termination_error.load(Ordering::Acquire) {
-                return Err(io::Error::other("scripted tree termination failure"));
-            }
-            let process = self
-                .processes
-                .lock()
-                .expect("processes lock")
-                .get(&process_id)
-                .cloned()
-                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "unknown process"))?;
-            process.exit(-15);
-            Ok(())
         })
     }
 }
@@ -710,10 +698,50 @@ struct FakeChild {
 
 struct FakeGuard {
     shared: Arc<FakeShared>,
+    termination: Arc<FakeTermination>,
     armed: bool,
+    destructive_complete: bool,
 }
 
 impl minimax_tools::PtyGuard for FakeGuard {
+    fn terminate<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+        Box::pin(async move {
+            if self.destructive_complete {
+                return Ok(());
+            }
+            self.termination.count.fetch_add(1, Ordering::AcqRel);
+            let gate = self
+                .termination
+                .gate
+                .lock()
+                .expect("termination gate lock")
+                .clone();
+            if let Some(gate) = gate {
+                gate.enter().await;
+            }
+            if self.termination.error.load(Ordering::Acquire) {
+                return Err(io::Error::other("scripted tree termination failure"));
+            }
+            self.shared.exit(-15);
+            self.destructive_complete = true;
+            Ok(())
+        })
+    }
+
+    fn confirm<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+        Box::pin(async move {
+            self.termination
+                .confirmation_count
+                .fetch_add(1, Ordering::AcqRel);
+            if self.termination.confirmation_error.load(Ordering::Acquire) {
+                return Err(io::Error::other(
+                    "scripted containment confirmation failure",
+                ));
+            }
+            Ok(())
+        })
+    }
+
     fn disarm(&mut self) {
         if self.armed {
             self.armed = false;
@@ -725,7 +753,7 @@ impl minimax_tools::PtyGuard for FakeGuard {
 impl Drop for FakeGuard {
     fn drop(&mut self) {
         self.shared.guard_drops.fetch_add(1, Ordering::AcqRel);
-        if self.armed {
+        if self.armed && !self.destructive_complete {
             self.shared
                 .guard_tree_terminations
                 .fetch_add(1, Ordering::AcqRel);
@@ -1346,6 +1374,67 @@ async fn ninth_running_session_fails_before_backend_spawn() {
 }
 
 #[tokio::test]
+async fn observed_root_exit_keeps_its_running_slot_until_containment_cleanup_finishes() {
+    let backend = Arc::new(FakeBackend::default());
+    backend.queue_fast(b"root-exited", 0);
+    let termination_gate = TerminationGate::new();
+    backend.set_termination_gate(termination_gate.clone());
+    let manager = enabled_manager(Arc::clone(&backend), Arc::new(ManualClock::default())).await;
+    let first_manager = manager.clone();
+    let first = tokio::spawn(async move {
+        first_manager
+            .start(
+                command_request("root-exits-before-cleanup", Duration::ZERO),
+                &NeverCancelled,
+            )
+            .await
+    });
+    termination_gate
+        .wait_for_entries_bounded(
+            1,
+            Duration::from_secs(3),
+            "terminal root reaches containment cleanup",
+        )
+        .await;
+
+    for index in 1..MAX_RUNNING_SHELL_SESSIONS {
+        backend.queue_process();
+        manager
+            .start(
+                command_request(&format!("while-cleanup-{index}"), Duration::ZERO),
+                &NeverCancelled,
+            )
+            .await
+            .expect("remaining capacity starts");
+    }
+    assert_eq!(
+        manager
+            .start(
+                command_request("must-not-overbook", Duration::ZERO),
+                &NeverCancelled,
+            )
+            .await,
+        Err(ShellManagerError::SessionLimit)
+    );
+    assert_eq!(backend.spawn_count(), MAX_RUNNING_SHELL_SESSIONS);
+
+    termination_gate.release();
+    first
+        .await
+        .expect("terminal start task joins")
+        .expect("terminal containment cleanup succeeds");
+    backend.queue_process();
+    manager
+        .start(
+            command_request("after-cleanup", Duration::ZERO),
+            &NeverCancelled,
+        )
+        .await
+        .expect("successful cleanup releases exactly one running slot");
+    manager.shutdown().await.expect("cleanup succeeds");
+}
+
+#[tokio::test]
 async fn cancel_before_id_delivery_stops_the_spawned_tree() {
     let backend = Arc::new(FakeBackend::default());
     let control = backend.queue_process();
@@ -1658,6 +1747,7 @@ async fn unpublished_cleanup_failure_retains_slot_and_is_reported_by_disable() {
     };
     assert_eq!(manager.disable_and_stop_all().await, Err(expected.clone()));
 
+    backend.set_termination_error(false);
     manager.enable().await;
     for index in 0..(MAX_RUNNING_SHELL_SESSIONS - 1) {
         backend.queue_process();
@@ -1678,7 +1768,10 @@ async fn unpublished_cleanup_failure_retains_slot_and_is_reported_by_disable() {
             .await,
         Err(ShellManagerError::SessionLimit)
     );
-    assert_eq!(manager.shutdown().await, Err(expected));
+    manager
+        .shutdown()
+        .await
+        .expect("unpublished cleanup retry and replacement shutdown succeed");
 }
 
 #[tokio::test]
@@ -1842,6 +1935,7 @@ async fn confirmed_cleanup_disarms_guard_without_a_second_tree_termination() {
     assert_eq!(control.guard_disarms(), 1);
     assert_eq!(control.guard_tree_terminations(), 0);
     assert_eq!(control.guard_drops(), 1);
+    assert_eq!(backend.termination_count(), 1);
     manager
         .shutdown()
         .await
@@ -1850,7 +1944,141 @@ async fn confirmed_cleanup_disarms_guard_without_a_second_tree_termination() {
 }
 
 #[tokio::test]
-async fn reader_timeout_keeps_guard_armed_for_final_tree_termination() {
+async fn natural_parent_exit_still_terminates_containment_before_cleanup_succeeds() {
+    let backend = Arc::new(FakeBackend::default());
+    let control = backend.queue_process();
+    let manager = enabled_manager(Arc::clone(&backend), Arc::new(ManualClock::default())).await;
+    let started = manager
+        .start(
+            command_request("natural-parent-exit", Duration::ZERO),
+            &NeverCancelled,
+        )
+        .await
+        .expect("session starts");
+    control.exit(0);
+
+    let receipt = manager
+        .poll(
+            poll_request(started.session_id, Duration::ZERO),
+            &NeverCancelled,
+        )
+        .await
+        .expect("terminal cleanup succeeds");
+
+    assert_eq!(receipt.state, ShellSessionState::Exited);
+    assert_eq!(backend.termination_count(), 1);
+    assert_eq!(control.guard_disarms(), 1);
+    assert_eq!(control.guard_tree_terminations(), 0);
+}
+
+#[tokio::test]
+async fn containment_confirmation_failure_is_indeterminate_and_keeps_the_guard_armed() {
+    let backend = Arc::new(FakeBackend::default());
+    backend.set_confirmation_error(true);
+    let control = backend.queue_fast(b"done", 0);
+    let manager = enabled_manager(Arc::clone(&backend), Arc::new(ManualClock::default())).await;
+
+    let result = manager
+        .start(
+            command_request("confirmation-fails", Duration::ZERO),
+            &NeverCancelled,
+        )
+        .await;
+
+    assert_eq!(result, Err(ShellManagerError::Indeterminate));
+    assert_eq!(backend.termination_count(), 1);
+    assert_eq!(backend.confirmation_count(), 1);
+    assert_eq!(control.guard_disarms(), 0);
+    drop(manager);
+    assert_eq!(control.guard_tree_terminations(), 0);
+}
+
+#[tokio::test]
+async fn containment_confirmation_failure_retries_without_a_second_destructive_termination() {
+    let backend = Arc::new(FakeBackend::default());
+    let control = backend.queue_process();
+    let manager = enabled_manager(Arc::clone(&backend), Arc::new(ManualClock::default())).await;
+    let started = manager
+        .start(
+            command_request("confirmation-retry", Duration::ZERO),
+            &NeverCancelled,
+        )
+        .await
+        .expect("confirmation retry session starts");
+    control.exit(0);
+    backend.set_confirmation_error(true);
+
+    assert_eq!(
+        manager
+            .poll(
+                poll_request(started.session_id.clone(), Duration::ZERO),
+                &NeverCancelled,
+            )
+            .await,
+        Err(ShellManagerError::Indeterminate)
+    );
+    backend.set_confirmation_error(false);
+    let retried = manager
+        .poll(
+            poll_request(started.session_id, Duration::ZERO),
+            &NeverCancelled,
+        )
+        .await
+        .expect("non-destructive confirmation retry succeeds");
+
+    assert_eq!(retried.state, ShellSessionState::Exited);
+    assert_eq!(backend.termination_count(), 1);
+    assert_eq!(backend.confirmation_count(), 2);
+    assert_eq!(control.guard_disarms(), 1);
+}
+
+#[tokio::test]
+async fn termination_failure_retry_is_shared_and_survives_cleanup_owner_abort() {
+    let backend = Arc::new(FakeBackend::default());
+    let control = backend.queue_process();
+    control.set_exit_on_interrupt(false);
+    backend.set_termination_error(true);
+    let manager = enabled_manager(Arc::clone(&backend), Arc::new(ManualClock::default())).await;
+    let started = manager
+        .start(
+            command_request("termination-retry", Duration::ZERO),
+            &NeverCancelled,
+        )
+        .await
+        .expect("termination retry session starts");
+    assert_eq!(
+        manager.stop(&started.session_id, OUTPUT_LIMIT).await,
+        Err(ShellManagerError::Indeterminate)
+    );
+
+    backend.set_termination_error(false);
+    let retry_gate = TerminationGate::new();
+    backend.set_termination_gate(retry_gate.clone());
+    let owner_manager = manager.clone();
+    let owner_id = started.session_id.clone();
+    let owner = tokio::spawn(async move { owner_manager.stop(&owner_id, OUTPUT_LIMIT).await });
+    retry_gate
+        .wait_for_entries_bounded(1, Duration::from_secs(3), "retry cleanup owner")
+        .await;
+    let waiter_manager = manager.clone();
+    let waiter_id = started.session_id.clone();
+    let waiter = tokio::spawn(async move { waiter_manager.stop(&waiter_id, OUTPUT_LIMIT).await });
+    tokio::task::yield_now().await;
+    owner.abort();
+    assert!(owner.await.expect_err("owner is aborted").is_cancelled());
+    retry_gate.release();
+    let receipt = waiter
+        .await
+        .expect("retry waiter joins")
+        .expect("manager-owned retry survives caller abort");
+
+    assert_eq!(receipt.state, ShellSessionState::Stopped);
+    assert_eq!(backend.termination_count(), 2);
+    assert_eq!(control.guard_disarms(), 1);
+}
+
+#[tokio::test]
+async fn reader_timeout_preserves_resources_for_a_later_successful_retry() {
     let backend = Arc::new(FakeBackend::default());
     let control = backend.queue_process();
     let manager = enabled_manager(Arc::clone(&backend), Arc::new(ManualClock::default())).await;
@@ -1866,16 +2094,27 @@ async fn reader_timeout_keeps_guard_armed_for_final_tree_termination() {
     assert_eq!(
         manager
             .poll(
-                poll_request(receipt.session_id, Duration::ZERO),
+                poll_request(receipt.session_id.clone(), Duration::ZERO),
                 &NeverCancelled
             )
             .await,
         Err(ShellManagerError::Indeterminate)
     );
     assert_eq!(control.guard_disarms(), 0);
-    assert_eq!(control.guard_tree_terminations(), 1);
-    assert_eq!(control.guard_drops(), 1);
+    assert_eq!(control.guard_tree_terminations(), 0);
+    assert_eq!(control.guard_drops(), 0);
     control.finish_reader();
+    let retried = manager
+        .poll(
+            poll_request(receipt.session_id, Duration::ZERO),
+            &NeverCancelled,
+        )
+        .await
+        .expect("reader completion retry succeeds");
+    assert_eq!(retried.state, ShellSessionState::Exited);
+    assert_eq!(backend.termination_count(), 1);
+    assert_eq!(control.guard_disarms(), 1);
+    assert_eq!(control.guard_drops(), 1);
 }
 
 #[tokio::test]
@@ -2107,7 +2346,7 @@ async fn aborted_cleanup_owner_does_not_strand_waiters() {
 }
 
 #[tokio::test(start_paused = true)]
-async fn cleanup_failure_is_sticky_for_stop_disable_and_shutdown() {
+async fn cleanup_failures_retain_slots_until_a_later_retry_succeeds() {
     let backend = Arc::new(FakeBackend::default());
     backend.set_termination_error(true);
     let clock = Arc::new(ManualClock::default());
@@ -2117,7 +2356,6 @@ async fn cleanup_failure_is_sticky_for_stop_disable_and_shutdown() {
     for index in 0..MAX_RUNNING_SHELL_SESSIONS {
         let control = backend.queue_process();
         control.set_exit_on_interrupt(false);
-        control.emit(vec![b'x'; MAX_SHELL_UNREAD_BYTES]);
         let started = manager
             .start(
                 command_request(&format!("sticky-{index}"), Duration::ZERO),
@@ -2143,39 +2381,55 @@ async fn cleanup_failure_is_sticky_for_stop_disable_and_shutdown() {
     assert_eq!(manager.disable_and_stop_all().await, Err(expected.clone()));
     assert_eq!(manager.shutdown().await, Err(expected));
     assert!(controls.iter().all(|control| control.interrupts() == 1));
-    assert_eq!(backend.termination_count(), MAX_RUNNING_SHELL_SESSIONS);
+    assert_eq!(
+        backend.termination_count(),
+        3 * MAX_RUNNING_SHELL_SESSIONS + 1,
+        "each later external cleanup call starts one retry generation"
+    );
     assert!(controls.iter().all(|control| control.kills() == 1));
     assert!(controls.iter().all(|control| control.guard_disarms() == 0));
     assert!(
         controls
             .iter()
-            .all(|control| control.guard_tree_terminations() == 1)
+            .all(|control| control.guard_tree_terminations() == 0)
     );
-    assert!(controls.iter().all(|control| control.guard_drops() == 1));
+    assert!(controls.iter().all(|control| control.guard_drops() == 0));
 
     clock.advance(TERMINAL_RECEIPT_TTL + Duration::from_millis(1));
     assert_eq!(
         manager.stop(&session_ids[0], OUTPUT_LIMIT).await,
-        Err(ShellManagerError::SessionNotFound)
+        Err(ShellManagerError::Indeterminate)
     );
+    assert!(
+        controls
+            .iter()
+            .all(|control| control.guard_tree_terminations() == 0)
+    );
+    assert!(controls.iter().all(|control| control.guard_drops() == 0));
 
+    backend.set_termination_error(false);
+    manager
+        .disable_and_stop_all()
+        .await
+        .expect("failed tombstones retry successfully");
+    assert!(controls.iter().all(|control| control.guard_disarms() == 1));
+    assert!(controls.iter().all(|control| control.guard_drops() == 1));
     manager.enable().await;
-    backend.queue_fast(&vec![b'f'; 2 * OUTPUT_LIMIT], 0);
+    backend.queue_process();
     let fresh = manager
         .start(command_request("fresh", Duration::ZERO), &NeverCancelled)
         .await
-        .expect("fresh command exits after failed tombstone GC");
-    assert_eq!(fresh.output, "f".repeat(OUTPUT_LIMIT));
-    assert!(!fresh.output_truncated);
+        .expect("successful retry releases failed-cleanup capacity");
+    assert_eq!(fresh.state, ShellSessionState::Running);
 }
 
 #[tokio::test(start_paused = true)]
-async fn failed_cleanup_tombstones_are_bounded_by_count() {
+async fn failed_cleanup_tombstones_retain_capacity_and_are_bounded_by_running_limit() {
     let backend = Arc::new(FakeBackend::default());
     backend.set_termination_error(true);
     let manager = enabled_manager(Arc::clone(&backend), Arc::new(ManualClock::default())).await;
     let mut session_ids = Vec::new();
-    for index in 0..=MAX_TERMINAL_SHELL_RECEIPTS {
+    for index in 0..MAX_RUNNING_SHELL_SESSIONS {
         let control = backend.queue_process();
         control.set_exit_on_interrupt(false);
         let started = manager
@@ -2193,18 +2447,60 @@ async fn failed_cleanup_tombstones_are_bounded_by_count() {
     }
 
     assert_eq!(
-        manager.stop(&session_ids[0], OUTPUT_LIMIT).await,
-        Err(ShellManagerError::SessionNotFound)
-    );
-    assert_eq!(
         manager
-            .stop(
-                session_ids.last().expect("newest failed tombstone"),
-                OUTPUT_LIMIT,
+            .start(
+                command_request("failed-cleanup-over-capacity", Duration::ZERO),
+                &NeverCancelled,
             )
             .await,
+        Err(ShellManagerError::SessionLimit)
+    );
+    assert_eq!(backend.spawn_count(), MAX_RUNNING_SHELL_SESSIONS);
+    assert_eq!(
+        manager.stop(&session_ids[0], OUTPUT_LIMIT).await,
         Err(ShellManagerError::Indeterminate)
     );
+    backend.set_termination_error(false);
+    manager
+        .disable_and_stop_all()
+        .await
+        .expect("all bounded failed tombstones retry successfully");
+    manager.enable().await;
+    let recovered = manager
+        .stop(
+            session_ids.last().expect("newest recovered tombstone"),
+            OUTPUT_LIMIT,
+        )
+        .await
+        .expect("successful cleanup remains observable");
+    assert_eq!(recovered.state, ShellSessionState::Stopped);
+
+    for index in 0..MAX_RUNNING_SHELL_SESSIONS {
+        backend.queue_process();
+        manager
+            .start(
+                command_request(
+                    &format!("after-failed-cleanup-retry-{index}"),
+                    Duration::ZERO,
+                ),
+                &NeverCancelled,
+            )
+            .await
+            .expect("successful retry releases every running slot");
+    }
+    assert_eq!(
+        manager
+            .start(
+                command_request("after-retry-over-capacity", Duration::ZERO),
+                &NeverCancelled,
+            )
+            .await,
+        Err(ShellManagerError::SessionLimit)
+    );
+    manager
+        .shutdown()
+        .await
+        .expect("replacement cleanup succeeds");
 }
 
 #[tokio::test(start_paused = true)]
@@ -2256,6 +2552,7 @@ async fn try_wait_error_keeps_live_child_owned_and_capacity_reserved() {
         Err(ShellManagerError::SessionLimit)
     );
     assert_eq!(backend.spawn_count(), MAX_RUNNING_SHELL_SESSIONS);
+    backend.set_termination_error(false);
     assert_eq!(
         manager.disable_and_stop_all().await,
         Err(ShellCleanupError {
@@ -2338,10 +2635,11 @@ async fn blocking_child_kill_timeout_does_not_relock_child() {
         "stop relocked child after kill timed out"
     );
     assert_eq!(result, Err(ShellManagerError::Indeterminate));
-    assert_eq!(
-        manager.stop(&started.session_id, OUTPUT_LIMIT).await,
-        Err(ShellManagerError::Indeterminate)
-    );
+    let retried = manager
+        .stop(&started.session_id, OUTPUT_LIMIT)
+        .await
+        .expect("a later cleanup generation succeeds after the blocked kill finishes");
+    assert_eq!(retried.state, ShellSessionState::Stopped);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]

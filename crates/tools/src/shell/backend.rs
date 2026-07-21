@@ -22,14 +22,17 @@ pub trait PtyChild: Send {
     fn process_id(&self) -> u32;
     fn try_wait(&mut self) -> io::Result<Option<i32>>;
     fn kill(&mut self) -> io::Result<()>;
+    fn reap(&mut self) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 pub trait PtyGuard: Send {
+    fn terminate<'a>(&'a mut self) -> PtyTerminateFuture<'a>;
+    fn confirm<'a>(&'a mut self) -> PtyTerminateFuture<'a>;
     fn close_io(&mut self) {}
     fn disarm(&mut self) {}
 }
-
-impl PtyGuard for () {}
 
 pub struct SpawnedPty {
     pub child: Box<dyn PtyChild>,
@@ -61,7 +64,6 @@ pub trait PtyBackend: Send + Sync {
     }
 
     fn spawn(&self, request: &ShellSpawnRequest) -> io::Result<SpawnedPty>;
-    fn terminate_tree<'a>(&'a self, process_id: u32) -> PtyTerminateFuture<'a>;
 }
 
 pub trait ShellSessionIdSource: Send + Sync {

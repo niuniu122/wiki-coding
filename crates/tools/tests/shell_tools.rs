@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::VecDeque;
 use std::io::{self, Cursor, Write};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU32, AtomicUsize, Ordering};
@@ -530,10 +530,9 @@ enum Plan {
 struct FakeBackend {
     plans: Mutex<VecDeque<Plan>>,
     requests: Mutex<Vec<ShellSpawnRequest>>,
-    processes: Mutex<BTreeMap<u32, Arc<Mutex<Option<i32>>>>>,
     next_process_id: AtomicU32,
     spawns: AtomicUsize,
-    terminations: AtomicUsize,
+    terminations: Arc<AtomicUsize>,
 }
 
 impl FakeBackend {
@@ -603,10 +602,6 @@ impl PtyBackend for FakeBackend {
         };
         let process_id = self.next_process_id.fetch_add(1, Ordering::AcqRel) + 1;
         let state = Arc::new(Mutex::new(exit_code));
-        self.processes
-            .lock()
-            .expect("processes lock")
-            .insert(process_id, Arc::clone(&state));
         self.spawns.fetch_add(1, Ordering::AcqRel);
         Ok(SpawnedPty {
             child: Box::new(FakeChild {
@@ -614,24 +609,33 @@ impl PtyBackend for FakeBackend {
                 state: Arc::clone(&state),
             }),
             reader: Box::new(Cursor::new(output)),
-            writer: Box::new(FakeWriter { state }),
-            guard: Box::new(()),
+            writer: Box::new(FakeWriter {
+                state: Arc::clone(&state),
+            }),
+            guard: Box::new(FakeGuard {
+                state,
+                terminations: Arc::clone(&self.terminations),
+            }),
+        })
+    }
+}
+
+struct FakeGuard {
+    state: Arc<Mutex<Option<i32>>>,
+    terminations: Arc<AtomicUsize>,
+}
+
+impl minimax_tools::PtyGuard for FakeGuard {
+    fn terminate<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+        Box::pin(async move {
+            self.terminations.fetch_add(1, Ordering::AcqRel);
+            *self.state.lock().expect("process state lock") = Some(-15);
+            Ok(())
         })
     }
 
-    fn terminate_tree<'a>(&'a self, process_id: u32) -> PtyTerminateFuture<'a> {
-        Box::pin(async move {
-            self.terminations.fetch_add(1, Ordering::AcqRel);
-            let state = self
-                .processes
-                .lock()
-                .expect("processes lock")
-                .get(&process_id)
-                .cloned()
-                .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "unknown process"))?;
-            *state.lock().expect("process state lock") = Some(-15);
-            Ok(())
-        })
+    fn confirm<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+        Box::pin(async { Ok(()) })
     }
 }
 

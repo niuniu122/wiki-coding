@@ -475,10 +475,122 @@ fn yaml_mapping_key(line: &str) -> Result<Option<&str>, ()> {
     Err(())
 }
 
+fn validate_yaml_mapping_level(
+    lines: &[&str],
+    start: usize,
+    end: usize,
+    indent: usize,
+    sequence_items: bool,
+    message: &str,
+) -> Result<(), SourceAuthorityError> {
+    let mut keys = BTreeSet::new();
+    for line in &lines[start..end] {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if line.len().saturating_sub(trimmed.len()) != indent {
+            continue;
+        }
+        let mapping = if sequence_items {
+            let Some(mapping) = trimmed.strip_prefix("- ") else {
+                return violation(message);
+            };
+            mapping
+        } else {
+            trimmed
+        };
+        let Ok(Some(key)) = yaml_mapping_key(mapping) else {
+            return violation(message);
+        };
+        if key.is_empty()
+            || !key
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        {
+            return violation(message);
+        }
+        let Some((_, value)) = mapping.split_once(':') else {
+            return violation(message);
+        };
+        if matches!(
+            value.trim_start().as_bytes().first(),
+            Some(b'&' | b'*' | b'!')
+        ) {
+            return violation(message);
+        }
+        if !sequence_items && !keys.insert(key) {
+            return violation(message);
+        }
+    }
+    Ok(())
+}
+
+fn validate_yaml_step_mappings(
+    lines: &[&str],
+    start: usize,
+    end: usize,
+    message: &str,
+) -> Result<(), SourceAuthorityError> {
+    let mut step_keys: Option<BTreeSet<&str>> = None;
+    for line in &lines[start..end] {
+        let trimmed = line.trim_start();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        let indent = line.len().saturating_sub(trimmed.len());
+        let mapping = match indent {
+            6 => {
+                let Some(mapping) = trimmed.strip_prefix("- ") else {
+                    return violation(message);
+                };
+                step_keys = Some(BTreeSet::new());
+                mapping
+            }
+            8 => trimmed,
+            _ => continue,
+        };
+        let Ok(Some(key)) = yaml_mapping_key(mapping) else {
+            return violation(message);
+        };
+        if key.is_empty()
+            || !key
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'_' | b'-'))
+        {
+            return violation(message);
+        }
+        let Some((_, value)) = mapping.split_once(':') else {
+            return violation(message);
+        };
+        if matches!(
+            value.trim_start().as_bytes().first(),
+            Some(b'&' | b'*' | b'!')
+        ) {
+            return violation(message);
+        }
+        let Some(keys) = step_keys.as_mut() else {
+            return violation(message);
+        };
+        if !keys.insert(key) {
+            return violation(message);
+        }
+    }
+    Ok(())
+}
+
 pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityError> {
     let normalized = source.replace("\r\n", "\n");
     let lowercase = normalized.to_ascii_lowercase();
     let lines = normalized.lines().collect::<Vec<_>>();
+    validate_yaml_mapping_level(
+        &lines,
+        0,
+        lines.len(),
+        0,
+        false,
+        "CI top-level mapping keys must be unambiguous",
+    )?;
     let permission_blocks = lines
         .iter()
         .enumerate()
@@ -490,9 +602,22 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
     if permission_header.starts_with(char::is_whitespace) {
         return violation("CI permissions must be declared only at workflow scope");
     }
-    let permission_entries = lines[permission_index + 1..]
+    let permission_end = lines
         .iter()
-        .take_while(|line| line.is_empty() || line.starts_with("  "))
+        .enumerate()
+        .skip(*permission_index + 1)
+        .find(|(_, line)| !line.trim().is_empty() && !line.starts_with(char::is_whitespace))
+        .map_or(lines.len(), |(index, _)| index);
+    validate_yaml_mapping_level(
+        &lines,
+        *permission_index + 1,
+        permission_end,
+        2,
+        false,
+        "CI permissions mapping keys must be unambiguous",
+    )?;
+    let permission_entries = lines[*permission_index + 1..permission_end]
+        .iter()
         .filter(|line| !line.trim().is_empty())
         .map(|line| line.trim())
         .collect::<Vec<_>>();
@@ -540,6 +665,14 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
         .skip(*jobs_start + 1)
         .find(|(_, line)| !line.trim().is_empty() && !line.starts_with(char::is_whitespace))
         .map_or(lines.len(), |(index, _)| index);
+    validate_yaml_mapping_level(
+        &lines,
+        *jobs_start + 1,
+        jobs_end,
+        2,
+        false,
+        "CI jobs mapping keys must be unambiguous",
+    )?;
     let job_headers = lines
         .iter()
         .enumerate()
@@ -551,6 +684,24 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
             (indent == 2 && matches!(yaml_mapping_key(line), Ok(Some(_)))).then_some(index)
         })
         .collect::<Vec<_>>();
+    for (position, job_start) in job_headers.iter().enumerate() {
+        let job_end = job_headers.get(position + 1).copied().unwrap_or(jobs_end);
+        validate_yaml_mapping_level(
+            &lines,
+            *job_start + 1,
+            job_end,
+            4,
+            false,
+            "CI job mapping keys must be unambiguous",
+        )?;
+        if lines[*job_start + 1..job_end].iter().any(|line| {
+            let trimmed = line.trim_start();
+            line.len().saturating_sub(trimmed.len()) == 4
+                && matches!(yaml_mapping_key(line), Ok(Some("permissions" | "secrets")))
+        }) {
+            return violation("CI jobs must not override permissions or inherit secrets");
+        }
+    }
     let native_job = job_headers
         .iter()
         .enumerate()
@@ -581,6 +732,12 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
             !trimmed.is_empty() && line.len().saturating_sub(trimmed.len()) <= 4
         })
         .map_or(native_job_end, |(index, _)| index);
+    validate_yaml_step_mappings(
+        &lines,
+        *steps_start + 1,
+        steps_end,
+        "CI steps mapping keys must be unambiguous",
+    )?;
     if !(*steps_start < *native_pty_start && *native_pty_start < steps_end) {
         return violation("CI PTY authority step must remain in the authoritative matrix job");
     }
@@ -629,6 +786,14 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
             !trimmed.is_empty() && line.len().saturating_sub(trimmed.len()) <= 4
         })
         .map_or(native_job_end, |(index, _)| index);
+    validate_yaml_mapping_level(
+        &lines,
+        *strategy_start + 1,
+        strategy_end,
+        6,
+        false,
+        "CI strategy mapping keys must be unambiguous",
+    )?;
     let matrix_headers = (*strategy_start + 1..strategy_end)
         .filter(|index| {
             let line = lines[*index];
@@ -649,6 +814,14 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
             !trimmed.is_empty() && line.len().saturating_sub(trimmed.len()) <= 6
         })
         .map_or(strategy_end, |(index, _)| index);
+    validate_yaml_mapping_level(
+        &lines,
+        *matrix_start + 1,
+        matrix_end,
+        8,
+        false,
+        "CI matrix mapping keys must be unambiguous",
+    )?;
     let matrix_lines = &lines[*matrix_start + 1..matrix_end];
     if matrix_lines
         .iter()

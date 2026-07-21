@@ -216,6 +216,120 @@ async fn nonzero_command_preserves_exit_seven_and_output() {
     assert!(output.contains("failed"), "{output:?}");
 }
 
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn windows_startup_gate_preserves_native_nonterminating_error_semantics() {
+    let fixture = tempfile::tempdir().expect("error preference fixture");
+    let direct_marker = fixture.path().join("direct.txt");
+    let gated_marker = fixture.path().join("gated.txt");
+    let direct_command = windows_nonterminating_error_command(&direct_marker);
+    let gated_command = windows_nonterminating_error_command(&gated_marker);
+    let direct_status = std::process::Command::new(windows_shell_program())
+        .args(["-NoLogo", "-NoProfile", "-Command", &direct_command])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .expect("direct PowerShell baseline runs");
+    assert_eq!(direct_status.code(), Some(7));
+    assert_eq!(
+        std::fs::read_to_string(&direct_marker).expect("direct command continues after error"),
+        "continued"
+    );
+
+    let manager = native_manager();
+    manager.enable().await;
+    let first = start_command(
+        &manager,
+        gated_command,
+        &repository_root(),
+        Duration::from_secs(5),
+    )
+    .await;
+    let settled = match first {
+        Ok(receipt) => settle_session(&manager, receipt).await,
+        Err(error) => Err(error),
+    };
+    let cleanup = cleanup(&manager).await;
+
+    cleanup.expect("cleanup succeeds");
+    let (receipt, _) = settled.expect("gated nonterminating error command settles");
+    assert_eq!(receipt.state, ShellSessionState::Exited);
+    assert_eq!(receipt.exit_code, direct_status.code());
+    assert_eq!(
+        std::fs::read_to_string(&gated_marker).expect("gated command continues after error"),
+        "continued"
+    );
+}
+
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn windows_startup_gate_metadata_is_removed_before_the_user_command_runs() {
+    let manager = native_manager();
+    manager.enable().await;
+    let root = repository_root();
+    let command = "'MINIMAX_SHELL_GATED_COMMAND','MINIMAX_SHELL_GATE_PATH','MINIMAX_SHELL_GATE_TOKEN','MINIMAX_SHELL_GATE_TIMEOUT_MS' | ForEach-Object { Write-Output \"$_=$([String]::IsNullOrEmpty([Environment]::GetEnvironmentVariable($_, 'Process')))\" }";
+
+    let first = start_command(&manager, command, &root, Duration::from_secs(5)).await;
+    let cleanup = cleanup(&manager).await;
+
+    cleanup.expect("cleanup succeeds");
+    let receipt = first.expect("gate metadata probe launches");
+    assert_eq!(receipt.state, ShellSessionState::Exited, "{receipt:?}");
+    assert_eq!(receipt.exit_code, Some(0), "{receipt:?}");
+    assert!(
+        receipt.output.contains("MINIMAX_SHELL_GATED_COMMAND=True"),
+        "{receipt:?}"
+    );
+    assert!(
+        receipt.output.contains("MINIMAX_SHELL_GATE_PATH=True"),
+        "{receipt:?}"
+    );
+    assert!(
+        receipt.output.contains("MINIMAX_SHELL_GATE_TOKEN=True"),
+        "{receipt:?}"
+    );
+    assert!(
+        receipt
+            .output
+            .contains("MINIMAX_SHELL_GATE_TIMEOUT_MS=True"),
+        "{receipt:?}"
+    );
+}
+
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn windows_startup_gate_does_not_inject_common_local_variables() {
+    let manager = native_manager();
+    manager.enable().await;
+    let command = "'gatePath','gateToken','gateWait','observedToken','userCommand' | ForEach-Object { Write-Output \"$_=$($null -eq (Get-Variable -Name $_ -ValueOnly -ErrorAction SilentlyContinue))\" }";
+
+    let first = start_command(
+        &manager,
+        command,
+        &repository_root(),
+        Duration::from_secs(5),
+    )
+    .await;
+    let cleanup = cleanup(&manager).await;
+
+    cleanup.expect("cleanup succeeds");
+    let receipt = first.expect("gate variable probe launches");
+    assert_eq!(receipt.state, ShellSessionState::Exited, "{receipt:?}");
+    assert_eq!(receipt.exit_code, Some(0), "{receipt:?}");
+    for variable in [
+        "gatePath",
+        "gateToken",
+        "gateWait",
+        "observedToken",
+        "userCommand",
+    ] {
+        assert!(
+            receipt.output.contains(&format!("{variable}=True")),
+            "{receipt:?}"
+        );
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn long_command_polling_delivers_only_incremental_output() {
     let manager = native_manager();
@@ -440,6 +554,39 @@ async fn permission_downgrade_terminates_the_reported_parent_and_child() {
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn normal_shutdown_terminates_the_reported_parent_and_child() {
     assert_tree_cleanup(TreeCleanup::Shutdown).await;
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn natural_parent_exit_still_terminates_a_stdio_closed_background_child() {
+    let manager = native_manager();
+    manager.enable().await;
+    let root = repository_root();
+    let stdio = tempfile::tempdir().expect("detached stdio fixture");
+    std::fs::write(stdio.path().join("stdin.txt"), []).expect("detached stdin fixture");
+    let receipt = start_command(
+        &manager,
+        detached_process_tree_command(stdio.path()),
+        &root,
+        Duration::from_secs(1),
+    )
+    .await
+    .expect("detached tree fixture starts");
+    let (receipt, process_ids) = wait_for_process_ids(&manager, receipt)
+        .await
+        .expect("detached tree fixture reports parent and child");
+
+    let settled = settle_session(&manager, receipt).await;
+    let final_cleanup = cleanup(&manager).await;
+    let exited = wait_for_processes_to_exit(&process_ids).await;
+    if settled.is_err() || final_cleanup.is_err() || exited.is_err() {
+        force_kill_processes(&process_ids);
+    }
+
+    let (receipt, _) = settled.expect("natural parent exit cleans its containment");
+    assert_eq!(receipt.state, ShellSessionState::Exited, "{receipt:?}");
+    assert_eq!(receipt.exit_code, Some(0), "{receipt:?}");
+    final_cleanup.expect("final cleanup succeeds");
+    exited.expect("the stdio-closed background child exits with its containment");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -740,6 +887,30 @@ fn repository_root() -> PathBuf {
 }
 
 #[cfg(windows)]
+fn windows_shell_program() -> PathBuf {
+    std::env::var_os("PATH")
+        .into_iter()
+        .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+        .map(|directory| directory.join("pwsh.exe"))
+        .find(|candidate| candidate.is_file())
+        .unwrap_or_else(|| {
+            PathBuf::from(std::env::var_os("SystemRoot").expect("SystemRoot is available"))
+                .join("System32")
+                .join("WindowsPowerShell")
+                .join("v1.0")
+                .join("powershell.exe")
+        })
+}
+
+#[cfg(windows)]
+fn windows_nonterminating_error_command(marker: &Path) -> String {
+    let marker = marker.to_string_lossy().replace('\'', "''");
+    format!(
+        "Write-Error 'expected-nonterminal'; [IO.File]::WriteAllText('{marker}', 'continued'); exit 7"
+    )
+}
+
+#[cfg(windows)]
 fn unicode_command() -> &'static str {
     "[Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); Write-Output '中文🙂'"
 }
@@ -772,6 +943,30 @@ fn process_tree_command() -> &'static str {
 #[cfg(target_os = "linux")]
 fn process_tree_command() -> &'static str {
     "sleep 120 & child=$!; printf 'parent=%s;child=%s\\n' \"$$\" \"$child\"; wait \"$child\""
+}
+
+#[cfg(windows)]
+fn detached_process_tree_command(stdio: &Path) -> String {
+    let stdin = stdio
+        .join("stdin.txt")
+        .to_string_lossy()
+        .replace('\'', "''");
+    let stdout = stdio
+        .join("stdout.txt")
+        .to_string_lossy()
+        .replace('\'', "''");
+    let stderr = stdio
+        .join("stderr.txt")
+        .to_string_lossy()
+        .replace('\'', "''");
+    format!(
+        "$exe = (Get-Process -Id $PID).Path; $payload = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes('Start-Sleep -Seconds 120')); $child = Start-Process -FilePath $exe -ArgumentList @('-NoLogo','-NoProfile','-EncodedCommand',$payload) -RedirectStandardInput '{stdin}' -RedirectStandardOutput '{stdout}' -RedirectStandardError '{stderr}' -WindowStyle Hidden -PassThru; Write-Output \"parent=$PID;child=$($child.Id)\"; Start-Sleep -Seconds 2; exit 0"
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn detached_process_tree_command(_stdio: &Path) -> String {
+    "sleep 120 </dev/null >/dev/null 2>&1 & child=$!; printf 'parent=%s;child=%s\\n' \"$$\" \"$child\"; sleep 2; exit 0".to_owned()
 }
 
 #[cfg(windows)]

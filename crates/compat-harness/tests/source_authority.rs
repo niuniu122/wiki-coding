@@ -999,12 +999,10 @@ fn ci_keeps_rust_authority_ahead_of_packaging_and_fails_closed() {
         "check:rust must be an unconditional step in the authoritative matrix job",
     );
 
-    let nested_check = source
-        .replace("      - run: npm run check:rust\n", "")
-        .replace(
-            "      - name: Run native PTY Shell integration\n",
-            "      check-container:\n        run: npm run check:rust\n      - name: Run native PTY Shell integration\n",
-        );
+    let nested_check = source.replace(
+        "      - run: npm run check:rust\n",
+        "      - name: Retain check command only as inert metadata\n        env:\n          COMMAND: npm run check:rust\n",
+    );
     assert_ci_rejected(
         &nested_check,
         "check:rust must be an unconditional step in the authoritative matrix job",
@@ -1078,6 +1076,171 @@ fn assert_ci_rejected(source: &str, expected: &str) {
     assert!(
         error.to_string().contains(expected),
         "expected {expected:?} in {error:?}"
+    );
+}
+
+#[test]
+fn ci_rejects_escaped_keys_in_jobs_and_job_mappings() {
+    let source = fs::read_to_string(repository_root().join(CI_WORKFLOW))
+        .expect("CI workflow should be readable");
+    let escaped_job = source.replace(
+        "jobs:\n",
+        "jobs:\n  \"ev\\u0061l\":\n    runs-on: ubuntu-latest\n",
+    );
+    assert_ci_rejected(&escaped_job, "jobs mapping keys must be unambiguous");
+
+    let escaped_if = source.replace(
+        "    runs-on: ${{ matrix.os }}\n",
+        "    \"\\u0069f\": false\n    runs-on: ${{ matrix.os }}\n",
+    );
+    assert_ci_rejected(&escaped_if, "job mapping keys must be unambiguous");
+}
+
+#[test]
+fn ci_rejects_escaped_keys_in_strategy_and_matrix_mappings() {
+    let source = fs::read_to_string(repository_root().join(CI_WORKFLOW))
+        .expect("CI workflow should be readable");
+    let escaped_strategy_key = source.replace(
+        "    strategy:\n",
+        "    strategy:\n      \"met\\u0061data\": true\n",
+    );
+    assert_ci_rejected(
+        &escaped_strategy_key,
+        "strategy mapping keys must be unambiguous",
+    );
+
+    for escaped_key in ["\\u0069nclude", "\\u0065xclude"] {
+        let escaped_matrix_key = source.replace(
+            "        os: [ubuntu-latest, windows-latest]\n",
+            &format!(
+                "        os: [ubuntu-latest, windows-latest]\n        \"{escaped_key}\":\n          - os: windows-latest\n"
+            ),
+        );
+        assert_ci_rejected(
+            &escaped_matrix_key,
+            "matrix mapping keys must be unambiguous",
+        );
+    }
+}
+
+#[test]
+fn ci_rejects_escaped_keys_in_steps_mapping() {
+    let source = fs::read_to_string(repository_root().join(CI_WORKFLOW))
+        .expect("CI workflow should be readable");
+    let escaped_step = source.replace(
+        "      - run: npm run check:rust\n",
+        "      - run: npm run check:rust\n      - \"r\\u0075n\": echo forged\n",
+    );
+    assert_ci_rejected(&escaped_step, "steps mapping keys must be unambiguous");
+
+    let escaped_check_if = source.replace(
+        "      - run: npm run check:rust\n",
+        "      - run: npm run check:rust\n        \"\\u0069f\": false\n",
+    );
+    assert_ci_rejected(&escaped_check_if, "steps mapping keys must be unambiguous");
+
+    let escaped_native_pty_if = source.replace(
+        "      - name: Run native PTY Shell integration\n",
+        "      - name: Run native PTY Shell integration\n        \"\\u0069f\": false\n",
+    );
+    assert_ci_rejected(
+        &escaped_native_pty_if,
+        "steps mapping keys must be unambiguous",
+    );
+}
+
+#[test]
+fn ci_rejects_escaped_keys_in_top_level_mapping() {
+    let source = fs::read_to_string(repository_root().join(CI_WORKFLOW))
+        .expect("CI workflow should be readable");
+    let escaped_permissions = source.replace(
+        "permissions:\n  contents: read\n",
+        "permissions:\n  contents: read\n\"\\u0070ermissions\": write-all\n",
+    );
+    assert_ci_rejected(
+        &escaped_permissions,
+        "top-level mapping keys must be unambiguous",
+    );
+
+    let escaped_jobs = format!("{source}\n\"j\\u006fbs\": {{}}\n");
+    assert_ci_rejected(&escaped_jobs, "top-level mapping keys must be unambiguous");
+}
+
+#[test]
+fn ci_rejects_duplicate_authority_mapping_keys() {
+    let source = fs::read_to_string(repository_root().join(CI_WORKFLOW))
+        .expect("CI workflow should be readable");
+    let duplicate_runs_on = source.replace(
+        "    runs-on: ${{ matrix.os }}\n",
+        "    runs-on: ${{ matrix.os }}\n    runs-on: ubuntu-latest\n",
+    );
+    assert_ci_rejected(&duplicate_runs_on, "job mapping keys must be unambiguous");
+
+    let duplicate_step_name = source.replace(
+        "      - name: Run native PTY Shell integration\n",
+        "      - name: Run native PTY Shell integration\n        name: Forged duplicate\n",
+    );
+    assert_ci_rejected(
+        &duplicate_step_name,
+        "steps mapping keys must be unambiguous",
+    );
+}
+
+#[test]
+fn ci_rejects_yaml_merge_anchor_alias_and_tag_authority() {
+    let source = fs::read_to_string(repository_root().join(CI_WORKFLOW))
+        .expect("CI workflow should be readable");
+    let merge_key = source.replace(
+        "    runs-on: ${{ matrix.os }}\n",
+        "    <<: {if: false}\n    runs-on: ${{ matrix.os }}\n",
+    );
+    assert_ci_rejected(&merge_key, "job mapping keys must be unambiguous");
+
+    let anchored_strategy = source.replace("    strategy:\n", "    strategy: &authority\n");
+    assert_ci_rejected(&anchored_strategy, "job mapping keys must be unambiguous");
+
+    let anchored_if = source.replace(
+        "    runs-on: ${{ matrix.os }}\n",
+        "    &condition if: false\n    runs-on: ${{ matrix.os }}\n",
+    );
+    assert_ci_rejected(&anchored_if, "job mapping keys must be unambiguous");
+
+    let tagged_include = source.replace(
+        "        os: [ubuntu-latest, windows-latest]\n",
+        "        os: [ubuntu-latest, windows-latest]\n        !!str include:\n          - os: windows-latest\n",
+    );
+    assert_ci_rejected(&tagged_include, "matrix mapping keys must be unambiguous");
+
+    let alias_strategy = source.replace("    strategy:\n", "    strategy: *authority\n");
+    assert_ci_rejected(&alias_strategy, "job mapping keys must be unambiguous");
+}
+
+#[test]
+fn ci_rejects_permissions_and_secrets_on_every_job() {
+    let source = fs::read_to_string(repository_root().join(CI_WORKFLOW))
+        .expect("CI workflow should be readable");
+    let job_permissions = format!(
+        "{source}\n  privileged:\n    runs-on: ubuntu-latest\n    permissions: write-all\n    steps:\n      - run: echo forged\n"
+    );
+    assert_ci_rejected(
+        &job_permissions,
+        "CI jobs must not override permissions or inherit secrets",
+    );
+
+    let escaped_job_permissions = format!(
+        "{source}\n  privileged:\n    runs-on: ubuntu-latest\n    \"\\u0070ermissions\": write-all\n    steps:\n      - run: echo forged\n"
+    );
+    assert_ci_rejected(
+        &escaped_job_permissions,
+        "job mapping keys must be unambiguous",
+    );
+
+    let inherited_secrets = format!(
+        "{source}\n  reusable:\n    uses: owner/repository/.github/workflows/reusable.yml@main\n    secrets: inherit\n"
+    );
+    assert_ci_rejected(
+        &inherited_secrets,
+        "CI jobs must not override permissions or inherit secrets",
     );
 }
 

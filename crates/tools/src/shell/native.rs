@@ -1,9 +1,15 @@
 use std::io;
+#[cfg(windows)]
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+#[cfg(target_os = "linux")]
+use std::time::Duration;
 
 use minimax_protocol::ShellSessionId;
 use portable_pty::{CommandBuilder, MasterPty, PtySize};
+#[cfg(windows)]
+use win32job::{ExtendedLimitInfo, Job};
 
 use super::{
     PtyBackend, PtyChild, PtyTerminateFuture, ShellManagerError, ShellSessionIdSource,
@@ -11,6 +17,42 @@ use super::{
 };
 
 const PROCESS_NONCE_BYTES: usize = 8;
+#[cfg(windows)]
+const WINDOWS_GATE_COMMAND_ENV: &str = "MINIMAX_SHELL_GATED_COMMAND";
+#[cfg(windows)]
+const WINDOWS_GATE_PATH_ENV: &str = "MINIMAX_SHELL_GATE_PATH";
+#[cfg(windows)]
+const WINDOWS_GATE_TOKEN_ENV: &str = "MINIMAX_SHELL_GATE_TOKEN";
+#[cfg(windows)]
+const WINDOWS_GATE_TIMEOUT_ENV: &str = "MINIMAX_SHELL_GATE_TIMEOUT_MS";
+#[cfg(windows)]
+const WINDOWS_GATE_TIMEOUT_MS: &str = "30000";
+#[cfg(windows)]
+const WINDOWS_GATE_WRAPPER: &str = r#"
+$__minimax_shell_gate_71f5650d_path = [Environment]::GetEnvironmentVariable('MINIMAX_SHELL_GATE_PATH', 'Process')
+$__minimax_shell_gate_71f5650d_token = [Environment]::GetEnvironmentVariable('MINIMAX_SHELL_GATE_TOKEN', 'Process')
+$__minimax_shell_gate_71f5650d_timeout_text = [Environment]::GetEnvironmentVariable('MINIMAX_SHELL_GATE_TIMEOUT_MS', 'Process')
+$__minimax_shell_gate_71f5650d_timeout_ms = 0
+if ([String]::IsNullOrEmpty($__minimax_shell_gate_71f5650d_path) -or [String]::IsNullOrEmpty($__minimax_shell_gate_71f5650d_token)) { exit 125 }
+if (-not [Int32]::TryParse($__minimax_shell_gate_71f5650d_timeout_text, [ref]$__minimax_shell_gate_71f5650d_timeout_ms) -or $__minimax_shell_gate_71f5650d_timeout_ms -lt 1 -or $__minimax_shell_gate_71f5650d_timeout_ms -gt 300000) { exit 125 }
+$__minimax_shell_gate_71f5650d_wait = [Diagnostics.Stopwatch]::StartNew()
+while (-not [IO.File]::Exists($__minimax_shell_gate_71f5650d_path)) {
+    if ($__minimax_shell_gate_71f5650d_wait.ElapsedMilliseconds -ge $__minimax_shell_gate_71f5650d_timeout_ms) { exit 125 }
+    [Threading.Thread]::Sleep(10)
+}
+try { $__minimax_shell_gate_71f5650d_observed = [IO.File]::ReadAllText($__minimax_shell_gate_71f5650d_path) } catch { exit 125 }
+if ($__minimax_shell_gate_71f5650d_observed -cne $__minimax_shell_gate_71f5650d_token) { exit 125 }
+$__minimax_shell_gate_71f5650d_command = [Environment]::GetEnvironmentVariable('MINIMAX_SHELL_GATED_COMMAND', 'Process')
+[Environment]::SetEnvironmentVariable('MINIMAX_SHELL_GATED_COMMAND', $null, 'Process')
+[Environment]::SetEnvironmentVariable('MINIMAX_SHELL_GATE_PATH', $null, 'Process')
+[Environment]::SetEnvironmentVariable('MINIMAX_SHELL_GATE_TOKEN', $null, 'Process')
+[Environment]::SetEnvironmentVariable('MINIMAX_SHELL_GATE_TIMEOUT_MS', $null, 'Process')
+try { [IO.File]::Delete($__minimax_shell_gate_71f5650d_path) } catch { exit 125 }
+if ($null -eq $__minimax_shell_gate_71f5650d_command) { exit 125 }
+$__minimax_shell_gate_71f5650d_script_9c8e36a2 = [ScriptBlock]::Create($__minimax_shell_gate_71f5650d_command)
+Remove-Variable -Name '__minimax_shell_gate_71f5650d_path','__minimax_shell_gate_71f5650d_token','__minimax_shell_gate_71f5650d_timeout_text','__minimax_shell_gate_71f5650d_timeout_ms','__minimax_shell_gate_71f5650d_wait','__minimax_shell_gate_71f5650d_observed','__minimax_shell_gate_71f5650d_command' -ErrorAction SilentlyContinue
+& $__minimax_shell_gate_71f5650d_script_9c8e36a2
+"#;
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct NativePtyBackend;
@@ -22,6 +64,8 @@ impl PtyBackend for NativePtyBackend {
 
     fn spawn(&self, request: &ShellSpawnRequest) -> io::Result<SpawnedPty> {
         let resolved = resolve_native_shell(&request.command)?;
+        #[cfg(windows)]
+        let mut windows_startup = WindowsStartupGate::new()?;
         let pair = portable_pty::native_pty_system()
             .openpty(PtySize {
                 rows: request.rows,
@@ -31,6 +75,9 @@ impl PtyBackend for NativePtyBackend {
             })
             .map_err(pty_error)?;
         let mut command = CommandBuilder::new(&resolved.program);
+        #[cfg(windows)]
+        windows_startup.prepare_command(&mut command, &request.command);
+        #[cfg(not(windows))]
         command.args(&resolved.args);
         command.cwd(&request.cwd);
         let (mut child, reader, writer) = acquire_handles_then_spawn(
@@ -41,27 +88,172 @@ impl PtyBackend for NativePtyBackend {
         drop(pair.slave);
 
         let process_id = process_id_or_cleanup(child.as_mut())?;
+        #[cfg(target_os = "linux")]
+        let process_group = match pair
+            .master
+            .process_group_leader()
+            .and_then(rustix::process::Pid::from_raw)
+        {
+            Some(process_group)
+                if u32::try_from(process_group.as_raw_pid()).ok() == Some(process_id) =>
+            {
+                process_group
+            }
+            Some(process_group) => {
+                let cleanup = kill_and_wait_child(child.as_mut());
+                return Err(io::Error::other(format!(
+                    "PTY process-group leader {} did not match child {process_id}; {cleanup}",
+                    process_group.as_raw_pid()
+                )));
+            }
+            None => {
+                let cleanup = kill_and_wait_child(child.as_mut());
+                return Err(io::Error::other(format!(
+                    "PTY did not expose a Linux process-group leader; {cleanup}"
+                )));
+            }
+        };
+        #[cfg(windows)]
+        if let Err(error) = windows_startup.assign_and_release(child.as_ref()) {
+            let cleanup = kill_and_wait_child(child.as_mut());
+            return Err(io::Error::other(format!(
+                "Windows Job startup gate failed: {error}; gated child cleanup: {cleanup}"
+            )));
+        }
 
         Ok(SpawnedPty {
-            child: Box::new(NativePtyChild { child, process_id }),
+            child: Box::new(NativePtyChild {
+                child,
+                process_id,
+                #[cfg(target_os = "linux")]
+                observed_exit: None,
+                #[cfg(target_os = "linux")]
+                reaped: false,
+            }),
             reader,
             writer,
             guard: Box::new(NativePtyGuard {
                 master: Some(pair.master),
+                #[cfg(windows)]
+                job: windows_startup.job.take(),
+                #[cfg(windows)]
+                gate_dir: windows_startup.gate_dir.take(),
+                #[cfg(not(any(windows, target_os = "linux")))]
                 process_id,
+                #[cfg(target_os = "linux")]
+                process_group,
+                #[cfg(target_os = "linux")]
+                destructive_complete: false,
                 armed: true,
             }),
         })
     }
+}
 
-    fn terminate_tree<'a>(&'a self, process_id: u32) -> PtyTerminateFuture<'a> {
-        Box::pin(crate::process::terminate_process_tree(process_id))
+#[cfg(windows)]
+struct WindowsStartupGate {
+    job: Option<Job>,
+    gate_dir: Option<tempfile::TempDir>,
+    gate_path: PathBuf,
+    gate_token: String,
+}
+
+#[cfg(windows)]
+impl WindowsStartupGate {
+    fn new() -> io::Result<Self> {
+        let mut limits = ExtendedLimitInfo::new();
+        limits.limit_kill_on_job_close();
+        let job = Job::create_with_limit_info(&limits)
+            .map_err(|error| io::Error::other(format!("create Windows Job: {error}")))?;
+        let gate_dir = tempfile::Builder::new()
+            .prefix("minimax-shell-gate-")
+            .tempdir()?;
+        let gate_path = gate_dir.path().join("ready");
+        let mut token = [0_u8; 16];
+        getrandom::fill(&mut token).map_err(|error| {
+            io::Error::other(format!("generate Windows startup gate token: {error}"))
+        })?;
+        let gate_token = encode_lower_hex(&token);
+        Ok(Self {
+            job: Some(job),
+            gate_dir: Some(gate_dir),
+            gate_path,
+            gate_token,
+        })
     }
+
+    fn prepare_command(&self, command: &mut CommandBuilder, user_command: &str) {
+        command.args(["-NoLogo", "-NoProfile", "-Command", WINDOWS_GATE_WRAPPER]);
+        command.env(WINDOWS_GATE_COMMAND_ENV, user_command);
+        command.env(WINDOWS_GATE_PATH_ENV, &self.gate_path);
+        command.env(WINDOWS_GATE_TOKEN_ENV, &self.gate_token);
+        command.env(WINDOWS_GATE_TIMEOUT_ENV, WINDOWS_GATE_TIMEOUT_MS);
+    }
+
+    fn assign_and_release(
+        &self,
+        child: &(dyn portable_pty::Child + Send + Sync),
+    ) -> io::Result<()> {
+        let process_handle = child
+            .as_raw_handle()
+            .ok_or_else(|| io::Error::other("PTY child did not expose a raw process handle"))?;
+        self.assign_and_release_with(process_handle as isize, |job, handle| {
+            job.assign_process(handle).map_err(|error| {
+                io::Error::other(format!("assign PTY child to Windows Job: {error}"))
+            })
+        })
+    }
+
+    fn assign_and_release_with(
+        &self,
+        process_handle: isize,
+        assign: impl FnOnce(&Job, isize) -> io::Result<()>,
+    ) -> io::Result<()> {
+        assign(
+            self.job
+                .as_ref()
+                .ok_or_else(|| io::Error::other("Windows Job is missing before assignment"))?,
+            process_handle,
+        )?;
+        self.release()
+    }
+
+    fn release(&self) -> io::Result<()> {
+        let pending_path = self
+            .gate_dir
+            .as_ref()
+            .ok_or_else(|| io::Error::other("Windows startup gate directory is missing"))?
+            .path()
+            .join("ready.pending");
+        let mut pending = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&pending_path)?;
+        pending.write_all(self.gate_token.as_bytes())?;
+        pending.sync_all()?;
+        drop(pending);
+        std::fs::rename(pending_path, &self.gate_path)
+    }
+}
+
+#[cfg(windows)]
+fn encode_lower_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    encoded
 }
 
 struct NativePtyChild {
     child: Box<dyn portable_pty::Child + Send + Sync>,
     process_id: u32,
+    #[cfg(target_os = "linux")]
+    observed_exit: Option<i32>,
+    #[cfg(target_os = "linux")]
+    reaped: bool,
 }
 
 impl PtyChild for NativePtyChild {
@@ -70,6 +262,15 @@ impl PtyChild for NativePtyChild {
     }
 
     fn try_wait(&mut self) -> io::Result<Option<i32>> {
+        #[cfg(target_os = "linux")]
+        {
+            if self.observed_exit.is_none() {
+                self.observed_exit = linux_observe_exit(self.process_id)?;
+            }
+            Ok(self.observed_exit)
+        }
+
+        #[cfg(not(target_os = "linux"))]
         self.child
             .try_wait()
             .map(|status| status.map(|status| status.exit_code() as i32))
@@ -78,15 +279,127 @@ impl PtyChild for NativePtyChild {
     fn kill(&mut self) -> io::Result<()> {
         self.child.kill()
     }
+
+    fn reap(&mut self) -> io::Result<()> {
+        #[cfg(target_os = "linux")]
+        {
+            if !self.reaped {
+                let status = self.child.wait()?;
+                self.reaped = true;
+                if self.observed_exit.is_none() {
+                    self.observed_exit = Some(status.exit_code() as i32);
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for NativePtyChild {
+    fn drop(&mut self) {
+        if self.reaped {
+            return;
+        }
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        loop {
+            match self.child.try_wait() {
+                Ok(Some(_)) | Err(_) => {
+                    self.reaped = true;
+                    break;
+                }
+                Ok(None) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Ok(None) => break,
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_observe_exit(process_id: u32) -> io::Result<Option<i32>> {
+    let raw_pid = i32::try_from(process_id)
+        .map_err(|_| io::Error::other("Linux child process ID exceeds i32"))?;
+    let pid = rustix::process::Pid::from_raw(raw_pid)
+        .ok_or_else(|| io::Error::other("Linux child process ID must be positive"))?;
+    let status = rustix::process::waitid(
+        rustix::process::WaitId::Pid(pid),
+        rustix::process::WaitIdOptions::NOHANG
+            | rustix::process::WaitIdOptions::NOWAIT
+            | rustix::process::WaitIdOptions::EXITED,
+    )
+    .map_err(io::Error::from)?;
+    Ok(status.map(|status| {
+        status
+            .exit_status()
+            .or_else(|| status.terminating_signal().map(|signal| 128 + signal))
+            .unwrap_or(1)
+    }))
 }
 
 struct NativePtyGuard {
     master: Option<Box<dyn MasterPty + Send>>,
+    #[cfg(windows)]
+    job: Option<Job>,
+    #[cfg(windows)]
+    gate_dir: Option<tempfile::TempDir>,
+    #[cfg(not(any(windows, target_os = "linux")))]
     process_id: u32,
+    #[cfg(target_os = "linux")]
+    process_group: rustix::process::Pid,
+    #[cfg(target_os = "linux")]
+    destructive_complete: bool,
     armed: bool,
 }
 
 impl super::backend::PtyGuard for NativePtyGuard {
+    fn terminate<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+        #[cfg(windows)]
+        return Box::pin(async move {
+            // This Job is unique and non-inherited. Windows' KILL_ON_JOB_CLOSE contract
+            // terminates every associated process when this final Job handle closes.
+            drop(self.job.take());
+            self.armed = false;
+            Ok(())
+        });
+
+        #[cfg(target_os = "linux")]
+        return Box::pin(async move {
+            linux_terminate_process_group(self.process_group, &mut self.destructive_complete).await
+        });
+
+        #[cfg(not(any(windows, target_os = "linux")))]
+        Box::pin(async {
+            Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "native PTY containment is supported only on Windows and Linux",
+            ))
+        })
+    }
+
+    fn confirm<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+        #[cfg(target_os = "linux")]
+        return Box::pin(async move {
+            if !self.destructive_complete {
+                return Err(io::Error::other(
+                    "Linux process-group confirmation preceded destructive cleanup",
+                ));
+            }
+            linux_confirm_process_group_absent(self.process_group).await
+        });
+
+        #[cfg(windows)]
+        return Box::pin(async {
+            // Closing the final KILL_ON_JOB_CLOSE handle is the Windows containment
+            // confirmation boundary; there is no reusable process-group ID to probe.
+            Ok(())
+        });
+
+        #[cfg(not(any(windows, target_os = "linux")))]
+        Box::pin(async { Ok(()) })
+    }
+
     fn close_io(&mut self) {
         drop(self.master.take());
     }
@@ -99,9 +412,86 @@ impl super::backend::PtyGuard for NativePtyGuard {
 impl Drop for NativePtyGuard {
     fn drop(&mut self) {
         if self.armed {
-            let _ = crate::process::terminate_process_tree_sync(self.process_id);
+            #[cfg(windows)]
+            {
+                drop(self.job.take());
+            }
+            #[cfg(target_os = "linux")]
+            if !self.destructive_complete {
+                linux_terminate_process_group_sync(self.process_group);
+                self.destructive_complete = true;
+            }
+            #[cfg(not(any(windows, target_os = "linux")))]
+            let _ = self.process_id;
+        }
+        #[cfg(windows)]
+        drop(self.gate_dir.take());
+    }
+}
+
+#[cfg(target_os = "linux")]
+async fn linux_terminate_process_group(
+    process_group: rustix::process::Pid,
+    destructive_complete: &mut bool,
+) -> io::Result<()> {
+    if *destructive_complete {
+        return Ok(());
+    }
+    match rustix::process::kill_process_group(process_group, rustix::process::Signal::TERM) {
+        Ok(()) => {}
+        Err(rustix::io::Errno::SRCH) => {
+            *destructive_complete = true;
+            return Ok(());
+        }
+        Err(error) => return Err(io::Error::from(error)),
+    }
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    match rustix::process::test_kill_process_group(process_group) {
+        Err(rustix::io::Errno::SRCH) => {
+            *destructive_complete = true;
+            Ok(())
+        }
+        Ok(()) => {
+            match rustix::process::kill_process_group(process_group, rustix::process::Signal::KILL)
+            {
+                Ok(()) | Err(rustix::io::Errno::SRCH) => {
+                    *destructive_complete = true;
+                    Ok(())
+                }
+                Err(error) => Err(io::Error::from(error)),
+            }
+        }
+        Err(error) => Err(io::Error::from(error)),
+    }
+}
+
+#[cfg(target_os = "linux")]
+async fn linux_confirm_process_group_absent(process_group: rustix::process::Pid) -> io::Result<()> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(1);
+    loop {
+        match rustix::process::test_kill_process_group(process_group) {
+            Err(rustix::io::Errno::SRCH) => return Ok(()),
+            Ok(()) if tokio::time::Instant::now() < deadline => {
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            Ok(()) => {
+                return Err(io::Error::other(
+                    "Linux process group remained observable after SIGKILL",
+                ));
+            }
+            Err(error) => return Err(io::Error::from(error)),
         }
     }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_terminate_process_group_sync(process_group: rustix::process::Pid) {
+    match rustix::process::kill_process_group(process_group, rustix::process::Signal::TERM) {
+        Ok(()) => std::thread::sleep(Duration::from_millis(50)),
+        Err(rustix::io::Errno::SRCH) => return,
+        Err(_) => {}
+    }
+    let _ = rustix::process::kill_process_group(process_group, rustix::process::Signal::KILL);
 }
 
 #[derive(Debug)]
@@ -280,19 +670,23 @@ fn process_id_or_cleanup(child: &mut (dyn portable_pty::Child + Send + Sync)) ->
         return Ok(process_id);
     }
 
+    let cleanup = kill_and_wait_child(child);
+    Err(io::Error::other(format!(
+        "PTY child did not expose a process ID; {cleanup}"
+    )))
+}
+
+fn kill_and_wait_child(child: &mut (dyn portable_pty::Child + Send + Sync)) -> String {
     let kill_error = child.kill().err();
     let wait_error = child.wait().err();
-    let cleanup = match (kill_error, wait_error) {
+    match (kill_error, wait_error) {
         (None, None) => "direct kill and wait completed".to_owned(),
         (Some(kill), None) => format!("direct kill failed: {kill}; wait completed"),
         (None, Some(wait)) => format!("direct kill completed; wait failed: {wait}"),
         (Some(kill), Some(wait)) => {
             format!("direct kill failed: {kill}; wait failed: {wait}")
         }
-    };
-    Err(io::Error::other(format!(
-        "PTY child did not expose a process ID; {cleanup}"
-    )))
+    }
 }
 
 #[cfg(test)]
@@ -307,6 +701,11 @@ mod tests {
         NativePtyBackend, ProcessShellSessionIds, acquire_handles_then_spawn,
         is_executable_with_access_check, process_id_or_cleanup, resolve_linux_shell,
         resolve_windows_shell,
+    };
+    #[cfg(windows)]
+    use super::{
+        WINDOWS_GATE_COMMAND_ENV, WINDOWS_GATE_PATH_ENV, WINDOWS_GATE_TIMEOUT_ENV,
+        WINDOWS_GATE_TOKEN_ENV, WINDOWS_GATE_WRAPPER, WindowsStartupGate, resolve_native_shell,
     };
     use crate::shell::{PtyBackend, ShellManagerError, ShellSessionIdSource};
 
@@ -410,6 +809,67 @@ mod tests {
         assert_eq!(error.kind(), io::ErrorKind::Other);
         assert_eq!(kills.load(Ordering::SeqCst), 1);
         assert_eq!(waits.load(Ordering::SeqCst), 1);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_startup_gate_wrapper_times_out_without_a_marker() {
+        use std::os::windows::process::CommandExt as _;
+        use std::process::{Command, Stdio};
+        use std::time::{Duration, Instant};
+
+        let fixture = tempfile::tempdir().expect("gate timeout fixture");
+        let gate_path = fixture.path().join("never-ready");
+        let side_effect = fixture.path().join("must-not-run.txt");
+        let escaped_side_effect = side_effect.to_string_lossy().replace('\'', "''");
+        let user_command =
+            format!("[IO.File]::WriteAllText('{escaped_side_effect}', 'unexpected execution')");
+        let shell = resolve_native_shell("unused").expect("native PowerShell resolves");
+        let mut child = Command::new(shell.program)
+            .args(["-NoLogo", "-NoProfile", "-Command", WINDOWS_GATE_WRAPPER])
+            .env(WINDOWS_GATE_COMMAND_ENV, user_command)
+            .env(WINDOWS_GATE_PATH_ENV, &gate_path)
+            .env(WINDOWS_GATE_TOKEN_ENV, "never-released")
+            .env(WINDOWS_GATE_TIMEOUT_ENV, "200")
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .creation_flags(0x0800_0000)
+            .spawn()
+            .expect("gated PowerShell starts");
+        let deadline = Instant::now() + Duration::from_secs(4);
+        let status = loop {
+            if let Some(status) = child.try_wait().expect("gated PowerShell status") {
+                break status;
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let _ = child.wait();
+                panic!("startup gate did not self-terminate without a marker");
+            }
+            std::thread::sleep(Duration::from_millis(10));
+        };
+
+        assert_eq!(status.code(), Some(125));
+        assert!(!side_effect.exists(), "gated user command must not execute");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_assignment_failure_keeps_the_user_command_gate_closed() {
+        let gate = WindowsStartupGate::new().expect("Windows startup gate");
+
+        let error = gate
+            .assign_and_release_with(0, |_job, _handle| {
+                Err(io::Error::other("scripted assignment failure"))
+            })
+            .expect_err("assignment must fail");
+
+        assert!(error.to_string().contains("scripted assignment failure"));
+        assert!(
+            !gate.gate_path.exists(),
+            "the marker must remain absent, so the user command cannot run"
+        );
     }
 
     #[test]

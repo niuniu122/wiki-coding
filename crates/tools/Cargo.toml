@@ -19,6 +19,9 @@ tokio.workspace = true
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix.workspace = true
 
+[target.'cfg(windows)'.dependencies]
+win32job.workspace = true
+
 [dev-dependencies]
 tokio = { workspace = true, features = ["test-util"] }
 

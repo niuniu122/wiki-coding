@@ -480,7 +480,7 @@ impl DirectChild for TokioDirectChild {
 }
 
 #[cfg(unix)]
-pub(crate) async fn terminate_process_tree(process_id: u32) -> std::io::Result<()> {
+async fn terminate_process_tree(process_id: u32) -> std::io::Result<()> {
     let process_group = format!("-{process_id}");
     let terminate = Command::new(kill_program())
         .args(["-TERM", "--", &process_group])
@@ -517,7 +517,7 @@ fn kill_program() -> &'static str {
 }
 
 #[cfg(windows)]
-pub(crate) async fn terminate_process_tree(process_id: u32) -> std::io::Result<()> {
+async fn terminate_process_tree(process_id: u32) -> std::io::Result<()> {
     let system_root = std::env::var_os("SystemRoot")
         .ok_or_else(|| std::io::Error::other("missing SystemRoot"))?;
     let taskkill = PathBuf::from(system_root)
@@ -537,75 +537,6 @@ pub(crate) async fn terminate_process_tree(process_id: u32) -> std::io::Result<(
     )
     .await
     .map_err(|_| std::io::Error::other("process tree termination timed out"))??;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(std::io::Error::other("process tree termination failed"))
-    }
-}
-
-fn wait_for_sync_command(
-    child: &mut std::process::Child,
-    timeout: Duration,
-) -> std::io::Result<std::process::ExitStatus> {
-    let deadline = std::time::Instant::now() + timeout;
-    loop {
-        if let Some(status) = child.try_wait()? {
-            return Ok(status);
-        }
-        if std::time::Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            return Err(std::io::Error::other(
-                "synchronous process tree termination timed out",
-            ));
-        }
-        std::thread::sleep(Duration::from_millis(5));
-    }
-}
-
-#[cfg(unix)]
-pub(crate) fn terminate_process_tree_sync(process_id: u32) -> std::io::Result<()> {
-    let process_group = format!("-{process_id}");
-    let mut terminate = std::process::Command::new(kill_program())
-        .args(["-TERM", "--", &process_group])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()?;
-    let status = wait_for_sync_command(&mut terminate, Duration::from_secs(1))?;
-    if !status.success() {
-        return Err(std::io::Error::other("process tree termination failed"));
-    }
-    std::thread::sleep(Duration::from_millis(50));
-    let mut force = std::process::Command::new(kill_program())
-        .args(["-KILL", "--", &process_group])
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()?;
-    let _ = wait_for_sync_command(&mut force, Duration::from_secs(1));
-    Ok(())
-}
-
-#[cfg(windows)]
-pub(crate) fn terminate_process_tree_sync(process_id: u32) -> std::io::Result<()> {
-    use std::os::windows::process::CommandExt as _;
-
-    let system_root = std::env::var_os("SystemRoot")
-        .ok_or_else(|| std::io::Error::other("missing SystemRoot"))?;
-    let taskkill = PathBuf::from(system_root)
-        .join("System32")
-        .join("taskkill.exe");
-    let mut child = std::process::Command::new(taskkill)
-        .args(["/PID", &process_id.to_string(), "/T", "/F"])
-        .env_clear()
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .creation_flags(0x0800_0000)
-        .spawn()?;
-    let status = wait_for_sync_command(&mut child, Duration::from_secs(2))?;
     if status.success() {
         Ok(())
     } else {

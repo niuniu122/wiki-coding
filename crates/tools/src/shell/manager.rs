@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex as StdMutex, mpsc};
+use std::sync::atomic::{AtomicU8, AtomicU64, AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex as StdMutex, mpsc};
 use std::thread;
 use std::time::Duration;
 
@@ -82,15 +82,21 @@ pub struct ShellSessionManager {
     ids: Arc<dyn ShellSessionIdSource>,
     clock: Arc<dyn Clock + Send + Sync>,
     output_budget: Arc<ShellOutputBudget>,
-    start_settled: Arc<tokio::sync::Notify>,
+    slots: Arc<SlotLedger>,
     reader_spawner: Arc<dyn ReaderSpawner>,
     unpublished_sequence: Arc<AtomicU64>,
+    #[cfg(test)]
+    unpublished_registration_gate: Arc<StdMutex<Option<Arc<UnpublishedRegistrationGate>>>>,
+}
+
+#[cfg(test)]
+struct UnpublishedRegistrationGate {
+    entered: tokio::sync::Barrier,
+    release: tokio::sync::Barrier,
 }
 
 struct ShellSessionRegistry {
     accepting: bool,
-    starting_slots: usize,
-    running_slots: usize,
     terminal_sequence: u64,
     sessions: BTreeMap<ShellSessionId, Arc<StdMutex<ShellSession>>>,
     unpublished_sessions: BTreeMap<ShellSessionId, Arc<StdMutex<ShellSession>>>,
@@ -98,22 +104,167 @@ struct ShellSessionRegistry {
 
 struct ShellSession {
     id: ShellSessionId,
-    process_id: u32,
+    guard: Option<Box<dyn PtyGuard>>,
+    running_slot: Option<RunningSlotLease>,
     child: Arc<StdMutex<Box<dyn PtyChild>>>,
     writer: Option<Arc<StdMutex<Box<dyn Write + Send>>>>,
     output: Arc<StdMutex<ShellOutputBuffer>>,
-    reader: Option<thread::JoinHandle<()>>,
-    reader_done: Option<mpsc::Receiver<()>>,
-    guard: Option<Box<dyn PtyGuard>>,
+    reader: ReaderState,
     state: ShellSessionState,
     stopping: bool,
-    cleanup_started: bool,
-    cleanup_result: Option<Result<(), ShellManagerError>>,
-    cleanup_notify: Arc<tokio::sync::Notify>,
-    slot_release_deferred: bool,
+    cleanup_generation: u64,
+    cleanup_attempt: Option<Arc<CleanupAttempt>>,
+    cleanup_succeeded: bool,
     exit_code: Option<i32>,
     terminal_at_unix_ms: Option<u64>,
     terminal_sequence: Option<u64>,
+}
+
+enum ReaderState {
+    Pending {
+        handle: thread::JoinHandle<()>,
+        completion: Arc<ReaderCompletion>,
+    },
+    Complete,
+    Failed,
+}
+
+#[derive(Default)]
+struct ReaderCompletion {
+    finished: StdMutex<bool>,
+    completed: Condvar,
+}
+
+impl ReaderCompletion {
+    fn finish(&self) {
+        if let Ok(mut finished) = self.finished.lock() {
+            *finished = true;
+            self.completed.notify_all();
+        }
+    }
+
+    fn wait_timeout(&self, timeout: Duration) -> bool {
+        let Ok(finished) = self.finished.lock() else {
+            return false;
+        };
+        if *finished {
+            return true;
+        }
+        self.completed
+            .wait_timeout_while(finished, timeout, |finished| !*finished)
+            .is_ok_and(|(finished, _)| *finished)
+    }
+}
+
+struct CleanupAttempt {
+    generation: u64,
+    result: StdMutex<Option<Result<(), ShellManagerError>>>,
+    completed: tokio::sync::Notify,
+}
+
+impl CleanupAttempt {
+    fn new(generation: u64) -> Self {
+        Self {
+            generation,
+            result: StdMutex::new(None),
+            completed: tokio::sync::Notify::new(),
+        }
+    }
+
+    fn result(&self) -> Option<Result<(), ShellManagerError>> {
+        self.result.lock().ok().and_then(|result| *result)
+    }
+
+    async fn wait(&self) -> Result<(), ShellManagerError> {
+        loop {
+            let notified = self.completed.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if let Some(result) = self.result() {
+                return result;
+            }
+            notified.as_mut().await;
+        }
+    }
+
+    fn complete(&self, result: Result<(), ShellManagerError>) {
+        if let Ok(mut completed) = self.result.lock() {
+            debug_assert!(
+                completed.is_none(),
+                "cleanup attempt completes exactly once"
+            );
+            *completed = Some(result);
+        }
+        self.completed.notify_waiters();
+    }
+}
+
+#[derive(Default)]
+struct SlotLedger {
+    starting: AtomicUsize,
+    running: AtomicUsize,
+    changed: tokio::sync::Notify,
+}
+
+impl SlotLedger {
+    fn reserve(
+        self: &Arc<Self>,
+    ) -> Result<(StartingSlotLease, RunningSlotLease), ShellManagerError> {
+        self.running
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |running| {
+                (running < MAX_RUNNING_SHELL_SESSIONS).then_some(running + 1)
+            })
+            .map_err(|_| ShellManagerError::SessionLimit)?;
+        self.starting.fetch_add(1, Ordering::AcqRel);
+        Ok((
+            StartingSlotLease {
+                ledger: Arc::clone(self),
+            },
+            RunningSlotLease {
+                ledger: Arc::clone(self),
+            },
+        ))
+    }
+
+    fn release_starting(&self) {
+        let released = self
+            .starting
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                count.checked_sub(1)
+            });
+        debug_assert!(released.is_ok(), "starting slot released exactly once");
+        self.changed.notify_waiters();
+    }
+
+    fn release_running(&self) {
+        let released = self
+            .running
+            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |count| {
+                count.checked_sub(1)
+            });
+        debug_assert!(released.is_ok(), "running slot released exactly once");
+        self.changed.notify_waiters();
+    }
+}
+
+struct StartingSlotLease {
+    ledger: Arc<SlotLedger>,
+}
+
+impl Drop for StartingSlotLease {
+    fn drop(&mut self) {
+        self.ledger.release_starting();
+    }
+}
+
+struct RunningSlotLease {
+    ledger: Arc<SlotLedger>,
+}
+
+impl Drop for RunningSlotLease {
+    fn drop(&mut self) {
+        self.ledger.release_running();
+    }
 }
 
 impl ShellSessionManager {
@@ -136,8 +287,6 @@ impl ShellSessionManager {
         Self {
             inner: Arc::new(Mutex::new(ShellSessionRegistry {
                 accepting: false,
-                starting_slots: 0,
-                running_slots: 0,
                 terminal_sequence: 0,
                 sessions: BTreeMap::new(),
                 unpublished_sessions: BTreeMap::new(),
@@ -146,9 +295,11 @@ impl ShellSessionManager {
             ids,
             clock,
             output_budget: Arc::new(ShellOutputBudget::new(DEFAULT_OUTPUT_BUDGET_BYTES)),
-            start_settled: Arc::new(tokio::sync::Notify::new()),
+            slots: Arc::new(SlotLedger::default()),
             reader_spawner,
             unpublished_sequence: Arc::new(AtomicU64::new(0)),
+            #[cfg(test)]
+            unpublished_registration_gate: Arc::new(StdMutex::new(None)),
         }
     }
 
@@ -167,8 +318,8 @@ impl ShellSessionManager {
         if cancellation.is_cancelled() {
             return Err(ShellManagerError::Cancelled);
         }
-        self.reserve_running_slot().await?;
-        let mut pending_start = PendingStart::reserved(self.clone());
+        let (starting_slot, running_slot) = self.reserve_running_slot().await?;
+        let mut pending_start = PendingStart::reserved(self.clone(), starting_slot, running_slot);
 
         let spawn_request = ShellSpawnRequest {
             command: request.command,
@@ -210,7 +361,9 @@ impl ShellSessionManager {
             }
         };
         let session = Arc::new(StdMutex::new(
-            pending_start.take_resources().into_session(id.clone()),
+            pending_start
+                .take_resources()
+                .into_session(id.clone(), pending_start.take_running_slot()),
         ));
         pending_start.own_session(Arc::clone(&session));
 
@@ -220,14 +373,10 @@ impl ShellSessionManager {
                 false
             } else {
                 registry.sessions.insert(id.clone(), Arc::clone(&session));
-                registry.starting_slots = registry.starting_slots.saturating_sub(1);
                 pending_start.disarm();
                 true
             }
         };
-        if published {
-            self.start_settled.notify_waiters();
-        }
         if !published {
             let (manager, settlement_session) = pending_start.take_settlement();
             manager.settle_unpublished_start(settlement_session).await?;
@@ -406,13 +555,13 @@ impl ShellSessionManager {
     pub async fn disable_and_stop_all(&self) -> Result<(), ShellCleanupError> {
         self.gc().await;
         loop {
-            let settled = self.start_settled.notified();
+            let settled = self.slots.changed.notified();
             tokio::pin!(settled);
             settled.as_mut().enable();
             let has_starting_sessions = {
                 let mut registry = self.inner.lock().await;
                 registry.accepting = false;
-                registry.starting_slots > 0
+                self.slots.starting.load(Ordering::Acquire) > 0
             };
             if !has_starting_sessions {
                 break;
@@ -427,7 +576,7 @@ impl ShellSessionManager {
                 .filter_map(|(id, session)| {
                     let include = session
                         .lock()
-                        .is_ok_and(|session| session.cleanup_result != Some(Ok(())));
+                        .is_ok_and(|session| !session.cleanup_succeeded);
                     include.then(|| (id.clone(), Arc::clone(session)))
                 })
                 .collect::<Vec<_>>();
@@ -450,6 +599,14 @@ impl ShellSessionManager {
                 failed.push(session_id);
             }
         }
+        {
+            let mut registry = self.inner.lock().await;
+            registry.unpublished_sessions.retain(|_, session| {
+                !session
+                    .lock()
+                    .is_ok_and(|session| session.cleanup_succeeded)
+            });
+        }
         if failed.is_empty() {
             Ok(())
         } else {
@@ -463,17 +620,14 @@ impl ShellSessionManager {
         self.disable_and_stop_all().await
     }
 
-    async fn reserve_running_slot(&self) -> Result<(), ShellManagerError> {
-        let mut registry = self.inner.lock().await;
+    async fn reserve_running_slot(
+        &self,
+    ) -> Result<(StartingSlotLease, RunningSlotLease), ShellManagerError> {
+        let registry = self.inner.lock().await;
         if !registry.accepting {
             return Err(ShellManagerError::Disabled);
         }
-        if registry.running_slots >= MAX_RUNNING_SHELL_SESSIONS {
-            return Err(ShellManagerError::SessionLimit);
-        }
-        registry.starting_slots += 1;
-        registry.running_slots += 1;
-        Ok(())
+        self.slots.reserve()
     }
 
     fn next_unpublished_id(&self) -> ShellSessionId {
@@ -507,7 +661,8 @@ impl ShellSessionManager {
         } else {
             (None, None)
         };
-        let (reader_done_tx, reader_done) = mpsc::sync_channel(1);
+        let reader_done = Arc::new(ReaderCompletion::default());
+        let reader_completion = Arc::clone(&reader_done);
         let reader = self.reader_spawner.spawn(
             format!("shell-reader-{process_id}"),
             Box::new(move || {
@@ -573,11 +728,10 @@ impl ShellSessionManager {
                         }
                     }
                 }
-                let _ = reader_done_tx.send(());
+                reader_completion.finish();
             }),
         );
         let resources = |reader, reader_done| OwnedSessionResources {
-            process_id,
             child: Arc::clone(&child),
             writer: Arc::clone(&writer),
             output: Arc::clone(&output),
@@ -690,10 +844,10 @@ impl ShellSessionManager {
         &self,
         session: &Arc<StdMutex<ShellSession>>,
     ) -> Result<(), ShellManagerError> {
-        let release_running_slot = {
+        let became_terminal = {
             let mut session = session.lock().map_err(|_| ShellManagerError::Io)?;
             if session.state != ShellSessionState::Running {
-                None
+                false
             } else {
                 let wait = session
                     .child
@@ -709,19 +863,16 @@ impl ShellSessionManager {
                             ShellSessionState::Exited
                         };
                         session.terminal_at_unix_ms = Some(self.clock.now_unix_ms());
-                        Some(!session.slot_release_deferred)
+                        true
                     }
-                    Ok(None) => None,
+                    Ok(None) => false,
                     Err(_) => return Err(ShellManagerError::Io),
                 }
             }
         };
-        if let Some(release_running_slot) = release_running_slot {
+        if became_terminal {
             let sequence = {
                 let mut registry = self.inner.lock().await;
-                if release_running_slot {
-                    registry.running_slots = registry.running_slots.saturating_sub(1);
-                }
                 registry.terminal_sequence = registry.terminal_sequence.saturating_add(1);
                 registry.terminal_sequence
             };
@@ -745,64 +896,73 @@ impl ShellSessionManager {
         &self,
         session: &Arc<StdMutex<ShellSession>>,
     ) -> Result<(), ShellManagerError> {
-        let notify = session
-            .lock()
-            .map_err(|_| ShellManagerError::Io)?
-            .cleanup_notify
-            .clone();
-        loop {
-            let notified = notify.notified();
-            tokio::pin!(notified);
-            notified.as_mut().enable();
-            let role = {
-                let mut session = session.lock().map_err(|_| ShellManagerError::Io)?;
-                if let Some(result) = session.cleanup_result {
-                    CleanupRole::Complete(result)
-                } else if session.cleanup_started {
-                    CleanupRole::Wait
-                } else {
-                    session.cleanup_started = true;
-                    let running = session.state == ShellSessionState::Running;
-                    if running {
-                        session.stopping = true;
-                    }
-                    CleanupRole::Start { running }
-                }
-            };
-            match role {
-                CleanupRole::Complete(result) => return result,
-                CleanupRole::Wait => notified.as_mut().await,
-                CleanupRole::Start { running } => {
-                    let manager = self.clone();
-                    let session = Arc::clone(session);
-                    let cleanup_notify = Arc::clone(&notify);
-                    drop(tokio::spawn(async move {
-                        manager.run_cleanup(session, running, cleanup_notify).await;
-                    }));
-                    notified.as_mut().await;
-                }
+        let (attempt, owner, running) = {
+            let mut session = session.lock().map_err(|_| ShellManagerError::Io)?;
+            if session.cleanup_succeeded {
+                return Ok(());
             }
+            if let Some(attempt) = session.cleanup_attempt.as_ref()
+                && attempt.result().is_none()
+            {
+                (
+                    Arc::clone(attempt),
+                    false,
+                    session.state == ShellSessionState::Running,
+                )
+            } else {
+                session.cleanup_generation = session.cleanup_generation.saturating_add(1);
+                let attempt = Arc::new(CleanupAttempt::new(session.cleanup_generation));
+                let running = session.state == ShellSessionState::Running;
+                if running {
+                    session.stopping = true;
+                }
+                session.cleanup_attempt = Some(Arc::clone(&attempt));
+                (attempt, true, running)
+            }
+        };
+        if owner {
+            let manager = self.clone();
+            let session = Arc::clone(session);
+            let cleanup_attempt = Arc::clone(&attempt);
+            drop(tokio::spawn(async move {
+                manager.run_cleanup(session, running, cleanup_attempt).await;
+            }));
         }
+        attempt.wait().await
     }
 
     async fn run_cleanup(
         &self,
         session: Arc<StdMutex<ShellSession>>,
         running: bool,
-        notify: Arc<tokio::sync::Notify>,
+        attempt: Arc<CleanupAttempt>,
     ) {
         let result = if running {
             self.cleanup_running_session(&session).await
-        } else if self.close_handles_and_join_reader(&session, true).await {
-            Ok(())
         } else {
-            Err(ShellManagerError::Indeterminate)
+            let destructive_ok = self.terminate_containment(&session).await;
+            let reaped = destructive_ok && self.reap_child(&session).await;
+            let containment_ok = reaped && self.confirm_containment(&session).await;
+            let reader_done = self
+                .close_handles_and_join_reader(&session, containment_ok)
+                .await;
+            if containment_ok && reader_done {
+                Ok(())
+            } else {
+                Err(ShellManagerError::Indeterminate)
+            }
         };
-        if let Ok(mut session) = session.lock() {
-            session.cleanup_started = false;
-            session.cleanup_result = Some(result);
-        }
-        notify.notify_waiters();
+        let running_slot = session.lock().ok().and_then(|mut session| {
+            debug_assert_eq!(session.cleanup_generation, attempt.generation);
+            if result.is_ok() {
+                session.cleanup_succeeded = true;
+                session.running_slot.take()
+            } else {
+                None
+            }
+        });
+        drop(running_slot);
+        attempt.complete(result);
     }
 
     async fn cleanup_running_session(
@@ -811,35 +971,86 @@ impl ShellSessionManager {
     ) -> Result<(), ShellManagerError> {
         let _ = self.write_interrupt(session).await;
         let exited_after_interrupt = self.wait_for_exit(session, CLEANUP_WAIT).await?;
-        let mut terminate_ok = true;
-        if !exited_after_interrupt {
-            let process_id = session
-                .lock()
-                .map_err(|_| ShellManagerError::Io)?
-                .process_id;
-            terminate_ok = matches!(
-                tokio::time::timeout(CLEANUP_WAIT, self.backend.terminate_tree(process_id)).await,
-                Ok(Ok(()))
-            );
-            if self.kill_child(session).await == ChildKillOutcome::TimedOut {
-                return Err(ShellManagerError::Indeterminate);
-            }
+        let terminate_ok = self.terminate_containment(session).await;
+        if !exited_after_interrupt && self.kill_child(session).await == ChildKillOutcome::TimedOut {
+            return Err(ShellManagerError::Indeterminate);
         }
         let confirmed = if exited_after_interrupt {
             true
         } else {
             self.wait_for_exit(session, CLEANUP_WAIT).await?
         };
-        let reader_done = if confirmed {
-            self.close_handles_and_join_reader(session, terminate_ok)
+        let reaped = confirmed && terminate_ok && self.reap_child(session).await;
+        let containment_ok = reaped && self.confirm_containment(session).await;
+        let reader_done = if confirmed && containment_ok {
+            self.close_handles_and_join_reader(session, containment_ok)
                 .await
         } else {
             false
         };
-        if !terminate_ok || !confirmed || !reader_done {
+        if !containment_ok || !confirmed || !reader_done {
             return Err(ShellManagerError::Indeterminate);
         }
         Ok(())
+    }
+
+    async fn terminate_containment(&self, session: &Arc<StdMutex<ShellSession>>) -> bool {
+        let mut guard = match session.lock() {
+            Ok(mut session) => session.guard.take(),
+            Err(_) => return false,
+        };
+        let Some(mut guard) = guard.take() else {
+            return false;
+        };
+        let terminated = matches!(
+            tokio::time::timeout(CLEANUP_WAIT, guard.terminate()).await,
+            Ok(Ok(()))
+        );
+        match session.lock() {
+            Ok(mut session) if session.guard.is_none() => {
+                session.guard = Some(guard);
+                terminated
+            }
+            _ => false,
+        }
+    }
+
+    async fn confirm_containment(&self, session: &Arc<StdMutex<ShellSession>>) -> bool {
+        let mut guard = match session.lock() {
+            Ok(mut session) => session.guard.take(),
+            Err(_) => return false,
+        };
+        let Some(mut guard) = guard.take() else {
+            return false;
+        };
+        let confirmed = matches!(
+            tokio::time::timeout(CLEANUP_WAIT, guard.confirm()).await,
+            Ok(Ok(()))
+        );
+        match session.lock() {
+            Ok(mut session) if session.guard.is_none() => {
+                session.guard = Some(guard);
+                confirmed
+            }
+            _ => false,
+        }
+    }
+
+    async fn reap_child(&self, session: &Arc<StdMutex<ShellSession>>) -> bool {
+        let child = match session.lock() {
+            Ok(session) => Arc::clone(&session.child),
+            Err(_) => return false,
+        };
+        matches!(
+            tokio::time::timeout(
+                CLEANUP_WAIT,
+                tokio::task::spawn_blocking(move || {
+                    child.lock().map_err(|_| ())?.reap().map_err(|_| ())
+                })
+            )
+            .await,
+            Ok(Ok(Ok(())))
+        )
     }
 
     async fn wait_for_exit(
@@ -908,45 +1119,74 @@ impl ShellSessionManager {
         session: &Arc<StdMutex<ShellSession>>,
         tree_cleanup_confirmed: bool,
     ) -> bool {
-        let (reader, reader_done, writer, mut guard) = match session.lock() {
-            Ok(mut session) => (
-                session.reader.take(),
-                session.reader_done.take(),
-                session.writer.take(),
-                session.guard.take(),
-            ),
+        let (writer, mut guard) = match session.lock() {
+            Ok(mut session) => (session.writer.take(), session.guard.take()),
             Err(_) => return false,
         };
         drop(writer);
         if let Some(guard) = guard.as_mut() {
             guard.close_io();
         }
-        let reader_closed = match (reader, reader_done) {
-            (None, _) => true,
-            (Some(reader), None) => {
-                drop(reader);
-                false
-            }
-            (Some(reader), Some(reader_done)) => matches!(
-                tokio::task::spawn_blocking(move || {
-                    if reader_done.recv_timeout(CLEANUP_WAIT).is_err() {
-                        drop(reader);
-                        return false;
-                    }
-                    reader.join().is_ok()
-                })
-                .await,
+        if let Ok(mut session) = session.lock() {
+            session.guard = guard.take();
+        } else {
+            return false;
+        }
+
+        let completion = match session.lock() {
+            Ok(session) => match &session.reader {
+                ReaderState::Pending { completion, .. } => Some(Arc::clone(completion)),
+                ReaderState::Complete => None,
+                ReaderState::Failed => return false,
+            },
+            Err(_) => return false,
+        };
+        if let Some(completion) = completion
+            && !wait_for_reader_completion(&completion).await
+        {
+            return false;
+        }
+
+        let handle = match session.lock() {
+            Ok(mut session) => match std::mem::replace(&mut session.reader, ReaderState::Failed) {
+                ReaderState::Pending { handle, .. } => Some(handle),
+                ReaderState::Complete => {
+                    session.reader = ReaderState::Complete;
+                    None
+                }
+                ReaderState::Failed => return false,
+            },
+            Err(_) => return false,
+        };
+        let reader_closed = match handle {
+            Some(handle) => matches!(
+                tokio::task::spawn_blocking(move || handle.join().is_ok()).await,
                 Ok(true)
             ),
+            None => true,
         };
-        if tree_cleanup_confirmed
-            && reader_closed
-            && let Some(guard) = guard.as_mut()
-        {
-            guard.disarm();
+        if let Ok(mut session) = session.lock() {
+            session.reader = if reader_closed {
+                ReaderState::Complete
+            } else {
+                ReaderState::Failed
+            };
+        } else {
+            return false;
         }
-        drop(guard);
-        reader_closed
+
+        let completed = tree_cleanup_confirmed && reader_closed;
+        if completed {
+            let mut guard = match session.lock() {
+                Ok(mut session) => session.guard.take(),
+                Err(_) => return false,
+            };
+            if let Some(guard) = guard.as_mut() {
+                guard.disarm();
+            }
+            drop(guard);
+        }
+        completed
     }
 
     fn receipt(
@@ -992,11 +1232,11 @@ impl ShellSessionManager {
 
     async fn settle_unpublished_start(
         &self,
-        session: Option<Arc<StdMutex<ShellSession>>>,
+        settlement: PendingSettlement,
     ) -> Result<(), ShellManagerError> {
         let manager = self.clone();
         let settlement =
-            tokio::spawn(async move { manager.finish_unpublished_start(session).await });
+            tokio::spawn(async move { manager.finish_unpublished_start(settlement).await });
         settlement
             .await
             .unwrap_or(Err(ShellManagerError::Indeterminate))
@@ -1004,13 +1244,11 @@ impl ShellSessionManager {
 
     async fn finish_unpublished_start(
         &self,
-        session: Option<Arc<StdMutex<ShellSession>>>,
+        mut settlement: PendingSettlement,
     ) -> Result<(), ShellManagerError> {
-        let Some(session) = session else {
-            let mut registry = self.inner.lock().await;
-            registry.starting_slots = registry.starting_slots.saturating_sub(1);
-            registry.running_slots = registry.running_slots.saturating_sub(1);
-            self.start_settled.notify_waiters();
+        let Some(session) = settlement.session.as_ref().cloned() else {
+            drop(settlement.running_slot.take());
+            drop(settlement.starting_slot.take());
             return Ok(());
         };
         let internal_id = session
@@ -1018,18 +1256,36 @@ impl ShellSessionManager {
             .map(|session| session.id.clone())
             .unwrap_or_else(|_| self.next_unpublished_id());
         let cleanup = self.ensure_cleanup(&session).await;
+        #[cfg(test)]
+        self.wait_at_unpublished_registration_gate().await;
         let mut registry = self.inner.lock().await;
-        registry.starting_slots = registry.starting_slots.saturating_sub(1);
-        match cleanup {
-            Ok(()) => {
-                registry.running_slots = registry.running_slots.saturating_sub(1);
-            }
+        let completed_session = match cleanup {
+            Ok(()) => settlement.session.take(),
             Err(_) => {
-                registry.unpublished_sessions.insert(internal_id, session);
+                if let Some(session) = settlement.session.take() {
+                    registry.unpublished_sessions.insert(internal_id, session);
+                }
+                None
             }
-        }
-        self.start_settled.notify_waiters();
+        };
+        drop(settlement.running_slot.take());
+        drop(settlement.starting_slot.take());
+        drop(registry);
+        drop(completed_session);
         cleanup
+    }
+
+    #[cfg(test)]
+    async fn wait_at_unpublished_registration_gate(&self) {
+        let gate = self
+            .unpublished_registration_gate
+            .lock()
+            .ok()
+            .and_then(|gate| gate.clone());
+        if let Some(gate) = gate {
+            gate.entered.wait().await;
+            gate.release.wait().await;
+        }
     }
 
     async fn gc(&self) {
@@ -1043,10 +1299,8 @@ impl ShellSessionManager {
                 let session = session.lock().ok()?;
                 let terminal_at = session.terminal_at_unix_ms?;
                 let sequence = session.terminal_sequence?;
-                (session.state != ShellSessionState::Running
-                    && !session.cleanup_started
-                    && session.cleanup_result.is_some())
-                .then(|| (id.clone(), terminal_at, sequence))
+                (session.state != ShellSessionState::Running && session.cleanup_succeeded)
+                    .then(|| (id.clone(), terminal_at, sequence))
             })
             .collect::<Vec<_>>();
         let expired = terminal
@@ -1109,15 +1363,22 @@ impl Drop for ShellSessionManager {
     }
 }
 
+async fn wait_for_reader_completion(completion: &Arc<ReaderCompletion>) -> bool {
+    let completion = Arc::clone(completion);
+    matches!(
+        tokio::task::spawn_blocking(move || completion.wait_timeout(CLEANUP_WAIT)).await,
+        Ok(true)
+    )
+}
+
 struct OwnedSessionResources {
-    process_id: u32,
+    guard: Option<Box<dyn PtyGuard>>,
     child: Arc<StdMutex<Box<dyn PtyChild>>>,
     writer: Arc<StdMutex<Box<dyn Write + Send>>>,
     output: Arc<StdMutex<ShellOutputBuffer>>,
     startup_handshake: Option<mpsc::Receiver<StartupHandshakeOutcome>>,
     reader: Option<thread::JoinHandle<()>>,
-    reader_done: Option<mpsc::Receiver<()>>,
-    guard: Option<Box<dyn PtyGuard>>,
+    reader_done: Option<Arc<ReaderCompletion>>,
 }
 
 enum PendingStartOwnership {
@@ -1128,13 +1389,21 @@ enum PendingStartOwnership {
 
 struct PendingStart {
     manager: Option<ShellSessionManager>,
+    starting_slot: Option<StartingSlotLease>,
+    running_slot: Option<RunningSlotLease>,
     ownership: Option<PendingStartOwnership>,
 }
 
 impl PendingStart {
-    fn reserved(manager: ShellSessionManager) -> Self {
+    fn reserved(
+        manager: ShellSessionManager,
+        starting_slot: StartingSlotLease,
+        running_slot: RunningSlotLease,
+    ) -> Self {
         Self {
             manager: Some(manager),
+            starting_slot: Some(starting_slot),
+            running_slot: Some(running_slot),
             ownership: Some(PendingStartOwnership::Reservation),
         }
     }
@@ -1157,34 +1426,90 @@ impl PendingStart {
         }
     }
 
+    fn take_running_slot(&mut self) -> RunningSlotLease {
+        self.running_slot
+            .take()
+            .expect("pending start owns its running slot before session construction")
+    }
+
     fn own_session(&mut self, session: Arc<StdMutex<ShellSession>>) {
         self.ownership = Some(PendingStartOwnership::Session(session));
     }
 
-    fn take_settlement(&mut self) -> (ShellSessionManager, Option<Arc<StdMutex<ShellSession>>>) {
+    fn take_settlement(&mut self) -> (ShellSessionManager, PendingSettlement) {
         let manager = self
             .manager
             .take()
             .expect("armed pending start owns its manager");
         let session = match self.ownership.take() {
             Some(PendingStartOwnership::Reservation) | None => None,
-            Some(PendingStartOwnership::Resources(resources)) => Some(Arc::new(StdMutex::new(
-                resources.into_unpublished_session(manager.next_unpublished_id()),
-            ))),
+            Some(PendingStartOwnership::Resources(resources)) => {
+                Some(Arc::new(StdMutex::new(resources.into_unpublished_session(
+                    manager.next_unpublished_id(),
+                    self.take_running_slot(),
+                ))))
+            }
             Some(PendingStartOwnership::Session(session)) => {
                 if let Ok(mut session_state) = session.lock() {
                     session_state.id = manager.next_unpublished_id();
-                    session_state.slot_release_deferred = true;
                 }
                 Some(session)
             }
         };
-        (manager, session)
+        (
+            manager,
+            PendingSettlement {
+                starting_slot: self.starting_slot.take(),
+                running_slot: self.running_slot.take(),
+                session,
+            },
+        )
     }
 
     fn disarm(&mut self) {
+        drop(self.starting_slot.take());
+        debug_assert!(self.running_slot.is_none());
         self.manager.take();
         self.ownership.take();
+    }
+}
+
+struct PendingSettlement {
+    starting_slot: Option<StartingSlotLease>,
+    running_slot: Option<RunningSlotLease>,
+    session: Option<Arc<StdMutex<ShellSession>>>,
+}
+
+impl PendingSettlement {
+    fn cleanup_without_runtime(&mut self) {
+        if let Some(session) = self.session.take() {
+            let (guard, running_slot, writer, child) = match session.lock() {
+                Ok(mut session) => (
+                    session.guard.take(),
+                    session.running_slot.take(),
+                    session.writer.take(),
+                    Some(Arc::clone(&session.child)),
+                ),
+                Err(_) => (None, None, None, None),
+            };
+            drop(guard);
+            drop(writer);
+            if let Some(child) = child
+                && let Ok(mut child) = child.try_lock()
+            {
+                let _ = child.kill();
+            }
+            drop(running_slot);
+            drop(session);
+        }
+        drop(self.running_slot.take());
+        drop(self.starting_slot.take());
+    }
+}
+
+impl Drop for PendingSettlement {
+    fn drop(&mut self) {
+        self.cleanup_without_runtime();
     }
 }
 
@@ -1193,49 +1518,50 @@ impl Drop for PendingStart {
         if self.manager.is_none() {
             return;
         }
-        let (manager, session) = self.take_settlement();
+        let (manager, mut settlement) = self.take_settlement();
         if let Ok(runtime) = tokio::runtime::Handle::try_current() {
             drop(runtime.spawn(async move {
-                let _ = manager.finish_unpublished_start(session).await;
+                let _ = manager.finish_unpublished_start(settlement).await;
             }));
+        } else {
+            settlement.cleanup_without_runtime();
         }
     }
 }
 
 impl OwnedSessionResources {
-    fn into_session(self, id: ShellSessionId) -> ShellSession {
+    fn into_session(self, id: ShellSessionId, running_slot: RunningSlotLease) -> ShellSession {
+        let reader = match (self.reader, self.reader_done) {
+            (Some(handle), Some(completion)) => ReaderState::Pending { handle, completion },
+            (None, None) => ReaderState::Complete,
+            _ => ReaderState::Failed,
+        };
         ShellSession {
             id,
-            process_id: self.process_id,
+            guard: self.guard,
+            running_slot: Some(running_slot),
             child: self.child,
             writer: Some(self.writer),
             output: self.output,
-            reader: self.reader,
-            reader_done: self.reader_done,
-            guard: self.guard,
+            reader,
             state: ShellSessionState::Running,
             stopping: false,
-            cleanup_started: false,
-            cleanup_result: None,
-            cleanup_notify: Arc::new(tokio::sync::Notify::new()),
-            slot_release_deferred: false,
+            cleanup_generation: 0,
+            cleanup_attempt: None,
+            cleanup_succeeded: false,
             exit_code: None,
             terminal_at_unix_ms: None,
             terminal_sequence: None,
         }
     }
 
-    fn into_unpublished_session(self, id: ShellSessionId) -> ShellSession {
-        let mut session = self.into_session(id);
-        session.slot_release_deferred = true;
-        session
+    fn into_unpublished_session(
+        self,
+        id: ShellSessionId,
+        running_slot: RunningSlotLease,
+    ) -> ShellSession {
+        self.into_session(id, running_slot)
     }
-}
-
-enum CleanupRole {
-    Start { running: bool },
-    Wait,
-    Complete(Result<(), ShellManagerError>),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -1319,11 +1645,14 @@ mod tests {
     use std::io::{self, Read, Write};
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::{Arc, Condvar, Mutex};
-    use std::time::Duration;
+    use std::time::{Duration, Instant};
 
     use minimax_protocol::{MAX_SHELL_OUTPUT_BYTES, ShellSessionId};
 
-    use super::{ShellCommandRequest, ShellSessionManager};
+    use super::{
+        CleanupAttempt, MAX_RUNNING_SHELL_SESSIONS, PendingStart, ShellCleanupError,
+        ShellCommandRequest, ShellManagerError, ShellSessionManager, UnpublishedRegistrationGate,
+    };
     use crate::NeverCancelled;
     use crate::shell::{
         PtyBackend, PtyChild, PtyTerminateFuture, ShellSessionIdSource, ShellSpawnRequest,
@@ -1370,13 +1699,6 @@ mod tests {
                 }),
             })
         }
-
-        fn terminate_tree<'a>(&'a self, _process_id: u32) -> PtyTerminateFuture<'a> {
-            Box::pin(async move {
-                self.process.exit();
-                Ok(())
-            })
-        }
     }
 
     struct PublishLockChild {
@@ -1388,7 +1710,116 @@ mod tests {
         armed: bool,
     }
 
+    struct NoRuntimeOrderGuard {
+        process: Arc<PublishLockProcess>,
+        slots: Arc<super::SlotLedger>,
+        drops: Arc<std::sync::atomic::AtomicUsize>,
+        early_running_release: Arc<AtomicBool>,
+    }
+
+    struct BlockingNoRuntimeGuard {
+        process: Arc<PublishLockProcess>,
+        slots: Arc<super::SlotLedger>,
+        entered: Arc<(Mutex<bool>, Condvar)>,
+        release: Arc<(Mutex<bool>, Condvar)>,
+        early_running_release: Arc<AtomicBool>,
+    }
+
+    struct FailingContainmentGuard;
+
+    struct RecoveringContainmentGuard {
+        process: Arc<PublishLockProcess>,
+        fail: Arc<AtomicBool>,
+    }
+
+    impl crate::shell::PtyGuard for FailingContainmentGuard {
+        fn terminate<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+            Box::pin(async { Err(io::Error::other("scripted containment failure")) })
+        }
+
+        fn confirm<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    impl crate::shell::PtyGuard for RecoveringContainmentGuard {
+        fn terminate<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+            Box::pin(async move {
+                if self.fail.load(Ordering::Acquire) {
+                    Err(io::Error::other("scripted containment failure"))
+                } else {
+                    self.process.exit();
+                    Ok(())
+                }
+            })
+        }
+
+        fn confirm<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    impl crate::shell::PtyGuard for NoRuntimeOrderGuard {
+        fn terminate<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn confirm<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    impl Drop for NoRuntimeOrderGuard {
+        fn drop(&mut self) {
+            if self.slots.running.load(Ordering::Acquire) == 0 {
+                self.early_running_release.store(true, Ordering::Release);
+            }
+            self.drops.fetch_add(1, Ordering::AcqRel);
+            self.process.exit();
+        }
+    }
+
+    impl crate::shell::PtyGuard for BlockingNoRuntimeGuard {
+        fn terminate<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn confirm<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    impl Drop for BlockingNoRuntimeGuard {
+        fn drop(&mut self) {
+            if self.slots.running.load(Ordering::Acquire) == 0 {
+                self.early_running_release.store(true, Ordering::Release);
+            }
+            {
+                let (entered, signal) = &*self.entered;
+                *entered.lock().expect("guard entered") = true;
+                signal.notify_all();
+            }
+            let (release, signal) = &*self.release;
+            let mut release = release.lock().expect("guard release");
+            while !*release {
+                release = signal.wait(release).expect("guard release wait");
+            }
+            self.process.exit();
+        }
+    }
+
     impl crate::shell::PtyGuard for PublishLockGuard {
+        fn terminate<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+            Box::pin(async move {
+                self.process.exit();
+                Ok(())
+            })
+        }
+
+        fn confirm<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+            Box::pin(async { Ok(()) })
+        }
+
         fn disarm(&mut self) {
             self.armed = false;
         }
@@ -1402,6 +1833,284 @@ mod tests {
                     .fetch_add(1, Ordering::AcqRel);
                 self.process.exit();
             }
+        }
+    }
+
+    #[test]
+    fn no_runtime_pending_start_drop_releases_eight_slots_after_bounded_guard_cleanup() {
+        let backend = Arc::new(PublishLockBackend::default());
+        let manager = ShellSessionManager::new(
+            backend.clone(),
+            Arc::new(FixedIds),
+            Arc::new(SystemShellClock),
+        );
+        let guard_drops = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let early_running_release = Arc::new(AtomicBool::new(false));
+        let mut starts = Vec::new();
+        for index in 0..MAX_RUNNING_SHELL_SESSIONS {
+            let (starting_slot, running_slot) = manager.slots.reserve().expect("slot reservation");
+            let mut pending = PendingStart::reserved(manager.clone(), starting_slot, running_slot);
+            let mut spawned = backend
+                .spawn(&ShellSpawnRequest {
+                    command: format!("no-runtime-{index}"),
+                    cwd: std::path::PathBuf::from("."),
+                    cols: 120,
+                    rows: 30,
+                })
+                .expect("no-runtime process");
+            spawned.guard = Box::new(NoRuntimeOrderGuard {
+                process: Arc::clone(&backend.process),
+                slots: Arc::clone(&manager.slots),
+                drops: Arc::clone(&guard_drops),
+                early_running_release: Arc::clone(&early_running_release),
+            });
+            let resources = manager
+                .own_spawned_resources(spawned)
+                .unwrap_or_else(|_| panic!("no-runtime resources"));
+            pending.own_resources(resources);
+            starts.push(pending);
+        }
+
+        let started = Instant::now();
+        drop(starts);
+
+        assert!(started.elapsed() < Duration::from_secs(2));
+        assert_eq!(
+            guard_drops.load(Ordering::Acquire),
+            MAX_RUNNING_SHELL_SESSIONS
+        );
+        assert!(!early_running_release.load(Ordering::Acquire));
+        assert_eq!(manager.slots.starting.load(Ordering::Acquire), 0);
+        assert_eq!(manager.slots.running.load(Ordering::Acquire), 0);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn disable_waits_for_no_runtime_pending_start_cleanup_to_finish() {
+        let backend = Arc::new(PublishLockBackend::default());
+        let manager = ShellSessionManager::new(
+            backend.clone(),
+            Arc::new(FixedIds),
+            Arc::new(SystemShellClock),
+        );
+        manager.enable().await;
+        let entered = Arc::new((Mutex::new(false), Condvar::new()));
+        let release = Arc::new((Mutex::new(false), Condvar::new()));
+        let early_running_release = Arc::new(AtomicBool::new(false));
+        let (starting_slot, running_slot) = manager.slots.reserve().expect("slot reservation");
+        let mut pending = PendingStart::reserved(manager.clone(), starting_slot, running_slot);
+        let mut spawned = backend
+            .spawn(&ShellSpawnRequest {
+                command: "no-runtime-disable-barrier".to_owned(),
+                cwd: std::path::PathBuf::from("."),
+                cols: 120,
+                rows: 30,
+            })
+            .expect("no-runtime process");
+        spawned.guard = Box::new(BlockingNoRuntimeGuard {
+            process: Arc::clone(&backend.process),
+            slots: Arc::clone(&manager.slots),
+            entered: Arc::clone(&entered),
+            release: Arc::clone(&release),
+            early_running_release: Arc::clone(&early_running_release),
+        });
+        let resources = manager
+            .own_spawned_resources(spawned)
+            .unwrap_or_else(|_| panic!("no-runtime resources"));
+        pending.own_resources(resources);
+
+        let dropper = std::thread::spawn(move || drop(pending));
+        let entered_wait = Arc::clone(&entered);
+        tokio::task::spawn_blocking(move || {
+            let (entered, signal) = &*entered_wait;
+            let mut entered = entered.lock().expect("guard entered");
+            while !*entered {
+                entered = signal.wait(entered).expect("guard entered wait");
+            }
+        })
+        .await
+        .expect("guard entered waiter joins");
+        let starting_during_cleanup = manager.slots.starting.load(Ordering::Acquire);
+        let disable_manager = manager.clone();
+        let mut disable = tokio::spawn(async move { disable_manager.disable_and_stop_all().await });
+        let early = tokio::time::timeout(Duration::from_millis(50), &mut disable).await;
+        let finished_early = early.is_ok();
+        {
+            let (release, signal) = &*release;
+            *release.lock().expect("guard release") = true;
+            signal.notify_all();
+        }
+        tokio::task::spawn_blocking(move || dropper.join().expect("dropper joins"))
+            .await
+            .expect("dropper join task");
+        let disable_result = match early {
+            Ok(result) => result.expect("early disable joins"),
+            Err(_) => disable.await.expect("waiting disable joins"),
+        };
+
+        assert_eq!(starting_during_cleanup, 1);
+        assert!(!finished_early, "disable bypassed no-runtime cleanup");
+        disable_result.expect("disable succeeds after no-runtime cleanup");
+        assert!(!early_running_release.load(Ordering::Acquire));
+        assert_eq!(manager.slots.starting.load(Ordering::Acquire), 0);
+        assert_eq!(manager.slots.running.load(Ordering::Acquire), 0);
+    }
+
+    #[tokio::test]
+    async fn cleanup_waiters_keep_their_generation_result_when_the_next_attempt_completes() {
+        let first = Arc::new(CleanupAttempt::new(1));
+        let first_waiter_a = {
+            let attempt = Arc::clone(&first);
+            tokio::spawn(async move { attempt.wait().await })
+        };
+        let first_waiter_b = {
+            let attempt = Arc::clone(&first);
+            tokio::spawn(async move { attempt.wait().await })
+        };
+        first.complete(Err(ShellManagerError::Indeterminate));
+
+        let second = Arc::new(CleanupAttempt::new(2));
+        let second_waiter = {
+            let attempt = Arc::clone(&second);
+            tokio::spawn(async move { attempt.wait().await })
+        };
+        second.complete(Ok(()));
+
+        assert_eq!(
+            first_waiter_a.await.expect("first waiter A joins"),
+            Err(ShellManagerError::Indeterminate)
+        );
+        assert_eq!(
+            first_waiter_b.await.expect("first waiter B joins"),
+            Err(ShellManagerError::Indeterminate)
+        );
+        assert_eq!(second_waiter.await.expect("second waiter joins"), Ok(()));
+        assert_eq!(first.generation, 1);
+        assert_eq!(second.generation, 2);
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn disable_cannot_finish_before_a_failed_unpublished_start_is_registered() {
+        let backend = Arc::new(PublishLockBackend::default());
+        let manager = ShellSessionManager::new(
+            backend.clone(),
+            Arc::new(FixedIds),
+            Arc::new(SystemShellClock),
+        );
+        manager.enable().await;
+        let gate = Arc::new(UnpublishedRegistrationGate {
+            entered: tokio::sync::Barrier::new(2),
+            release: tokio::sync::Barrier::new(2),
+        });
+        *manager
+            .unpublished_registration_gate
+            .lock()
+            .expect("registration gate lock") = Some(Arc::clone(&gate));
+
+        let (starting_slot, running_slot) = manager.slots.reserve().expect("slot reservation");
+        let mut pending = PendingStart::reserved(manager.clone(), starting_slot, running_slot);
+        let mut spawned = backend
+            .spawn(&ShellSpawnRequest {
+                command: "registration-race".to_owned(),
+                cwd: std::path::PathBuf::from("."),
+                cols: 120,
+                rows: 30,
+            })
+            .expect("scripted process starts");
+        spawned.guard = Box::new(FailingContainmentGuard);
+        let resources = manager
+            .own_spawned_resources(spawned)
+            .unwrap_or_else(|_| panic!("scripted resources are owned"));
+        pending.own_resources(resources);
+        let (settlement_manager, settlement) = pending.take_settlement();
+        let finish = tokio::spawn(async move {
+            settlement_manager
+                .finish_unpublished_start(settlement)
+                .await
+        });
+        gate.entered.wait().await;
+
+        let disable_manager = manager.clone();
+        let mut disable = tokio::spawn(async move { disable_manager.disable_and_stop_all().await });
+        let early = tokio::time::timeout(Duration::from_millis(50), &mut disable).await;
+        let finished_early = early.is_ok();
+        gate.release.wait().await;
+        assert_eq!(
+            finish.await.expect("unpublished settlement joins"),
+            Err(ShellManagerError::Indeterminate)
+        );
+        let disable_result = match early {
+            Ok(result) => result.expect("early disable joins"),
+            Err(_) => disable.await.expect("waiting disable joins"),
+        };
+
+        assert!(!finished_early, "disable bypassed unpublished registration");
+        assert_eq!(
+            disable_result,
+            Err(ShellCleanupError {
+                session_ids: vec![
+                    ShellSessionId::new("shell-unpublished-0001")
+                        .expect("valid unpublished identifier"),
+                ],
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn successful_unpublished_cleanup_retries_are_pruned_each_cycle() {
+        let backend = Arc::new(PublishLockBackend::default());
+        let manager = ShellSessionManager::new(
+            backend.clone(),
+            Arc::new(FixedIds),
+            Arc::new(SystemShellClock),
+        );
+
+        for cycle in 0..3 {
+            manager.enable().await;
+            let fail = Arc::new(AtomicBool::new(true));
+            let (starting_slot, running_slot) = manager.slots.reserve().expect("slot reservation");
+            let mut pending = PendingStart::reserved(manager.clone(), starting_slot, running_slot);
+            let mut spawned = backend
+                .spawn(&ShellSpawnRequest {
+                    command: format!("unpublished-cycle-{cycle}"),
+                    cwd: std::path::PathBuf::from("."),
+                    cols: 120,
+                    rows: 30,
+                })
+                .expect("scripted process starts");
+            spawned.guard = Box::new(RecoveringContainmentGuard {
+                process: Arc::clone(&backend.process),
+                fail: Arc::clone(&fail),
+            });
+            let resources = manager
+                .own_spawned_resources(spawned)
+                .unwrap_or_else(|_| panic!("scripted resources are owned"));
+            pending.own_resources(resources);
+            let (settlement_manager, settlement) = pending.take_settlement();
+            assert_eq!(
+                settlement_manager
+                    .finish_unpublished_start(settlement)
+                    .await,
+                Err(ShellManagerError::Indeterminate)
+            );
+            assert_eq!(
+                manager.inner.lock().await.unpublished_sessions.len(),
+                1,
+                "failed unpublished cleanup is retained"
+            );
+            assert_eq!(manager.slots.running.load(Ordering::Acquire), 1);
+
+            fail.store(false, Ordering::Release);
+            manager
+                .disable_and_stop_all()
+                .await
+                .expect("unpublished retry succeeds");
+            assert_eq!(
+                manager.inner.lock().await.unpublished_sessions.len(),
+                0,
+                "successful unpublished cleanup is pruned in cycle {cycle}"
+            );
+            assert_eq!(manager.slots.starting.load(Ordering::Acquire), 0);
+            assert_eq!(manager.slots.running.load(Ordering::Acquire), 0);
         }
     }
 
