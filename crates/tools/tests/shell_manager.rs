@@ -50,6 +50,22 @@ impl ShellSessionIdSource for TestIds {
 }
 
 #[derive(Default)]
+struct FailOnceIds {
+    calls: AtomicUsize,
+}
+
+impl ShellSessionIdSource for FailOnceIds {
+    fn next_session_id(&self) -> Result<ShellSessionId, ShellManagerError> {
+        let call = self.calls.fetch_add(1, Ordering::AcqRel);
+        if call == 0 {
+            return Err(ShellManagerError::Identifier);
+        }
+        ShellSessionId::new(format!("shell-retry-{call:04}"))
+            .map_err(|_| ShellManagerError::Identifier)
+    }
+}
+
+#[derive(Default)]
 struct TestCancellation {
     cancelled: AtomicBool,
     notify: tokio::sync::Notify,
@@ -802,6 +818,64 @@ async fn cancel_before_id_delivery_stops_the_spawned_tree() {
 }
 
 #[tokio::test]
+async fn aborted_unpublished_start_settles_reservation() {
+    let backend = Arc::new(FakeBackend::default());
+    let control = backend.queue_process();
+    control.set_exit_on_interrupt(false);
+    let kill_gate = KillGate::new();
+    control.set_kill_gate(kill_gate.clone());
+    let manager = ShellSessionManager::new(
+        backend.clone(),
+        Arc::new(FailOnceIds::default()),
+        Arc::new(ManualClock::default()),
+    );
+    manager.enable().await;
+
+    let start_manager = manager.clone();
+    let start = tokio::spawn(async move {
+        start_manager
+            .start(
+                command_request("identifier-failure", Duration::ZERO),
+                &NeverCancelled,
+            )
+            .await
+    });
+    kill_gate.wait_until_entered().await;
+    start.abort();
+    assert!(
+        start
+            .await
+            .expect_err("unpublished start caller is aborted")
+            .is_cancelled()
+    );
+
+    kill_gate.release();
+    tokio::time::timeout(Duration::from_millis(500), manager.disable_and_stop_all())
+        .await
+        .expect("disable must not wait on an abandoned starting reservation")
+        .expect("unpublished cleanup succeeds");
+    assert!(!control.is_running());
+    assert_eq!(control.interrupts(), 1);
+    assert_eq!(control.kills(), 1);
+
+    manager.enable().await;
+    for index in 0..MAX_RUNNING_SHELL_SESSIONS {
+        backend.queue_process();
+        manager
+            .start(
+                command_request(&format!("replacement-{index}"), Duration::ZERO),
+                &NeverCancelled,
+            )
+            .await
+            .expect("every running slot is reusable");
+    }
+    manager
+        .shutdown()
+        .await
+        .expect("replacement cleanup succeeds");
+}
+
+#[tokio::test]
 async fn poll_cancellation_preserves_the_running_session() {
     let backend = Arc::new(FakeBackend::default());
     backend.queue_process();
@@ -904,7 +978,7 @@ async fn real_interrupted_flush_without_cancellation_is_not_cancelled() {
 }
 
 #[tokio::test]
-async fn write_observed_exit_is_cleaned_by_shutdown() {
+async fn write_observed_exit_is_cleaned_before_return() {
     let backend = Arc::new(FakeBackend::default());
     let control = backend.queue_process();
     let manager = enabled_manager(Arc::clone(&backend), Arc::new(ManualClock::default())).await;
@@ -932,13 +1006,99 @@ async fn write_observed_exit_is_cleaned_by_shutdown() {
             .await,
         Err(ShellManagerError::SessionNotFound)
     );
-    assert_eq!(control.guard_drops(), 0);
+    assert_eq!(control.guard_drops(), 1);
 
     manager
         .shutdown()
         .await
-        .expect("shutdown cleans observed exit");
+        .expect("shutdown accepts already-cleaned exit");
     assert_eq!(control.guard_drops(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn repeated_write_observed_exits_are_bounded_by_count() {
+    let backend = Arc::new(FakeBackend::default());
+    let manager = enabled_manager(Arc::clone(&backend), Arc::new(ManualClock::default())).await;
+    let mut session_ids = Vec::new();
+    for index in 0..=MAX_TERMINAL_SHELL_RECEIPTS {
+        let control = backend.queue_process();
+        let started = manager
+            .start(
+                command_request(&format!("write-exit-{index}"), Duration::ZERO),
+                &NeverCancelled,
+            )
+            .await
+            .expect("interactive command starts");
+        control.exit(0);
+        assert_eq!(
+            manager
+                .write(
+                    ShellWriteRequest {
+                        session_id: started.session_id.clone(),
+                        input: "too late".to_owned(),
+                        submit: false,
+                        yield_time: Duration::ZERO,
+                        max_output_bytes: OUTPUT_LIMIT,
+                    },
+                    &NeverCancelled,
+                )
+                .await,
+            Err(ShellManagerError::SessionNotFound)
+        );
+        session_ids.push(started.session_id);
+    }
+
+    assert_eq!(
+        manager
+            .poll(
+                poll_request(session_ids[0].clone(), Duration::ZERO),
+                &NeverCancelled,
+            )
+            .await,
+        Err(ShellManagerError::SessionNotFound)
+    );
+}
+
+#[tokio::test(start_paused = true)]
+async fn write_observed_exit_expires_by_clock() {
+    let backend = Arc::new(FakeBackend::default());
+    let clock = Arc::new(ManualClock::default());
+    let manager = enabled_manager(Arc::clone(&backend), Arc::clone(&clock)).await;
+    let control = backend.queue_process();
+    let started = manager
+        .start(
+            command_request("write-exit", Duration::ZERO),
+            &NeverCancelled,
+        )
+        .await
+        .expect("interactive command starts");
+    control.exit(0);
+    assert_eq!(
+        manager
+            .write(
+                ShellWriteRequest {
+                    session_id: started.session_id.clone(),
+                    input: "too late".to_owned(),
+                    submit: false,
+                    yield_time: Duration::ZERO,
+                    max_output_bytes: OUTPUT_LIMIT,
+                },
+                &NeverCancelled,
+            )
+            .await,
+        Err(ShellManagerError::SessionNotFound)
+    );
+
+    clock.advance(TERMINAL_RECEIPT_TTL + Duration::from_millis(1));
+    assert_eq!(
+        manager
+            .poll(
+                poll_request(started.session_id, Duration::ZERO),
+                &NeverCancelled,
+            )
+            .await,
+        Err(ShellManagerError::SessionNotFound)
+    );
 }
 
 #[tokio::test]

@@ -159,22 +159,27 @@ impl ShellSessionManager {
         let spawned = match self.backend.spawn(&spawn_request) {
             Ok(spawned) => spawned,
             Err(_) => {
-                self.release_running_slot().await;
+                self.settle_unpublished_start(None).await;
                 return Err(ShellManagerError::Launch);
             }
         };
         let resources = match self.own_spawned_resources(spawned) {
             Ok(resources) => resources,
             Err(error) => {
-                self.release_running_slot().await;
+                self.settle_unpublished_start(None).await;
                 return Err(error);
             }
         };
         let id = match self.ids.next_session_id() {
             Ok(id) => id,
             Err(_) => {
-                self.cleanup_unpublished(resources).await;
-                self.release_running_slot().await;
+                let session = Arc::new(StdMutex::new(
+                    resources.into_session(
+                        ShellSessionId::new("shell-unpublished")
+                            .expect("static unpublished shell identifier is valid"),
+                    ),
+                ));
+                self.settle_unpublished_start(Some(session)).await;
                 return Err(ShellManagerError::Identifier);
             }
         };
@@ -194,8 +199,7 @@ impl ShellSessionManager {
             self.start_settled.notify_waiters();
         }
         if !published {
-            self.cleanup_unpublished_session(Arc::clone(&session)).await;
-            self.release_running_slot().await;
+            self.settle_unpublished_start(Some(session)).await;
             let accepting = self.inner.lock().await.accepting;
             return Err(if accepting {
                 ShellManagerError::Identifier
@@ -263,9 +267,14 @@ impl ShellSessionManager {
         let writer = {
             let session = session.lock().map_err(|_| ShellManagerError::Io)?;
             if session.state != ShellSessionState::Running || session.stopping {
-                return Err(ShellManagerError::SessionNotFound);
+                None
+            } else {
+                Some(session.writer.clone().ok_or(ShellManagerError::Io)?)
             }
-            session.writer.clone().ok_or(ShellManagerError::Io)?
+        };
+        let Some(writer) = writer else {
+            self.ensure_cleanup(&session).await?;
+            return Err(ShellManagerError::SessionNotFound);
         };
 
         let mut bytes = request.input.into_bytes();
@@ -808,13 +817,15 @@ impl ShellSessionManager {
         })
     }
 
-    async fn cleanup_unpublished(&self, resources: OwnedSessionResources) {
-        let fallback_id = ShellSessionId::new("shell-unpublished")
-            .expect("static unpublished shell identifier is valid");
-        self.cleanup_unpublished_session(Arc::new(StdMutex::new(
-            resources.into_session(fallback_id),
-        )))
-        .await;
+    async fn settle_unpublished_start(&self, session: Option<Arc<StdMutex<ShellSession>>>) {
+        let manager = self.clone();
+        let settlement = tokio::spawn(async move {
+            if let Some(session) = session {
+                manager.cleanup_unpublished_session(session).await;
+            }
+            manager.release_running_slot().await;
+        });
+        let _ = settlement.await;
     }
 
     async fn cleanup_unpublished_session(&self, session: Arc<StdMutex<ShellSession>>) {
