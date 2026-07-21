@@ -770,7 +770,7 @@ fn valid_installed_identity(
     product_fingerprint: &str,
     npm: bool,
 ) -> bool {
-    identity.installed_version_output == "minimax-codex-rust 0.1.0"
+    identity.installed_version_output == concat!("minimax-codex-rust ", env!("CARGO_PKG_VERSION"))
         && identity.packaged_binary_sha256 == package.binary_sha256
         && identity.capability_status_smoke
         && valid_hex(&identity.capability_status_output_sha256, 64)

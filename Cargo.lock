@@ -890,7 +890,7 @@ checksum = "cf8baf1c55e62ffcace7a9f06f4bd9cd3f0c4beb022d3b367256b91b87513d98"
 
 [[package]]
 name = "minimax-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "clap",
  "minimax-core",
@@ -911,7 +911,7 @@ dependencies = [
 
 [[package]]
 name = "minimax-compat-harness"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "minimax-core",
  "minimax-protocol",
@@ -928,7 +928,7 @@ dependencies = [
 
 [[package]]
 name = "minimax-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "minimax-protocol",
  "serde",
@@ -937,7 +937,7 @@ dependencies = [
 
 [[package]]
 name = "minimax-protocol"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -945,7 +945,7 @@ dependencies = [
 
 [[package]]
 name = "minimax-provider"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "futures-util",
  "keyring",
@@ -961,7 +961,7 @@ dependencies = [
 
 [[package]]
 name = "minimax-retrieval"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "minimax-core",
  "minimax-protocol",
@@ -974,7 +974,7 @@ dependencies = [
 
 [[package]]
 name = "minimax-tools"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "minimax-core",
  "minimax-protocol",
@@ -988,7 +988,7 @@ dependencies = [
 
 [[package]]
 name = "minimax-tui"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "crossterm",
  "is-terminal",
@@ -998,7 +998,7 @@ dependencies = [
 
 [[package]]
 name = "minimax-vault"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "fs4",
  "minimax-core",

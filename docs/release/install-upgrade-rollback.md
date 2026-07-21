@@ -99,7 +99,7 @@ For an offline install, first download the release tarball and `.sha256`
 sidecar on a connected machine, verify them, then install the exact file:
 
 ```bash
-npm install --global --ignore-scripts ./minimax-codex-0.1.0.tgz
+npm install --global --ignore-scripts ./minimax-codex-0.1.1.tgz
 ```
 
 The universal tarball still supports only Windows x64 and Linux x64.
