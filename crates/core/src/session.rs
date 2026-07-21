@@ -8,7 +8,7 @@ use minimax_protocol::{
     TurnRequest, TurnStatus, VisibleMessage,
 };
 
-use crate::tool::late_shell_rejection_is_legal;
+use crate::tool::terminal_is_legal_after_start;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SessionSummary {
@@ -932,23 +932,24 @@ fn find_tool_mut<'a>(
 }
 
 fn terminal_is_legal(invocation: &ToolInvocationRecord, result: &ToolResult) -> bool {
+    if invocation.started_at_unix_ms.is_some() {
+        return terminal_is_legal_after_start(
+            &invocation.invocation.call.name,
+            result.status,
+            &result.code,
+        );
+    }
     match result.status {
-        ToolTerminalStatus::Succeeded => invocation.started_at_unix_ms.is_some(),
+        ToolTerminalStatus::Succeeded | ToolTerminalStatus::Indeterminate => false,
         ToolTerminalStatus::Failed => true,
-        ToolTerminalStatus::Rejected => {
-            invocation.started_at_unix_ms.is_some_and(|_| {
-                late_shell_rejection_is_legal(&invocation.invocation.call.name, &result.code)
-            }) || (invocation.started_at_unix_ms.is_none()
-                && !matches!(
-                    invocation
-                        .decision
-                        .as_ref()
-                        .map(|decision| decision.decision),
-                    Some(ToolDecisionKind::Approved)
-                ))
-        }
-        ToolTerminalStatus::Cancelled => invocation.started_at_unix_ms.is_none(),
-        ToolTerminalStatus::Indeterminate => invocation.started_at_unix_ms.is_some(),
+        ToolTerminalStatus::Rejected => !matches!(
+            invocation
+                .decision
+                .as_ref()
+                .map(|decision| decision.decision),
+            Some(ToolDecisionKind::Approved)
+        ),
+        ToolTerminalStatus::Cancelled => true,
     }
 }
 

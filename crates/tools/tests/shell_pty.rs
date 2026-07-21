@@ -442,6 +442,31 @@ async fn normal_shutdown_terminates_the_reported_parent_and_child() {
     assert_tree_cleanup(TreeCleanup::Shutdown).await;
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn manager_drop_terminates_the_reported_parent_and_child() {
+    let manager = native_manager();
+    manager.enable().await;
+    let root = repository_root();
+    let receipt = start_command(
+        &manager,
+        process_tree_command(),
+        &root,
+        Duration::from_secs(1),
+    )
+    .await
+    .expect("drop fixture starts");
+    let (_, process_ids) = wait_for_process_ids(&manager, receipt)
+        .await
+        .expect("drop fixture reports parent and child");
+
+    drop(manager);
+    let exited = wait_for_processes_to_exit(&process_ids).await;
+    if exited.is_err() {
+        force_kill_processes(&process_ids);
+    }
+    exited.expect("dropping the last manager terminates the exact parent and child");
+}
+
 #[derive(Clone, Copy, Debug)]
 enum TreeCleanup {
     Stop,
@@ -655,6 +680,28 @@ async fn wait_for_processes_to_exit(process_ids: &[u32]) -> Result<(), String> {
             return Err(format!("surviving process IDs: {survivors:?}"));
         }
         tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
+#[cfg(windows)]
+fn force_kill_processes(process_ids: &[u32]) {
+    let taskkill =
+        Path::new(&std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into()))
+            .join("System32")
+            .join("taskkill.exe");
+    for process_id in process_ids {
+        let _ = std::process::Command::new(&taskkill)
+            .args(["/PID", &process_id.to_string(), "/F"])
+            .status();
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn force_kill_processes(process_ids: &[u32]) {
+    for process_id in process_ids {
+        let _ = std::process::Command::new("/bin/kill")
+            .args(["-KILL", "--", &process_id.to_string()])
+            .status();
     }
 }
 

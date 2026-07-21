@@ -24,9 +24,12 @@ pub trait PtyChild: Send {
     fn kill(&mut self) -> io::Result<()>;
 }
 
-pub trait PtyGuard: Send {}
+pub trait PtyGuard: Send {
+    fn close_io(&mut self) {}
+    fn disarm(&mut self) {}
+}
 
-impl<T: Send> PtyGuard for T {}
+impl PtyGuard for () {}
 
 pub struct SpawnedPty {
     pub child: Box<dyn PtyChild>,

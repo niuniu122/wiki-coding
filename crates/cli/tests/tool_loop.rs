@@ -1,8 +1,10 @@
 use std::collections::VecDeque;
 use std::future::Future;
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::pin::Pin;
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::{Arc, Condvar, Mutex};
 
 use minimax_cli::{
     DriverError, DriverIds, HeadlessApprovalPort, InteractiveApprovalPort, ProviderPort,
@@ -20,7 +22,11 @@ use minimax_protocol::{
     ToolEffect, ToolInvocation, ToolResult, ToolTerminalStatus, TraceCode, TurnRequest,
     V1_TOOL_NAMES,
 };
-use minimax_tools::BuiltinToolPort;
+use minimax_tools::{
+    BoundedProcess, BuiltinToolPort, NativePtyBackend, NeverCancelled, ProcessShellSessionIds,
+    PtyBackend, PtyChild, PtyGuard, PtyTerminateFuture, ShellCommandRequest, ShellSessionIdSource,
+    ShellSessionManager, ShellSpawnRequest, ShellWriteRequest, SpawnedPty, SystemShellClock,
+};
 use minimax_tui::ApprovalInput;
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
@@ -70,6 +76,242 @@ impl ProviderPort for ScriptedProvider {
             }
             Ok(())
         })
+    }
+}
+
+#[derive(Default)]
+struct DriverShellBackend {
+    plans: Mutex<VecDeque<DriverShellPlan>>,
+    requires_handshake: AtomicBool,
+    spawn_count: AtomicUsize,
+    spawn_notify: tokio::sync::Notify,
+    cancel_on_spawn: Mutex<Option<CancellationToken>>,
+}
+
+impl DriverShellBackend {
+    fn queue_process(&self) -> DriverShellControl {
+        let process = Arc::new(DriverShellProcess::default());
+        let (reader_tx, reader_rx) = std::sync::mpsc::channel();
+        *process.reader_tx.lock().expect("reader sender") = Some(reader_tx);
+        self.plans
+            .lock()
+            .expect("driver shell plans")
+            .push_back(DriverShellPlan {
+                process: Arc::clone(&process),
+                reader_rx,
+            });
+        DriverShellControl { process }
+    }
+
+    async fn wait_for_spawn_count(&self, expected: usize) {
+        loop {
+            let notified = self.spawn_notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.spawn_count.load(Ordering::Acquire) >= expected {
+                return;
+            }
+            notified.as_mut().await;
+        }
+    }
+}
+
+struct DriverShellPlan {
+    process: Arc<DriverShellProcess>,
+    reader_rx: std::sync::mpsc::Receiver<Vec<u8>>,
+}
+
+#[derive(Default)]
+struct DriverShellProcess {
+    running: AtomicBool,
+    reader_tx: Mutex<Option<std::sync::mpsc::Sender<Vec<u8>>>>,
+    input: Mutex<Vec<u8>>,
+    write_gate: DriverIoGate,
+    flush_gate: DriverIoGate,
+}
+
+impl DriverShellProcess {
+    fn exit(&self) {
+        self.running.store(false, Ordering::Release);
+        self.reader_tx.lock().expect("reader sender").take();
+    }
+}
+
+#[derive(Default)]
+struct DriverIoGate {
+    enabled: AtomicBool,
+    entered: AtomicBool,
+    entered_notify: tokio::sync::Notify,
+    released: Mutex<bool>,
+    release_signal: Condvar,
+}
+
+impl DriverIoGate {
+    fn enable(&self) {
+        self.enabled.store(true, Ordering::Release);
+    }
+
+    fn block_if_enabled(&self) {
+        if !self.enabled.load(Ordering::Acquire) {
+            return;
+        }
+        self.entered.store(true, Ordering::Release);
+        self.entered_notify.notify_waiters();
+        let mut released = self.released.lock().expect("I/O gate release");
+        while !*released {
+            released = self
+                .release_signal
+                .wait(released)
+                .expect("I/O gate release wait");
+        }
+    }
+
+    async fn wait_until_entered(&self) {
+        loop {
+            let notified = self.entered_notify.notified();
+            tokio::pin!(notified);
+            notified.as_mut().enable();
+            if self.entered.load(Ordering::Acquire) {
+                return;
+            }
+            notified.as_mut().await;
+        }
+    }
+
+    fn release(&self) {
+        *self.released.lock().expect("I/O gate release") = true;
+        self.release_signal.notify_all();
+    }
+}
+
+#[derive(Clone)]
+struct DriverShellControl {
+    process: Arc<DriverShellProcess>,
+}
+
+impl PtyBackend for DriverShellBackend {
+    fn requires_cursor_handshake(&self) -> bool {
+        self.requires_handshake.load(Ordering::Acquire)
+    }
+
+    fn spawn(&self, _request: &ShellSpawnRequest) -> io::Result<SpawnedPty> {
+        let plan = self
+            .plans
+            .lock()
+            .expect("driver shell plans")
+            .pop_front()
+            .ok_or_else(|| io::Error::other("no driver shell plan"))?;
+        plan.process.running.store(true, Ordering::Release);
+        self.spawn_count.fetch_add(1, Ordering::AcqRel);
+        self.spawn_notify.notify_waiters();
+        if let Some(cancellation) = self.cancel_on_spawn.lock().expect("cancel on spawn").take() {
+            cancellation.cancel();
+        }
+        Ok(SpawnedPty {
+            child: Box::new(DriverShellChild {
+                process: Arc::clone(&plan.process),
+            }),
+            reader: Box::new(DriverShellReader {
+                receiver: plan.reader_rx,
+            }),
+            writer: Box::new(DriverShellWriter {
+                process: Arc::clone(&plan.process),
+            }),
+            guard: Box::new(DriverShellGuard {
+                process: plan.process,
+                armed: true,
+            }),
+        })
+    }
+
+    fn terminate_tree<'a>(&'a self, _process_id: u32) -> PtyTerminateFuture<'a> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+struct DriverShellChild {
+    process: Arc<DriverShellProcess>,
+}
+
+impl PtyChild for DriverShellChild {
+    fn process_id(&self) -> u32 {
+        8080
+    }
+
+    fn try_wait(&mut self) -> io::Result<Option<i32>> {
+        Ok((!self.process.running.load(Ordering::Acquire)).then_some(-2))
+    }
+
+    fn kill(&mut self) -> io::Result<()> {
+        self.process.exit();
+        Ok(())
+    }
+}
+
+struct DriverShellReader {
+    receiver: std::sync::mpsc::Receiver<Vec<u8>>,
+}
+
+impl Read for DriverShellReader {
+    fn read(&mut self, destination: &mut [u8]) -> io::Result<usize> {
+        let bytes = self.receiver.recv().unwrap_or_default();
+        let count = bytes.len().min(destination.len());
+        destination[..count].copy_from_slice(&bytes[..count]);
+        Ok(count)
+    }
+}
+
+struct DriverShellWriter {
+    process: Arc<DriverShellProcess>,
+}
+
+impl Write for DriverShellWriter {
+    fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        self.process.write_gate.block_if_enabled();
+        self.process
+            .input
+            .lock()
+            .expect("driver shell input")
+            .extend_from_slice(bytes);
+        if bytes == b"\x03" {
+            self.process.exit();
+        }
+        Ok(bytes.len())
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        self.process.flush_gate.block_if_enabled();
+        Ok(())
+    }
+}
+
+struct DriverShellGuard {
+    process: Arc<DriverShellProcess>,
+    armed: bool,
+}
+
+impl PtyGuard for DriverShellGuard {
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for DriverShellGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            self.process.exit();
+        }
+    }
+}
+
+#[derive(Default)]
+struct DriverShellIds(AtomicUsize);
+
+impl ShellSessionIdSource for DriverShellIds {
+    fn next_session_id(&self) -> Result<ShellSessionId, minimax_tools::ShellManagerError> {
+        let id = self.0.fetch_add(1, Ordering::AcqRel) + 1;
+        ShellSessionId::new(format!("shell-driver-{id:04}"))
+            .map_err(|_| minimax_tools::ShellManagerError::Identifier)
     }
 }
 
@@ -1310,6 +1552,324 @@ async fn cancellation_after_started_persists_indeterminate_and_never_reexecutes(
     );
 }
 
+fn shell_driver(
+    project: &Path,
+    backend: Arc<DriverShellBackend>,
+    round: ScriptRound,
+    id: &str,
+) -> RuntimeDriver<ScriptedProvider> {
+    let manager = ShellSessionManager::new(
+        backend,
+        Arc::new(DriverShellIds::default()),
+        Arc::new(SystemShellClock),
+    );
+    let tools = BuiltinToolPort::with_shell_manager(project, BoundedProcess::production(), manager)
+        .expect("builtin Shell tools");
+    RuntimeDriver::open_with_agent_ports(
+        project,
+        binding(ProviderProtocolKind::Responses),
+        ScriptedProvider {
+            rounds: VecDeque::from([round]),
+            requests: Arc::new(Mutex::new(Vec::new())),
+            journal_path: journal_path(project),
+        },
+        DriverIds::new(id, 7_500),
+        Box::new(HeadlessApprovalPort),
+        Box::new(tools),
+        all_tool_definitions(),
+        AgentLimits::default(),
+    )
+    .expect("Shell driver")
+}
+
+fn shell_round(call_id: &str, name: &str, arguments: serde_json::Value) -> ScriptRound {
+    ScriptRound {
+        events: vec![
+            StreamEvent::ToolCallFragments {
+                fragments: vec![ToolCallFragment {
+                    call_id: ToolCallId::new(call_id).expect("call"),
+                    stream_id: Some(format!("stream-{call_id}")),
+                    name: Some(name.to_owned()),
+                    arguments_delta: Some(arguments.to_string()),
+                    arguments_complete: true,
+                    index: Some(0),
+                }],
+            },
+            StreamEvent::Terminal {
+                outcome: TerminalOutcome::Completed,
+            },
+        ],
+        required_terminal_records: 0,
+    }
+}
+
+fn assert_durable_shell_terminal(
+    driver: &RuntimeDriver<ScriptedProvider>,
+    report: &minimax_cli::RunReport,
+    status: ToolTerminalStatus,
+    code: &str,
+) {
+    assert_eq!(report.tool_results[0].status, status);
+    assert_eq!(report.tool_results[0].code, code);
+    let session = driver.session(&report.receipt.session_id).expect("session");
+    let durable = session.turns[0].tool_invocations[0]
+        .terminal_result
+        .as_ref()
+        .expect("durable Shell terminal");
+    assert_eq!(durable.status, status);
+    assert_eq!(durable.code, code);
+}
+
+async fn wait_for_started_record(project: &Path, call_id: &str) {
+    tokio::time::timeout(std::time::Duration::from_secs(2), async {
+        loop {
+            let journal = std::fs::read_to_string(journal_path(project)).unwrap_or_default();
+            if journal.contains(r#""type":"tool_started""#) && journal.contains(call_id) {
+                return;
+            }
+            tokio::task::yield_now().await;
+        }
+    })
+    .await
+    .expect("tool start becomes durable");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn real_shell_command_cancellations_persist_cancelled_across_startup_phases() {
+    for phase in ["startup", "handshake", "initial-wait"] {
+        let project = tempfile::tempdir().expect("project");
+        let backend = Arc::new(DriverShellBackend::default());
+        backend
+            .requires_handshake
+            .store(phase == "handshake", Ordering::Release);
+        let _control = backend.queue_process();
+        let round = shell_round(
+            &format!("call-command-{phase}"),
+            "shell_command",
+            serde_json::json!({
+                "command": "long-running",
+                "yield_time_ms": 60_000,
+                "max_output_bytes": 49_152,
+            }),
+        );
+        let mut driver = shell_driver(project.path(), backend.clone(), round, phase);
+        driver
+            .set_permission_mode(PermissionMode::FullAccess)
+            .await
+            .expect("enable Shell");
+        let cancellation = driver.cancellation_token();
+        if phase == "startup" {
+            *backend.cancel_on_spawn.lock().expect("cancel on spawn") = Some(cancellation.clone());
+        }
+        let mut run = Box::pin(driver.run_agent("cancel Shell command", 128));
+        if phase != "startup" {
+            tokio::select! {
+                () = backend.wait_for_spawn_count(1) => cancellation.cancel(),
+                result = &mut run => panic!("Shell command returned before cancellation: {result:?}"),
+            }
+        }
+        let report = run.await.expect("cancelled Shell command report");
+        assert_durable_shell_terminal(&driver, &report, ToolTerminalStatus::Cancelled, "cancelled");
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn real_shell_session_poll_cancellation_persists_cancelled() {
+    let project = tempfile::tempdir().expect("project");
+    let backend = Arc::new(DriverShellBackend::default());
+    backend.queue_process();
+    let manager = ShellSessionManager::new(
+        backend.clone(),
+        Arc::new(DriverShellIds::default()),
+        Arc::new(SystemShellClock),
+    );
+    manager.enable().await;
+    let receipt = manager
+        .start(
+            ShellCommandRequest {
+                command: "session".to_owned(),
+                cwd: project.path().to_path_buf(),
+                yield_time: std::time::Duration::ZERO,
+                max_output_bytes: 49_152,
+            },
+            &NeverCancelled,
+        )
+        .await
+        .expect("session starts");
+    let tools =
+        BuiltinToolPort::with_shell_manager(project.path(), BoundedProcess::production(), manager)
+            .expect("builtin tools");
+    let call_id = "call-session-poll-cancel";
+    let mut driver = RuntimeDriver::open_with_agent_ports(
+        project.path(),
+        binding(ProviderProtocolKind::Responses),
+        ScriptedProvider {
+            rounds: VecDeque::from([shell_round(
+                call_id,
+                "shell_session",
+                serde_json::json!({
+                    "session_id": receipt.session_id,
+                    "action": "poll",
+                    "yield_time_ms": 60_000,
+                    "max_output_bytes": 49_152,
+                }),
+            )]),
+            requests: Arc::new(Mutex::new(Vec::new())),
+            journal_path: journal_path(project.path()),
+        },
+        DriverIds::new("session-poll-cancel", 7_600),
+        Box::new(HeadlessApprovalPort),
+        Box::new(tools),
+        all_tool_definitions(),
+        AgentLimits::default(),
+    )
+    .expect("driver");
+    driver
+        .set_permission_mode(PermissionMode::FullAccess)
+        .await
+        .expect("enable Shell");
+    let cancellation = driver.cancellation_token();
+    let mut run = Box::pin(driver.run_agent("poll session", 128));
+    tokio::select! {
+        () = wait_for_started_record(project.path(), call_id) => cancellation.cancel(),
+        result = &mut run => panic!("poll returned before cancellation: {result:?}"),
+    }
+    let report = run.await.expect("cancelled poll report");
+    assert_durable_shell_terminal(&driver, &report, ToolTerminalStatus::Cancelled, "cancelled");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn real_shell_session_write_cancellation_tracks_the_commit_boundary() {
+    for committed in [false, true] {
+        let project = tempfile::tempdir().expect("project");
+        let backend = Arc::new(DriverShellBackend::default());
+        let control = backend.queue_process();
+        let manager = ShellSessionManager::new(
+            backend,
+            Arc::new(DriverShellIds::default()),
+            Arc::new(SystemShellClock),
+        );
+        manager.enable().await;
+        let receipt = manager
+            .start(
+                ShellCommandRequest {
+                    command: "session".to_owned(),
+                    cwd: project.path().to_path_buf(),
+                    yield_time: std::time::Duration::ZERO,
+                    max_output_bytes: 49_152,
+                },
+                &NeverCancelled,
+            )
+            .await
+            .expect("session starts");
+        let blocker = if committed {
+            control.process.flush_gate.enable();
+            None
+        } else {
+            control.process.write_gate.enable();
+            let blocker_manager = manager.clone();
+            let session_id = receipt.session_id.clone();
+            let blocker = tokio::spawn(async move {
+                blocker_manager
+                    .write(
+                        ShellWriteRequest {
+                            session_id,
+                            input: "hold-lock".to_owned(),
+                            submit: false,
+                            yield_time: std::time::Duration::ZERO,
+                            max_output_bytes: 49_152,
+                        },
+                        &NeverCancelled,
+                    )
+                    .await
+            });
+            control.process.write_gate.wait_until_entered().await;
+            Some(blocker)
+        };
+        let tools = BuiltinToolPort::with_shell_manager(
+            project.path(),
+            BoundedProcess::production(),
+            manager,
+        )
+        .expect("builtin tools");
+        let call_id = if committed {
+            "call-write-after-commit"
+        } else {
+            "call-write-before-commit"
+        };
+        let mut driver = RuntimeDriver::open_with_agent_ports(
+            project.path(),
+            binding(ProviderProtocolKind::Responses),
+            ScriptedProvider {
+                rounds: VecDeque::from([shell_round(
+                    call_id,
+                    "shell_session",
+                    serde_json::json!({
+                        "session_id": receipt.session_id,
+                        "action": "write",
+                        "input": "driver-write",
+                        "yield_time_ms": 0,
+                        "max_output_bytes": 49_152,
+                    }),
+                )]),
+                requests: Arc::new(Mutex::new(Vec::new())),
+                journal_path: journal_path(project.path()),
+            },
+            DriverIds::new(call_id, 7_700),
+            Box::new(HeadlessApprovalPort),
+            Box::new(tools),
+            all_tool_definitions(),
+            AgentLimits::default(),
+        )
+        .expect("driver");
+        driver
+            .set_permission_mode(PermissionMode::FullAccess)
+            .await
+            .expect("enable Shell");
+        let cancellation = driver.cancellation_token();
+        let mut run = Box::pin(driver.run_agent("write session", 128));
+        if committed {
+            tokio::select! {
+                () = control.process.flush_gate.wait_until_entered() => cancellation.cancel(),
+                result = &mut run => panic!("write returned before committed gate: {result:?}"),
+            }
+        } else {
+            tokio::select! {
+                () = wait_for_started_record(project.path(), call_id) => {},
+                result = &mut run => panic!("write returned before pending boundary: {result:?}"),
+            }
+            tokio::task::yield_now().await;
+            cancellation.cancel();
+        }
+        let report = run.await.expect("cancelled write report");
+        if committed {
+            control.process.flush_gate.release();
+        } else {
+            control.process.write_gate.release();
+        }
+        if let Some(blocker) = blocker {
+            blocker
+                .await
+                .expect("blocker joins")
+                .expect("blocker write");
+        }
+        assert_durable_shell_terminal(
+            &driver,
+            &report,
+            if committed {
+                ToolTerminalStatus::Indeterminate
+            } else {
+                ToolTerminalStatus::Cancelled
+            },
+            if committed {
+                "shell_stop_indeterminate"
+            } else {
+                "cancelled"
+            },
+        );
+    }
+}
+
 #[derive(Clone, Copy)]
 enum ApprovalAnswer {
     Text(&'static str),
@@ -1491,6 +2051,189 @@ async fn concrete_builtin_tools_complete_on_both_provider_protocols_in_full_acce
         }));
         assert_eq!(requests.lock().expect("requests").len(), 2);
     }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn runtime_driver_drop_terminates_native_shell_parent_and_child() {
+    let project = tempfile::tempdir().expect("project");
+    let arguments = serde_json::json!({
+        "command": driver_drop_process_tree_command(),
+        "cwd": project.path().to_string_lossy(),
+        "yield_time_ms": 1000,
+        "max_output_bytes": 49_152,
+    });
+    let provider = ScriptedProvider {
+        rounds: VecDeque::from([
+            ScriptRound {
+                events: vec![
+                    StreamEvent::ToolCallFragments {
+                        fragments: vec![ToolCallFragment {
+                            call_id: ToolCallId::new("call-driver-drop-shell").expect("call"),
+                            stream_id: Some("stream-driver-drop-shell".to_owned()),
+                            name: Some("shell_command".to_owned()),
+                            arguments_delta: Some(arguments.to_string()),
+                            arguments_complete: true,
+                            index: Some(0),
+                        }],
+                    },
+                    StreamEvent::Terminal {
+                        outcome: TerminalOutcome::Completed,
+                    },
+                ],
+                required_terminal_records: 0,
+            },
+            final_round(1),
+        ]),
+        requests: Arc::new(Mutex::new(Vec::new())),
+        journal_path: journal_path(project.path()),
+    };
+    let shell_manager = ShellSessionManager::new(
+        Arc::new(NativePtyBackend),
+        Arc::new(ProcessShellSessionIds::new().expect("process shell session IDs")),
+        Arc::new(SystemShellClock),
+    );
+    let tools = BuiltinToolPort::with_shell_manager(
+        project.path(),
+        BoundedProcess::production(),
+        shell_manager,
+    )
+    .expect("builtin tools");
+    let mut driver = RuntimeDriver::open_with_agent_ports(
+        project.path(),
+        binding(ProviderProtocolKind::Responses),
+        provider,
+        DriverIds::new("driver-drop-shell", 8_500),
+        Box::new(HeadlessApprovalPort),
+        Box::new(tools),
+        all_tool_definitions(),
+        AgentLimits::default(),
+    )
+    .expect("driver");
+    driver
+        .set_permission_mode(PermissionMode::FullAccess)
+        .await
+        .expect("enable full access");
+
+    let report = driver
+        .run_agent("start native process tree", 128)
+        .await
+        .expect("agent run");
+    assert_eq!(
+        report.tool_results[0].status,
+        ToolTerminalStatus::Succeeded,
+        "{:?}",
+        report.tool_results[0]
+    );
+    let receipt: ShellReceipt = serde_json::from_str(
+        report.tool_results[0]
+            .output
+            .as_deref()
+            .expect("Shell receipt output"),
+    )
+    .expect("Shell receipt JSON");
+    assert_eq!(receipt.state, ShellSessionState::Running, "{receipt:?}");
+    let process_ids = parse_driver_drop_process_ids(&receipt.output);
+
+    drop(driver);
+    let exited = wait_for_driver_drop_processes(&process_ids).await;
+    if exited.is_err() {
+        force_kill_driver_drop_processes(&process_ids);
+    }
+    exited.expect("dropping RuntimeDriver terminates the exact native parent and child");
+}
+
+fn parse_driver_drop_process_ids(output: &str) -> Vec<u32> {
+    let mut parent = None;
+    let mut child = None;
+    for field in output.split([';', '\r', '\n']) {
+        let field = field.trim();
+        if let Some(value) = field.strip_prefix("parent=") {
+            parent = value.parse().ok();
+        }
+        if let Some(value) = field.strip_prefix("child=") {
+            child = value.parse().ok();
+        }
+    }
+    vec![
+        parent.expect("reported parent PID"),
+        child.expect("reported child PID"),
+    ]
+}
+
+async fn wait_for_driver_drop_processes(process_ids: &[u32]) -> Result<(), Vec<u32>> {
+    let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(10);
+    loop {
+        let survivors = process_ids
+            .iter()
+            .copied()
+            .filter(|process_id| driver_drop_process_is_alive(*process_id))
+            .collect::<Vec<_>>();
+        if survivors.is_empty() {
+            return Ok(());
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(survivors);
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+    }
+}
+
+#[cfg(windows)]
+fn driver_drop_process_is_alive(process_id: u32) -> bool {
+    std::process::Command::new(
+        Path::new(&std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into()))
+            .join("System32")
+            .join("WindowsPowerShell")
+            .join("v1.0")
+            .join("powershell.exe"),
+    )
+    .args([
+        "-NoLogo",
+        "-NoProfile",
+        "-Command",
+        &format!(
+            "if (Get-Process -Id {process_id} -ErrorAction SilentlyContinue) {{ exit 0 }} else {{ exit 1 }}"
+        ),
+    ])
+    .status()
+    .is_ok_and(|status| status.success())
+}
+
+#[cfg(target_os = "linux")]
+fn driver_drop_process_is_alive(process_id: u32) -> bool {
+    Path::new("/proc").join(process_id.to_string()).exists()
+}
+
+#[cfg(windows)]
+fn force_kill_driver_drop_processes(process_ids: &[u32]) {
+    let taskkill =
+        Path::new(&std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into()))
+            .join("System32")
+            .join("taskkill.exe");
+    for process_id in process_ids {
+        let _ = std::process::Command::new(&taskkill)
+            .args(["/PID", &process_id.to_string(), "/F"])
+            .status();
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn force_kill_driver_drop_processes(process_ids: &[u32]) {
+    for process_id in process_ids {
+        let _ = std::process::Command::new("/bin/kill")
+            .args(["-KILL", "--", &process_id.to_string()])
+            .status();
+    }
+}
+
+#[cfg(windows)]
+fn driver_drop_process_tree_command() -> &'static str {
+    "$exe = (Get-Process -Id $PID).Path; $child = Start-Process -FilePath $exe -ArgumentList @('-NoLogo','-NoProfile','-Command','Start-Sleep -Seconds 120') -NoNewWindow -PassThru; Write-Output \"parent=$PID;child=$($child.Id)\"; Start-Sleep -Seconds 120"
+}
+
+#[cfg(target_os = "linux")]
+fn driver_drop_process_tree_command() -> &'static str {
+    "sleep 120 & child=$!; printf 'parent=%s;child=%s\\n' \"$$\" \"$child\"; wait \"$child\""
 }
 
 #[tokio::test]

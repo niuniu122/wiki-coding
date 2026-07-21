@@ -955,6 +955,88 @@ fn ci_keeps_rust_authority_ahead_of_packaging_and_fails_closed() {
     );
     assert_ci_rejected(&expanded_matrix, "matrix must remain Ubuntu and Windows");
 
+    let windows_excluded = source.replace(
+        "        os: [ubuntu-latest, windows-latest]\n",
+        "        os: [ubuntu-latest, windows-latest]\n        exclude:\n          - os: windows-latest\n",
+    );
+    assert_ci_rejected(&windows_excluded, "must not include or exclude matrix jobs");
+
+    let matrix_included = source.replace(
+        "        os: [ubuntu-latest, windows-latest]\n",
+        "        os: [ubuntu-latest, windows-latest]\n        include:\n          - os: ubuntu-latest\n",
+    );
+    assert_ci_rejected(&matrix_included, "must not include or exclude matrix jobs");
+
+    let conditional_job = source.replace(
+        "  verify:\n    runs-on: ${{ matrix.os }}\n",
+        "  verify:\n    if: runner.os == 'Linux'\n    runs-on: ${{ matrix.os }}\n",
+    );
+    assert_ci_rejected(&conditional_job, "PTY authority job must be unconditional");
+
+    let nested_runs_on = source
+        .replace(
+            "    runs-on: ${{ matrix.os }}\n",
+            "    runs-on: ubuntu-latest\n",
+        )
+        .replace("    env:\n", "    env:\n      runs-on: ${{ matrix.os }}\n");
+    assert_ci_rejected(
+        &nested_runs_on,
+        "PTY authority step must remain in the authoritative matrix job",
+    );
+
+    let nested_matrix_os = source.replace(
+        "        os: [ubuntu-latest, windows-latest]\n",
+        "        metadata:\n          os: [ubuntu-latest, windows-latest]\n",
+    );
+    assert_ci_rejected(&nested_matrix_os, "matrix must remain Ubuntu and Windows");
+
+    let conditional_check = source.replace(
+        "      - run: npm run check:rust\n",
+        "      - run: npm run check:rust\n        if: false\n",
+    );
+    assert_ci_rejected(
+        &conditional_check,
+        "check:rust must be an unconditional step in the authoritative matrix job",
+    );
+
+    let nested_check = source
+        .replace("      - run: npm run check:rust\n", "")
+        .replace(
+            "      - name: Run native PTY Shell integration\n",
+            "      check-container:\n        run: npm run check:rust\n      - name: Run native PTY Shell integration\n",
+        );
+    assert_ci_rejected(
+        &nested_check,
+        "check:rust must be an unconditional step in the authoritative matrix job",
+    );
+
+    let split_native_pty_step = source.replace(
+        native_pty_step,
+        "      - name: Run native PTY Shell integration\n        run: echo skipped\n      - run: cargo test -p minimax-tools --test shell_pty --locked -- --nocapture\n",
+    );
+    assert_ci_rejected(
+        &split_native_pty_step,
+        "must run native PTY Shell integration on every hosted platform",
+    );
+
+    let nested_native_pty_step = source.replace(
+        native_pty_step,
+        "      pty-container:\n        - name: Run native PTY Shell integration\n          run: cargo test -p minimax-tools --test shell_pty --locked -- --nocapture\n",
+    );
+    assert_ci_rejected(
+        &nested_native_pty_step,
+        "must run native PTY Shell integration on every hosted platform",
+    );
+
+    let linux_only_job = source.replace(
+        native_pty_step,
+        "  linux-only:\n    runs-on: ubuntu-latest\n    steps:\n      - name: Run native PTY Shell integration\n        run: cargo test -p minimax-tools --test shell_pty --locked -- --nocapture\n",
+    );
+    assert_ci_rejected(
+        &linux_only_job,
+        "PTY authority step must remain in the authoritative matrix job",
+    );
+
     let missing_canary = source.replace(
         "run: bash scripts/ci-linux-sandbox-canary.sh",
         "run: echo skipped",

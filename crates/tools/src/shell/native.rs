@@ -47,7 +47,9 @@ impl PtyBackend for NativePtyBackend {
             reader,
             writer,
             guard: Box::new(NativePtyGuard {
-                _master: pair.master,
+                master: Some(pair.master),
+                process_id,
+                armed: true,
             }),
         })
     }
@@ -79,7 +81,27 @@ impl PtyChild for NativePtyChild {
 }
 
 struct NativePtyGuard {
-    _master: Box<dyn MasterPty + Send>,
+    master: Option<Box<dyn MasterPty + Send>>,
+    process_id: u32,
+    armed: bool,
+}
+
+impl super::backend::PtyGuard for NativePtyGuard {
+    fn close_io(&mut self) {
+        drop(self.master.take());
+    }
+
+    fn disarm(&mut self) {
+        self.armed = false;
+    }
+}
+
+impl Drop for NativePtyGuard {
+    fn drop(&mut self) {
+        if self.armed {
+            let _ = crate::process::terminate_process_tree_sync(self.process_id);
+        }
+    }
 }
 
 #[derive(Debug)]

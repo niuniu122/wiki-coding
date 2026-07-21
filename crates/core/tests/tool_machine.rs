@@ -546,6 +546,96 @@ fn shell_tools_reject_forged_late_adapter_rejection_codes() {
 }
 
 #[test]
+fn started_shell_cancellation_is_legal_only_for_the_real_cancelled_code() {
+    for (index, tool_name) in ["shell_command", "shell_session"].into_iter().enumerate() {
+        let call_id = format!("call-cancelled-{tool_name}-{index}");
+        let cancelled = result_for_tool(
+            &call_id,
+            tool_name,
+            ToolTerminalStatus::Cancelled,
+            "cancelled",
+        );
+        let (mut invocation_machine, _) =
+            InvocationMachine::request(invocation_for(&call_id, tool_name, ToolEffect::Process));
+        invocation_machine
+            .apply(InvocationInput::PreflightAllowed {
+                permission_mode: PermissionMode::FullAccess,
+            })
+            .expect("policy approval");
+        invocation_machine
+            .apply(InvocationInput::Start)
+            .expect("start");
+        invocation_machine
+            .apply(InvocationInput::Complete {
+                result: cancelled.clone(),
+            })
+            .expect("runtime projection accepts honest Shell cancellation");
+
+        let (mut session_machine, turn_id) =
+            started_session_machine(&call_id, tool_name, ToolEffect::Process);
+        session_machine
+            .apply(SessionCommand::RecordToolTerminal {
+                record_id: RecordId::new(format!("record-terminal-cancelled-{index}"))
+                    .expect("record"),
+                turn_id,
+                result: cancelled,
+                now_unix_ms: 6,
+            })
+            .expect("durable projection accepts honest Shell cancellation");
+    }
+}
+
+#[test]
+fn started_cancellation_rejects_forged_shell_codes_and_every_non_shell_tool() {
+    let cases = [
+        ("shell_command", ToolEffect::Process, "forged_cancelled"),
+        ("shell_session", ToolEffect::Process, "forged_cancelled"),
+        ("read_file", ToolEffect::Read, "cancelled"),
+        ("list_directory", ToolEffect::Read, "cancelled"),
+        ("apply_patch", ToolEffect::Write, "cancelled"),
+        ("write_file", ToolEffect::Write, "cancelled"),
+        ("run_diagnostic", ToolEffect::Process, "cancelled"),
+        ("git_status", ToolEffect::Process, "cancelled"),
+        ("git_diff", ToolEffect::Process, "cancelled"),
+        ("npm_diagnostic", ToolEffect::Process, "cancelled"),
+    ];
+    for (index, (tool_name, effect, code)) in cases.into_iter().enumerate() {
+        let call_id = format!("call-illegal-cancelled-{index}");
+        let cancelled = result_for_tool(&call_id, tool_name, ToolTerminalStatus::Cancelled, code);
+        let (mut invocation_machine, _) =
+            InvocationMachine::request(invocation_for(&call_id, tool_name, effect));
+        invocation_machine
+            .apply(InvocationInput::PreflightAllowed {
+                permission_mode: PermissionMode::FullAccess,
+            })
+            .expect("policy approval");
+        invocation_machine
+            .apply(InvocationInput::Start)
+            .expect("start");
+        assert_eq!(
+            invocation_machine.apply(InvocationInput::Complete {
+                result: cancelled.clone(),
+            }),
+            Err(InvocationError::InvalidTerminal),
+            "runtime projection accepted illegal cancellation for {tool_name}"
+        );
+
+        let (mut session_machine, turn_id) = started_session_machine(&call_id, tool_name, effect);
+        assert_eq!(
+            session_machine.apply(SessionCommand::RecordToolTerminal {
+                record_id: RecordId::new(format!("record-terminal-illegal-cancelled-{index}"))
+                    .expect("record"),
+                turn_id,
+                result: cancelled,
+                now_unix_ms: 6,
+            }),
+            Err(RuntimeErrorCode::Recovery),
+            "durable projection accepted illegal cancellation for {tool_name}"
+        );
+    }
+}
+
+#[test]
 fn durable_session_projection_matches_late_shell_rejection_policy() {
     let (mut read_machine, read_turn) =
         started_session_machine("call-durable-read", "read_file", ToolEffect::Read);

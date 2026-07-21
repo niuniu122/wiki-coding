@@ -168,6 +168,7 @@ impl ShellSessionManager {
             return Err(ShellManagerError::Cancelled);
         }
         self.reserve_running_slot().await?;
+        let mut pending_start = PendingStart::reserved(self.clone());
 
         let spawn_request = ShellSpawnRequest {
             command: request.command,
@@ -178,41 +179,40 @@ impl ShellSessionManager {
         let spawned = match self.backend.spawn(&spawn_request) {
             Ok(spawned) => spawned,
             Err(_) => {
-                self.settle_unpublished_start(None).await?;
+                let (manager, session) = pending_start.take_settlement();
+                manager.settle_unpublished_start(session).await?;
                 return Err(ShellManagerError::Launch);
             }
         };
-        let mut resources = match self.own_spawned_resources(spawned) {
-            Ok(resources) => resources,
+        match self.own_spawned_resources(spawned) {
+            Ok(resources) => pending_start.own_resources(resources),
             Err(resources) => {
-                let session = Arc::new(StdMutex::new(
-                    resources.into_unpublished_session(self.next_unpublished_id()),
-                ));
-                self.settle_unpublished_start(Some(session)).await?;
+                pending_start.own_resources(resources);
+                let (manager, session) = pending_start.take_settlement();
+                manager.settle_unpublished_start(session).await?;
                 return Err(ShellManagerError::Io);
             }
-        };
+        }
         if let Err(error) = self
-            .wait_for_startup_cursor_handshake(&mut resources, cancellation)
+            .wait_for_startup_cursor_handshake(pending_start.resources_mut(), cancellation)
             .await
         {
-            let session = Arc::new(StdMutex::new(
-                resources.into_unpublished_session(self.next_unpublished_id()),
-            ));
-            self.settle_unpublished_start(Some(session)).await?;
+            let (manager, session) = pending_start.take_settlement();
+            manager.settle_unpublished_start(session).await?;
             return Err(error);
         }
         let id = match self.ids.next_session_id() {
             Ok(id) => id,
             Err(_) => {
-                let session = Arc::new(StdMutex::new(
-                    resources.into_unpublished_session(self.next_unpublished_id()),
-                ));
-                self.settle_unpublished_start(Some(session)).await?;
+                let (manager, session) = pending_start.take_settlement();
+                manager.settle_unpublished_start(session).await?;
                 return Err(ShellManagerError::Identifier);
             }
         };
-        let session = Arc::new(StdMutex::new(resources.into_session(id.clone())));
+        let session = Arc::new(StdMutex::new(
+            pending_start.take_resources().into_session(id.clone()),
+        ));
+        pending_start.own_session(Arc::clone(&session));
 
         let published = {
             let mut registry = self.inner.lock().await;
@@ -221,6 +221,7 @@ impl ShellSessionManager {
             } else {
                 registry.sessions.insert(id.clone(), Arc::clone(&session));
                 registry.starting_slots = registry.starting_slots.saturating_sub(1);
+                pending_start.disarm();
                 true
             }
         };
@@ -228,11 +229,8 @@ impl ShellSessionManager {
             self.start_settled.notify_waiters();
         }
         if !published {
-            if let Ok(mut session) = session.lock() {
-                session.id = self.next_unpublished_id();
-                session.slot_release_deferred = true;
-            }
-            self.settle_unpublished_start(Some(session)).await?;
+            let (manager, settlement_session) = pending_start.take_settlement();
+            manager.settle_unpublished_start(settlement_session).await?;
             let accepting = self.inner.lock().await.accepting;
             return Err(if accepting {
                 ShellManagerError::Identifier
@@ -795,7 +793,7 @@ impl ShellSessionManager {
     ) {
         let result = if running {
             self.cleanup_running_session(&session).await
-        } else if self.close_handles_and_join_reader(&session).await {
+        } else if self.close_handles_and_join_reader(&session, true).await {
             Ok(())
         } else {
             Err(ShellManagerError::Indeterminate)
@@ -833,7 +831,8 @@ impl ShellSessionManager {
             self.wait_for_exit(session, CLEANUP_WAIT).await?
         };
         let reader_done = if confirmed {
-            self.close_handles_and_join_reader(session).await
+            self.close_handles_and_join_reader(session, terminate_ok)
+                .await
         } else {
             false
         };
@@ -904,8 +903,12 @@ impl ShellSessionManager {
         }
     }
 
-    async fn close_handles_and_join_reader(&self, session: &Arc<StdMutex<ShellSession>>) -> bool {
-        let (reader, reader_done, writer, guard) = match session.lock() {
+    async fn close_handles_and_join_reader(
+        &self,
+        session: &Arc<StdMutex<ShellSession>>,
+        tree_cleanup_confirmed: bool,
+    ) -> bool {
+        let (reader, reader_done, writer, mut guard) = match session.lock() {
             Ok(mut session) => (
                 session.reader.take(),
                 session.reader_done.take(),
@@ -915,25 +918,35 @@ impl ShellSessionManager {
             Err(_) => return false,
         };
         drop(writer);
+        if let Some(guard) = guard.as_mut() {
+            guard.close_io();
+        }
+        let reader_closed = match (reader, reader_done) {
+            (None, _) => true,
+            (Some(reader), None) => {
+                drop(reader);
+                false
+            }
+            (Some(reader), Some(reader_done)) => matches!(
+                tokio::task::spawn_blocking(move || {
+                    if reader_done.recv_timeout(CLEANUP_WAIT).is_err() {
+                        drop(reader);
+                        return false;
+                    }
+                    reader.join().is_ok()
+                })
+                .await,
+                Ok(true)
+            ),
+        };
+        if tree_cleanup_confirmed
+            && reader_closed
+            && let Some(guard) = guard.as_mut()
+        {
+            guard.disarm();
+        }
         drop(guard);
-        let Some(reader) = reader else {
-            return true;
-        };
-        let Some(reader_done) = reader_done else {
-            drop(reader);
-            return false;
-        };
-        matches!(
-            tokio::task::spawn_blocking(move || {
-                if reader_done.recv_timeout(CLEANUP_WAIT).is_err() {
-                    drop(reader);
-                    return false;
-                }
-                reader.join().is_ok()
-            })
-            .await,
-            Ok(true)
-        )
+        reader_closed
     }
 
     fn receipt(
@@ -1071,14 +1084,18 @@ impl Drop for ShellSessionManager {
             Err(_) => return,
         };
         for session in sessions {
-            let (writer, child) = match session.lock() {
+            let (guard, writer, child) = match session.try_lock() {
                 Ok(mut session) if session.state == ShellSessionState::Running => {
                     session.stopping = true;
-                    session.guard.take();
-                    (session.writer.take(), Arc::clone(&session.child))
+                    (
+                        session.guard.take(),
+                        session.writer.take(),
+                        Arc::clone(&session.child),
+                    )
                 }
                 _ => continue,
             };
+            drop(guard);
             if let Some(writer) = writer
                 && let Ok(mut writer) = writer.try_lock()
             {
@@ -1101,6 +1118,88 @@ struct OwnedSessionResources {
     reader: Option<thread::JoinHandle<()>>,
     reader_done: Option<mpsc::Receiver<()>>,
     guard: Option<Box<dyn PtyGuard>>,
+}
+
+enum PendingStartOwnership {
+    Reservation,
+    Resources(OwnedSessionResources),
+    Session(Arc<StdMutex<ShellSession>>),
+}
+
+struct PendingStart {
+    manager: Option<ShellSessionManager>,
+    ownership: Option<PendingStartOwnership>,
+}
+
+impl PendingStart {
+    fn reserved(manager: ShellSessionManager) -> Self {
+        Self {
+            manager: Some(manager),
+            ownership: Some(PendingStartOwnership::Reservation),
+        }
+    }
+
+    fn own_resources(&mut self, resources: OwnedSessionResources) {
+        self.ownership = Some(PendingStartOwnership::Resources(resources));
+    }
+
+    fn resources_mut(&mut self) -> &mut OwnedSessionResources {
+        match self.ownership.as_mut() {
+            Some(PendingStartOwnership::Resources(resources)) => resources,
+            _ => unreachable!("pending start owns resources before startup handshake"),
+        }
+    }
+
+    fn take_resources(&mut self) -> OwnedSessionResources {
+        match self.ownership.take() {
+            Some(PendingStartOwnership::Resources(resources)) => resources,
+            _ => unreachable!("pending start owns resources before session construction"),
+        }
+    }
+
+    fn own_session(&mut self, session: Arc<StdMutex<ShellSession>>) {
+        self.ownership = Some(PendingStartOwnership::Session(session));
+    }
+
+    fn take_settlement(&mut self) -> (ShellSessionManager, Option<Arc<StdMutex<ShellSession>>>) {
+        let manager = self
+            .manager
+            .take()
+            .expect("armed pending start owns its manager");
+        let session = match self.ownership.take() {
+            Some(PendingStartOwnership::Reservation) | None => None,
+            Some(PendingStartOwnership::Resources(resources)) => Some(Arc::new(StdMutex::new(
+                resources.into_unpublished_session(manager.next_unpublished_id()),
+            ))),
+            Some(PendingStartOwnership::Session(session)) => {
+                if let Ok(mut session_state) = session.lock() {
+                    session_state.id = manager.next_unpublished_id();
+                    session_state.slot_release_deferred = true;
+                }
+                Some(session)
+            }
+        };
+        (manager, session)
+    }
+
+    fn disarm(&mut self) {
+        self.manager.take();
+        self.ownership.take();
+    }
+}
+
+impl Drop for PendingStart {
+    fn drop(&mut self) {
+        if self.manager.is_none() {
+            return;
+        }
+        let (manager, session) = self.take_settlement();
+        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
+            drop(runtime.spawn(async move {
+                let _ = manager.finish_unpublished_start(session).await;
+            }));
+        }
+    }
 }
 
 impl OwnedSessionResources {
@@ -1213,6 +1312,309 @@ fn validate_write_request(request: &ShellWriteRequest) -> Result<(), ShellManage
         return Err(ShellManagerError::InvalidArguments);
     }
     validate_yield_and_output(request.yield_time, request.max_output_bytes)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{self, Read, Write};
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::{Arc, Condvar, Mutex};
+    use std::time::Duration;
+
+    use minimax_protocol::{MAX_SHELL_OUTPUT_BYTES, ShellSessionId};
+
+    use super::{ShellCommandRequest, ShellSessionManager};
+    use crate::NeverCancelled;
+    use crate::shell::{
+        PtyBackend, PtyChild, PtyTerminateFuture, ShellSessionIdSource, ShellSpawnRequest,
+        SpawnedPty, SystemShellClock,
+    };
+
+    #[derive(Default)]
+    struct PublishLockBackend {
+        process: Arc<PublishLockProcess>,
+    }
+
+    #[derive(Default)]
+    struct PublishLockProcess {
+        running: AtomicBool,
+        reader: Mutex<Option<std::sync::mpsc::Sender<()>>>,
+        guard_terminations: std::sync::atomic::AtomicUsize,
+    }
+
+    impl PublishLockProcess {
+        fn exit(&self) {
+            self.running.store(false, Ordering::Release);
+            if let Some(sender) = self.reader.lock().expect("reader sender").take() {
+                let _ = sender.send(());
+            }
+        }
+    }
+
+    impl PtyBackend for PublishLockBackend {
+        fn spawn(&self, _request: &ShellSpawnRequest) -> io::Result<SpawnedPty> {
+            self.process.running.store(true, Ordering::Release);
+            let (sender, receiver) = std::sync::mpsc::channel();
+            *self.process.reader.lock().expect("reader sender") = Some(sender);
+            Ok(SpawnedPty {
+                child: Box::new(PublishLockChild {
+                    process: Arc::clone(&self.process),
+                }),
+                reader: Box::new(PublishLockReader { receiver }),
+                writer: Box::new(PublishLockWriter {
+                    process: Arc::clone(&self.process),
+                }),
+                guard: Box::new(PublishLockGuard {
+                    process: Arc::clone(&self.process),
+                    armed: true,
+                }),
+            })
+        }
+
+        fn terminate_tree<'a>(&'a self, _process_id: u32) -> PtyTerminateFuture<'a> {
+            Box::pin(async move {
+                self.process.exit();
+                Ok(())
+            })
+        }
+    }
+
+    struct PublishLockChild {
+        process: Arc<PublishLockProcess>,
+    }
+
+    struct PublishLockGuard {
+        process: Arc<PublishLockProcess>,
+        armed: bool,
+    }
+
+    impl crate::shell::PtyGuard for PublishLockGuard {
+        fn disarm(&mut self) {
+            self.armed = false;
+        }
+    }
+
+    impl Drop for PublishLockGuard {
+        fn drop(&mut self) {
+            if self.armed {
+                self.process
+                    .guard_terminations
+                    .fetch_add(1, Ordering::AcqRel);
+                self.process.exit();
+            }
+        }
+    }
+
+    impl PtyChild for PublishLockChild {
+        fn process_id(&self) -> u32 {
+            77
+        }
+
+        fn try_wait(&mut self) -> io::Result<Option<i32>> {
+            Ok((!self.process.running.load(Ordering::Acquire)).then_some(-2))
+        }
+
+        fn kill(&mut self) -> io::Result<()> {
+            self.process.exit();
+            Ok(())
+        }
+    }
+
+    struct PublishLockReader {
+        receiver: std::sync::mpsc::Receiver<()>,
+    }
+
+    impl Read for PublishLockReader {
+        fn read(&mut self, _destination: &mut [u8]) -> io::Result<usize> {
+            let _ = self.receiver.recv();
+            Ok(0)
+        }
+    }
+
+    struct PublishLockWriter {
+        process: Arc<PublishLockProcess>,
+    }
+
+    impl Write for PublishLockWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            if bytes == b"\x03" {
+                self.process.exit();
+            }
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[derive(Default)]
+    struct BlockingIds {
+        entered: Arc<(Mutex<bool>, Condvar)>,
+        released: Arc<(Mutex<bool>, Condvar)>,
+    }
+
+    impl BlockingIds {
+        fn wait_until_entered(&self) {
+            let (entered, signal) = &*self.entered;
+            let mut entered = entered.lock().expect("identifier entered");
+            while !*entered {
+                entered = signal.wait(entered).expect("identifier entered wait");
+            }
+        }
+
+        fn release(&self) {
+            let (released, signal) = &*self.released;
+            *released.lock().expect("identifier released") = true;
+            signal.notify_all();
+        }
+    }
+
+    impl ShellSessionIdSource for BlockingIds {
+        fn next_session_id(&self) -> Result<ShellSessionId, super::ShellManagerError> {
+            {
+                let (entered, signal) = &*self.entered;
+                *entered.lock().expect("identifier entered") = true;
+                signal.notify_all();
+            }
+            let (released, signal) = &*self.released;
+            let mut released = released.lock().expect("identifier released");
+            while !*released {
+                released = signal.wait(released).expect("identifier release wait");
+            }
+            ShellSessionId::new("shell-publish-lock")
+                .map_err(|_| super::ShellManagerError::Identifier)
+        }
+    }
+
+    struct FixedIds;
+
+    impl ShellSessionIdSource for FixedIds {
+        fn next_session_id(&self) -> Result<ShellSessionId, super::ShellManagerError> {
+            ShellSessionId::new("shell-lock-contention")
+                .map_err(|_| super::ShellManagerError::Identifier)
+        }
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn abort_while_waiting_for_publish_lock_settles_reserved_start() {
+        let backend = Arc::new(PublishLockBackend::default());
+        let ids = Arc::new(BlockingIds::default());
+        let manager =
+            ShellSessionManager::new(backend.clone(), ids.clone(), Arc::new(SystemShellClock));
+        manager.enable().await;
+
+        let start_manager = manager.clone();
+        let start = tokio::spawn(async move {
+            start_manager
+                .start(
+                    ShellCommandRequest {
+                        command: "publish-lock".to_owned(),
+                        cwd: std::path::PathBuf::from("."),
+                        yield_time: Duration::ZERO,
+                        max_output_bytes: MAX_SHELL_OUTPUT_BYTES,
+                    },
+                    &NeverCancelled,
+                )
+                .await
+        });
+        let wait_ids = ids.clone();
+        tokio::task::spawn_blocking(move || wait_ids.wait_until_entered())
+            .await
+            .expect("identifier waiter joins");
+        let registry = manager.inner.lock().await;
+        ids.release();
+        for _ in 0..10 {
+            tokio::task::yield_now().await;
+        }
+        start.abort();
+        assert!(
+            start
+                .await
+                .expect_err("publish waiter is aborted")
+                .is_cancelled()
+        );
+        drop(registry);
+
+        tokio::time::timeout(Duration::from_secs(1), manager.disable_and_stop_all())
+            .await
+            .expect("disable must not wait on an abandoned publish reservation")
+            .expect("aborted publish cleanup succeeds");
+        assert!(!backend.process.running.load(Ordering::Acquire));
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn session_lock_contention_eventually_drops_the_armed_guard() {
+        let backend = Arc::new(PublishLockBackend::default());
+        let manager = ShellSessionManager::new(
+            backend.clone(),
+            Arc::new(FixedIds),
+            Arc::new(SystemShellClock),
+        );
+        manager.enable().await;
+        manager
+            .start(
+                ShellCommandRequest {
+                    command: "lock-contention".to_owned(),
+                    cwd: std::path::PathBuf::from("."),
+                    yield_time: Duration::ZERO,
+                    max_output_bytes: MAX_SHELL_OUTPUT_BYTES,
+                },
+                &NeverCancelled,
+            )
+            .await
+            .expect("session starts");
+        let session = manager
+            .inner
+            .lock()
+            .await
+            .sessions
+            .values()
+            .next()
+            .cloned()
+            .expect("published session");
+        let entered = Arc::new((Mutex::new(false), Condvar::new()));
+        let released = Arc::new((Mutex::new(false), Condvar::new()));
+        let thread_entered = entered.clone();
+        let thread_released = released.clone();
+        let holder = std::thread::spawn(move || {
+            let _session = session.lock().expect("session lock");
+            {
+                let (entered, signal) = &*thread_entered;
+                *entered.lock().expect("holder entered") = true;
+                signal.notify_all();
+            }
+            let (released, signal) = &*thread_released;
+            let mut released = released.lock().expect("holder released");
+            while !*released {
+                released = signal.wait(released).expect("holder release wait");
+            }
+        });
+        tokio::task::spawn_blocking(move || {
+            let (entered, signal) = &*entered;
+            let mut entered = entered.lock().expect("holder entered");
+            while !*entered {
+                entered = signal.wait(entered).expect("holder entered wait");
+            }
+        })
+        .await
+        .expect("holder waiter joins");
+
+        drop(manager);
+        assert!(backend.process.running.load(Ordering::Acquire));
+        {
+            let (released, signal) = &*released;
+            *released.lock().expect("holder released") = true;
+            signal.notify_all();
+        }
+        holder.join().expect("holder joins");
+
+        assert!(!backend.process.running.load(Ordering::Acquire));
+        assert_eq!(
+            backend.process.guard_terminations.load(Ordering::Acquire),
+            1
+        );
+    }
 }
 
 fn validate_yield_and_output(

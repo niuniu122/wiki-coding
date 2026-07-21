@@ -516,12 +516,200 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
     let native_pty_headers = lines
         .iter()
         .enumerate()
-        .filter(|(_, line)| line.trim() == native_pty_name)
+        .filter(|(_, line)| {
+            let trimmed = line.trim_start();
+            line.len().saturating_sub(trimmed.len()) == 6 && trimmed == native_pty_name
+        })
         .map(|(index, _)| index)
         .collect::<Vec<_>>();
     let [native_pty_start] = native_pty_headers.as_slice() else {
         return violation("CI must run native PTY Shell integration on every hosted platform");
     };
+    let jobs_headers = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| !line.starts_with(char::is_whitespace) && line.trim() == "jobs:")
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    let [jobs_start] = jobs_headers.as_slice() else {
+        return violation("CI must declare exactly one top-level jobs mapping");
+    };
+    let jobs_end = lines
+        .iter()
+        .enumerate()
+        .skip(*jobs_start + 1)
+        .find(|(_, line)| !line.trim().is_empty() && !line.starts_with(char::is_whitespace))
+        .map_or(lines.len(), |(index, _)| index);
+    let job_headers = lines
+        .iter()
+        .enumerate()
+        .take(jobs_end)
+        .skip(*jobs_start + 1)
+        .filter_map(|(index, line)| {
+            let trimmed = line.trim_start();
+            let indent = line.len().saturating_sub(trimmed.len());
+            (indent == 2 && matches!(yaml_mapping_key(line), Ok(Some(_)))).then_some(index)
+        })
+        .collect::<Vec<_>>();
+    let native_job = job_headers
+        .iter()
+        .enumerate()
+        .find_map(|(position, start)| {
+            let end = job_headers.get(position + 1).copied().unwrap_or(jobs_end);
+            (*start <= *native_pty_start && *native_pty_start < end).then_some((*start, end))
+        });
+    let Some((native_job_start, native_job_end)) = native_job else {
+        return violation("CI PTY authority step must remain in the authoritative matrix job");
+    };
+    let steps_headers = (native_job_start + 1..native_job_end)
+        .filter(|index| {
+            let line = lines[*index];
+            let trimmed = line.trim_start();
+            line.len().saturating_sub(trimmed.len()) == 4 && trimmed == "steps:"
+        })
+        .collect::<Vec<_>>();
+    let [steps_start] = steps_headers.as_slice() else {
+        return violation("CI PTY authority step must remain in the authoritative matrix job");
+    };
+    let steps_end = lines
+        .iter()
+        .enumerate()
+        .take(native_job_end)
+        .skip(*steps_start + 1)
+        .find(|(_, line)| {
+            let trimmed = line.trim_start();
+            !trimmed.is_empty() && line.len().saturating_sub(trimmed.len()) <= 4
+        })
+        .map_or(native_job_end, |(index, _)| index);
+    if !(*steps_start < *native_pty_start && *native_pty_start < steps_end) {
+        return violation("CI PTY authority step must remain in the authoritative matrix job");
+    }
+    let native_job_lines = &lines[native_job_start + 1..native_job_end];
+    let job_level_keys = native_job_lines
+        .iter()
+        .filter_map(|line| {
+            let trimmed = line.trim_start();
+            let indent = line.len().saturating_sub(trimmed.len());
+            (indent == 4)
+                .then(|| yaml_mapping_key(line).ok().flatten())
+                .flatten()
+        })
+        .collect::<Vec<_>>();
+    if job_level_keys.contains(&"if") {
+        return violation("CI PTY authority job must be unconditional");
+    }
+    if native_job_lines
+        .iter()
+        .filter(|line| {
+            let trimmed = line.trim_start();
+            line.len().saturating_sub(trimmed.len()) == 4 && trimmed == "runs-on: ${{ matrix.os }}"
+        })
+        .count()
+        != 1
+    {
+        return violation("CI PTY authority step must remain in the authoritative matrix job");
+    }
+    let strategy_headers = (native_job_start + 1..native_job_end)
+        .filter(|index| {
+            let line = lines[*index];
+            let trimmed = line.trim_start();
+            line.len().saturating_sub(trimmed.len()) == 4 && trimmed == "strategy:"
+        })
+        .collect::<Vec<_>>();
+    let [strategy_start] = strategy_headers.as_slice() else {
+        return violation("CI PTY authority step must remain in the authoritative matrix job");
+    };
+    let strategy_end = lines
+        .iter()
+        .enumerate()
+        .take(native_job_end)
+        .skip(*strategy_start + 1)
+        .find(|(_, line)| {
+            let trimmed = line.trim_start();
+            !trimmed.is_empty() && line.len().saturating_sub(trimmed.len()) <= 4
+        })
+        .map_or(native_job_end, |(index, _)| index);
+    let matrix_headers = (*strategy_start + 1..strategy_end)
+        .filter(|index| {
+            let line = lines[*index];
+            let trimmed = line.trim_start();
+            line.len().saturating_sub(trimmed.len()) == 6 && trimmed == "matrix:"
+        })
+        .collect::<Vec<_>>();
+    let [matrix_start] = matrix_headers.as_slice() else {
+        return violation("CI PTY authority step must remain in the authoritative matrix job");
+    };
+    let matrix_end = lines
+        .iter()
+        .enumerate()
+        .take(strategy_end)
+        .skip(*matrix_start + 1)
+        .find(|(_, line)| {
+            let trimmed = line.trim_start();
+            !trimmed.is_empty() && line.len().saturating_sub(trimmed.len()) <= 6
+        })
+        .map_or(strategy_end, |(index, _)| index);
+    let matrix_lines = &lines[*matrix_start + 1..matrix_end];
+    if matrix_lines
+        .iter()
+        .filter(|line| {
+            let trimmed = line.trim_start();
+            line.len().saturating_sub(trimmed.len()) == 8
+                && trimmed == "os: [ubuntu-latest, windows-latest]"
+        })
+        .count()
+        != 1
+    {
+        return violation("CI matrix must remain Ubuntu and Windows x64 hosted jobs");
+    }
+    if matrix_lines.iter().any(|line| {
+        let trimmed = line.trim_start();
+        let indent = line.len().saturating_sub(trimmed.len());
+        indent >= 8 && matches!(yaml_mapping_key(line), Ok(Some("include" | "exclude")))
+    }) {
+        return violation("CI must not include or exclude matrix jobs");
+    }
+    let check_rust_lines = (*steps_start + 1..steps_end)
+        .filter(|index| {
+            let line = lines[*index];
+            let trimmed = line.trim_start();
+            line.len().saturating_sub(trimmed.len()) == 6 && trimmed == "- run: npm run check:rust"
+        })
+        .collect::<Vec<_>>();
+    let [check_rust_line] = check_rust_lines.as_slice() else {
+        return violation(
+            "CI check:rust must be an unconditional step in the authoritative matrix job",
+        );
+    };
+    let check_rust_end = lines
+        .iter()
+        .enumerate()
+        .take(steps_end)
+        .skip(*check_rust_line + 1)
+        .find(|(_, line)| {
+            let trimmed = line.trim_start();
+            !trimmed.is_empty() && line.len().saturating_sub(trimmed.len()) <= 6
+        })
+        .map_or(steps_end, |(index, _)| index);
+    if lines[*check_rust_line + 1..check_rust_end]
+        .iter()
+        .any(|line| {
+            let trimmed = line.trim_start();
+            let indent = line.len().saturating_sub(trimmed.len());
+            indent == 8
+                && matches!(
+                    yaml_mapping_key(line),
+                    Err(()) | Ok(Some("if" | "continue-on-error"))
+                )
+        })
+    {
+        return violation(
+            "CI check:rust must be an unconditional step in the authoritative matrix job",
+        );
+    };
+    if *check_rust_line >= *native_pty_start {
+        return violation("CI PTY authority step must follow check:rust in the same matrix job");
+    }
     let native_pty_indent = lines[*native_pty_start]
         .len()
         .saturating_sub(lines[*native_pty_start].trim_start().len());
@@ -533,13 +721,17 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
             let trimmed = line.trim_start();
             !trimmed.is_empty() && line.len().saturating_sub(trimmed.len()) <= native_pty_indent
         })
-        .map_or(lines.len(), |(index, _)| index);
+        .map_or(steps_end, |(index, _)| index)
+        .min(steps_end);
     let native_pty_step = &lines[*native_pty_start..native_pty_end];
     let native_pty_run = format!("run: {native_pty_command}");
     let native_pty_run_lines = lines
         .iter()
         .enumerate()
-        .filter(|(_, line)| line.trim() == native_pty_run)
+        .filter(|(_, line)| {
+            let trimmed = line.trim_start();
+            line.len().saturating_sub(trimmed.len()) == 8 && trimmed == native_pty_run
+        })
         .map(|(index, _)| index)
         .collect::<Vec<_>>();
     let [native_pty_run_index] = native_pty_run_lines.as_slice() else {

@@ -299,9 +299,7 @@ impl InvocationMachine {
         result: ToolResult,
     ) -> Result<Vec<InvocationEffect>, InvocationError> {
         validate_result(&self.invocation, &result)?;
-        if result.status == ToolTerminalStatus::Rejected
-            && !late_shell_rejection_is_legal(&result.tool_name, &result.code)
-        {
+        if !terminal_is_legal_after_start(&result.tool_name, result.status, &result.code) {
             return Err(InvocationError::InvalidTerminal);
         }
         self.state = InvocationState::Terminal {
@@ -387,6 +385,22 @@ pub(crate) fn late_shell_rejection_is_legal(tool_name: &str, code: &str) -> bool
                 | "shell_session_not_found"
         )
     )
+}
+
+pub(crate) fn terminal_is_legal_after_start(
+    tool_name: &str,
+    status: ToolTerminalStatus,
+    code: &str,
+) -> bool {
+    match status {
+        ToolTerminalStatus::Succeeded
+        | ToolTerminalStatus::Failed
+        | ToolTerminalStatus::Indeterminate => true,
+        ToolTerminalStatus::Rejected => late_shell_rejection_is_legal(tool_name, code),
+        ToolTerminalStatus::Cancelled => {
+            matches!(tool_name, "shell_command" | "shell_session") && code == "cancelled"
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]

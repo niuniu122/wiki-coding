@@ -171,6 +171,8 @@ struct FakeShared {
     write_error: Mutex<Option<io::ErrorKind>>,
     flush_error: Mutex<Option<io::ErrorKind>>,
     guard_drops: AtomicUsize,
+    guard_disarms: AtomicUsize,
+    guard_tree_terminations: AtomicUsize,
 }
 
 impl FakeShared {
@@ -207,6 +209,13 @@ impl FakeControl {
 
     fn exit(&self, code: i32) {
         self.shared.exit(code);
+    }
+
+    fn exit_without_finishing_reader(&self, code: i32) {
+        let mut exit_code = self.shared.exit_code.lock().expect("exit lock");
+        if exit_code.is_none() {
+            *exit_code = Some(code);
+        }
     }
 
     fn finish_reader(&self) {
@@ -287,6 +296,14 @@ impl FakeControl {
 
     fn guard_drops(&self) -> usize {
         self.shared.guard_drops.load(Ordering::Acquire)
+    }
+
+    fn guard_disarms(&self) -> usize {
+        self.shared.guard_disarms.load(Ordering::Acquire)
+    }
+
+    fn guard_tree_terminations(&self) -> usize {
+        self.shared.guard_tree_terminations.load(Ordering::Acquire)
     }
 }
 
@@ -573,6 +590,8 @@ impl FakeBackend {
             write_error: Mutex::new(None),
             flush_error: Mutex::new(None),
             guard_drops: AtomicUsize::new(0),
+            guard_disarms: AtomicUsize::new(0),
+            guard_tree_terminations: AtomicUsize::new(0),
         });
         self.plans.lock().expect("plans lock").push_back(FakePlan {
             shared: Arc::clone(&shared),
@@ -653,6 +672,7 @@ impl PtyBackend for FakeBackend {
             }),
             guard: Box::new(FakeGuard {
                 shared: Arc::clone(&plan.shared),
+                armed: true,
             }),
         })
     }
@@ -690,11 +710,27 @@ struct FakeChild {
 
 struct FakeGuard {
     shared: Arc<FakeShared>,
+    armed: bool,
+}
+
+impl minimax_tools::PtyGuard for FakeGuard {
+    fn disarm(&mut self) {
+        if self.armed {
+            self.armed = false;
+            self.shared.guard_disarms.fetch_add(1, Ordering::AcqRel);
+        }
+    }
 }
 
 impl Drop for FakeGuard {
     fn drop(&mut self) {
         self.shared.guard_drops.fetch_add(1, Ordering::AcqRel);
+        if self.armed {
+            self.shared
+                .guard_tree_terminations
+                .fetch_add(1, Ordering::AcqRel);
+            self.shared.exit(-99);
+        }
     }
 }
 
@@ -1408,6 +1444,74 @@ async fn aborted_unpublished_start_settles_reservation() {
         .expect("replacement cleanup succeeds");
 }
 
+#[tokio::test]
+async fn abort_during_startup_handshake_settles_reservation_and_process() {
+    let backend = Arc::new(FakeBackend::default());
+    backend.require_cursor_handshake();
+    let control = backend.queue_process();
+    let manager = enabled_manager(Arc::clone(&backend), Arc::new(ManualClock::default())).await;
+
+    let start_manager = manager.clone();
+    let start = tokio::spawn(async move {
+        start_manager
+            .start(
+                command_request("abort-handshake", Duration::from_secs(60)),
+                &NeverCancelled,
+            )
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(1), backend.wait_for_spawn_count(1))
+        .await
+        .expect("aborted handshake reaches backend spawn");
+    start.abort();
+    assert!(
+        start
+            .await
+            .expect_err("startup caller is aborted")
+            .is_cancelled()
+    );
+
+    tokio::time::timeout(Duration::from_secs(1), manager.disable_and_stop_all())
+        .await
+        .expect("disable must not wait on an abandoned handshake reservation")
+        .expect("aborted handshake cleanup succeeds");
+    assert!(!control.is_running());
+    assert_eq!(control.guard_drops(), 1);
+
+    manager.enable().await;
+    let mut replacements = Vec::new();
+    for index in 0..MAX_RUNNING_SHELL_SESSIONS {
+        let replacement = backend.queue_process();
+        let expected_spawns = backend.spawn_count() + 1;
+        let replacement_manager = manager.clone();
+        let replacement_start = tokio::spawn(async move {
+            replacement_manager
+                .start(
+                    command_request(&format!("replacement-{index}"), Duration::ZERO),
+                    &NeverCancelled,
+                )
+                .await
+        });
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            backend.wait_for_spawn_count(expected_spawns),
+        )
+        .await
+        .expect("replacement reaches backend spawn");
+        replacement.emit(b"\x1b[6n".to_vec());
+        replacement_start
+            .await
+            .expect("replacement joins")
+            .expect("every reserved slot is reusable");
+        replacements.push(replacement);
+    }
+    manager
+        .shutdown()
+        .await
+        .expect("replacement cleanup succeeds");
+    assert!(replacements.iter().all(|control| !control.is_running()));
+}
+
 #[tokio::test(start_paused = true)]
 async fn reader_spawn_failure_keeps_partial_ownership_until_cleanup_confirms_exit() {
     let backend = Arc::new(FakeBackend::default());
@@ -1717,6 +1821,86 @@ async fn write_observed_exit_is_cleaned_before_return() {
     assert_eq!(control.guard_drops(), 1);
 }
 
+#[tokio::test]
+async fn confirmed_cleanup_disarms_guard_without_a_second_tree_termination() {
+    let backend = Arc::new(FakeBackend::default());
+    let control = backend.queue_process();
+    let manager = enabled_manager(Arc::clone(&backend), Arc::new(ManualClock::default())).await;
+    let receipt = manager
+        .start(
+            command_request("disarm-guard", Duration::ZERO),
+            &NeverCancelled,
+        )
+        .await
+        .expect("session starts");
+
+    manager
+        .stop(&receipt.session_id, OUTPUT_LIMIT)
+        .await
+        .expect("confirmed cleanup succeeds");
+
+    assert_eq!(control.guard_disarms(), 1);
+    assert_eq!(control.guard_tree_terminations(), 0);
+    assert_eq!(control.guard_drops(), 1);
+    manager
+        .shutdown()
+        .await
+        .expect("shutdown remains idempotent");
+    assert_eq!(control.guard_drops(), 1);
+}
+
+#[tokio::test]
+async fn reader_timeout_keeps_guard_armed_for_final_tree_termination() {
+    let backend = Arc::new(FakeBackend::default());
+    let control = backend.queue_process();
+    let manager = enabled_manager(Arc::clone(&backend), Arc::new(ManualClock::default())).await;
+    let receipt = manager
+        .start(
+            command_request("reader-timeout", Duration::ZERO),
+            &NeverCancelled,
+        )
+        .await
+        .expect("session starts");
+    control.exit_without_finishing_reader(0);
+
+    assert_eq!(
+        manager
+            .poll(
+                poll_request(receipt.session_id, Duration::ZERO),
+                &NeverCancelled
+            )
+            .await,
+        Err(ShellManagerError::Indeterminate)
+    );
+    assert_eq!(control.guard_disarms(), 0);
+    assert_eq!(control.guard_tree_terminations(), 1);
+    assert_eq!(control.guard_drops(), 1);
+    control.finish_reader();
+}
+
+#[tokio::test]
+async fn abnormal_last_manager_drop_runs_armed_guard_once_before_child_fallback() {
+    let backend = Arc::new(FakeBackend::default());
+    let control = backend.queue_process();
+    control.set_exit_on_interrupt(false);
+    let manager = enabled_manager(Arc::clone(&backend), Arc::new(ManualClock::default())).await;
+    manager
+        .start(
+            command_request("drop-guard", Duration::ZERO),
+            &NeverCancelled,
+        )
+        .await
+        .expect("session starts");
+
+    drop(manager);
+
+    assert!(!control.is_running());
+    assert_eq!(control.guard_disarms(), 0);
+    assert_eq!(control.guard_tree_terminations(), 1);
+    assert_eq!(control.guard_drops(), 1);
+    assert_eq!(control.kills(), 1);
+}
+
 #[tokio::test(start_paused = true)]
 async fn repeated_write_observed_exits_are_bounded_by_count() {
     let backend = Arc::new(FakeBackend::default());
@@ -1961,6 +2145,13 @@ async fn cleanup_failure_is_sticky_for_stop_disable_and_shutdown() {
     assert!(controls.iter().all(|control| control.interrupts() == 1));
     assert_eq!(backend.termination_count(), MAX_RUNNING_SHELL_SESSIONS);
     assert!(controls.iter().all(|control| control.kills() == 1));
+    assert!(controls.iter().all(|control| control.guard_disarms() == 0));
+    assert!(
+        controls
+            .iter()
+            .all(|control| control.guard_tree_terminations() == 1)
+    );
+    assert!(controls.iter().all(|control| control.guard_drops() == 1));
 
     clock.advance(TERMINAL_RECEIPT_TTL + Duration::from_millis(1));
     assert_eq!(
