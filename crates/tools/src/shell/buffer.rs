@@ -36,10 +36,6 @@ impl ShellOutputBudget {
         self.used.load(Ordering::Acquire)
     }
 
-    fn available(&self) -> usize {
-        self.limit.saturating_sub(self.used())
-    }
-
     fn reserve_up_to(&self, requested: usize) -> usize {
         let mut used = self.used();
         loop {
@@ -128,13 +124,14 @@ impl ShellOutputBuffer {
             self.truncated = true;
         }
 
-        let available = self.budget.available();
-        if available < bytes.len() && !self.unread.is_empty() {
-            self.drop_oldest((bytes.len() - available).min(self.unread.len()));
-            self.truncated = true;
-        }
-
-        let reserved = self.budget.reserve_up_to(bytes.len());
+        let budget = Arc::clone(&self.budget);
+        let reserved = reserve_with_oldest_eviction(
+            &mut self.unread,
+            &mut self.truncated,
+            bytes.len(),
+            |requested| budget.reserve_up_to(requested),
+            |released| budget.release(released),
+        );
         let start = utf8_suffix_start(&bytes, reserved);
         let retained = bytes.len() - start;
         self.budget.release(reserved - retained);
@@ -305,6 +302,86 @@ fn utf8_suffix_start(bytes: &[u8], max_bytes: usize) -> usize {
     start
 }
 
+fn reserve_with_oldest_eviction(
+    unread: &mut VecDeque<u8>,
+    truncated: &mut bool,
+    wanted: usize,
+    mut reserve: impl FnMut(usize) -> usize,
+    mut release: impl FnMut(usize),
+) -> usize {
+    let mut reserved = 0;
+    while reserved < wanted {
+        let remaining = wanted - reserved;
+        reserved += reserve(remaining).min(remaining);
+        if reserved == wanted || unread.is_empty() {
+            break;
+        }
+
+        let shortfall = wanted - reserved;
+        let boundary = utf8_ceil_boundary(unread, shortfall.min(unread.len()));
+        unread.drain(..boundary);
+        release(boundary);
+        *truncated = true;
+    }
+    reserved
+}
+
 const fn is_utf8_continuation(byte: u8) -> bool {
     byte & 0b1100_0000 == 0b1000_0000
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+    use std::collections::VecDeque;
+
+    use super::reserve_with_oldest_eviction;
+
+    #[derive(Debug, Eq, PartialEq)]
+    enum ReservationEvent {
+        Reserve(usize),
+        ReleaseOldest(usize),
+    }
+
+    #[test]
+    fn actual_shortfall_releases_oldest_output_before_retrying() {
+        let mut unread = VecDeque::from(vec![b'o'; 6]);
+        let mut truncated = false;
+        let scripted_reservations = RefCell::new(VecDeque::from([2, 1, 0]));
+        let events = RefCell::new(Vec::new());
+
+        let reserved = reserve_with_oldest_eviction(
+            &mut unread,
+            &mut truncated,
+            6,
+            |requested| {
+                events
+                    .borrow_mut()
+                    .push(ReservationEvent::Reserve(requested));
+                scripted_reservations
+                    .borrow_mut()
+                    .pop_front()
+                    .expect("scripted reservation")
+            },
+            |released| {
+                events
+                    .borrow_mut()
+                    .push(ReservationEvent::ReleaseOldest(released));
+            },
+        );
+
+        assert_eq!(reserved, 3);
+        assert!(unread.is_empty());
+        assert!(truncated);
+        assert_eq!(
+            events.into_inner(),
+            [
+                ReservationEvent::Reserve(6),
+                ReservationEvent::ReleaseOldest(4),
+                ReservationEvent::Reserve(4),
+                ReservationEvent::ReleaseOldest(2),
+                ReservationEvent::Reserve(3),
+            ]
+        );
+    }
 }

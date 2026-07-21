@@ -1,4 +1,5 @@
-use std::sync::Arc;
+use std::sync::{Arc, Barrier};
+use std::thread;
 
 use minimax_protocol::{MAX_SHELL_OUTPUT_BYTES, MAX_SHELL_UNREAD_BYTES};
 use minimax_tools::{ShellOutputBudget, ShellOutputBuffer};
@@ -124,5 +125,52 @@ fn a_full_buffer_reuses_its_own_global_reservation() {
     let chunk = buffer.take(MAX_SHELL_UNREAD_BYTES);
     assert!(chunk.truncated);
     assert!(chunk.output.ends_with("tail"));
+    assert_eq!(budget.used(), 0);
+}
+
+#[test]
+fn contending_buffers_evict_their_own_oldest_output_before_new_output() {
+    let chunk_bytes = MAX_SHELL_UNREAD_BYTES / 2;
+    let budget = Arc::new(ShellOutputBudget::new(3 * chunk_bytes));
+    let mut left = ShellOutputBuffer::new(Arc::clone(&budget));
+    let mut right = ShellOutputBuffer::new(Arc::clone(&budget));
+    left.append(&vec![b'a'; chunk_bytes]);
+    right.append(&vec![b'b'; chunk_bytes]);
+
+    let start = Arc::new(Barrier::new(3));
+    let left_start = Arc::clone(&start);
+    let left_thread = thread::spawn(move || {
+        let incoming = vec![b'x'; chunk_bytes];
+        left_start.wait();
+        left.append(&incoming);
+        left
+    });
+    let right_start = Arc::clone(&start);
+    let right_thread = thread::spawn(move || {
+        let incoming = vec![b'y'; chunk_bytes];
+        right_start.wait();
+        right.append(&incoming);
+        right
+    });
+
+    start.wait();
+    let mut left = left_thread.join().expect("left append completes");
+    let mut right = right_thread.join().expect("right append completes");
+    assert_eq!(budget.used(), 3 * chunk_bytes);
+
+    let left = left.take(MAX_SHELL_UNREAD_BYTES).output;
+    let right = right.take(MAX_SHELL_UNREAD_BYTES).output;
+    assert!(
+        left.as_bytes()[left.len() - chunk_bytes..]
+            .iter()
+            .all(|byte| *byte == b'x'),
+        "left buffer discarded new output while retaining old output"
+    );
+    assert!(
+        right.as_bytes()[right.len() - chunk_bytes..]
+            .iter()
+            .all(|byte| *byte == b'y'),
+        "right buffer discarded new output while retaining old output"
+    );
     assert_eq!(budget.used(), 0);
 }
