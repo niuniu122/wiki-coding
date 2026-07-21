@@ -8,7 +8,7 @@ use std::fmt;
 use std::path::{Path, PathBuf};
 
 use minimax_core::{SessionCommand, SessionEffect, SessionMachine};
-use minimax_protocol::{RecordId, RuntimeErrorCode, SessionId, SessionRecordV1};
+use minimax_protocol::{RecordId, RuntimeErrorCode, SessionId, SessionRecordV1, TraceEntry};
 
 use crate::{FinalizedSessionEvidence, ProjectVault, VaultError};
 
@@ -29,6 +29,12 @@ pub enum RuntimeStoreError {
     IndexConflict,
     Finalized,
     Command(RuntimeErrorCode),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RuntimeInspection {
+    Uninitialized,
+    Healthy,
 }
 
 impl fmt::Display for RuntimeStoreError {
@@ -59,6 +65,29 @@ pub struct RuntimeStore {
 }
 
 impl RuntimeStore {
+    pub fn inspect_read_only(
+        project_root: impl AsRef<Path>,
+    ) -> Result<RuntimeInspection, RuntimeStoreError> {
+        let project_root = project_root
+            .as_ref()
+            .canonicalize()
+            .map_err(|_| RuntimeStoreError::Io)?;
+        let runtime_dir = project_root.join(RUNTIME_DIRECTORY);
+        if !runtime_dir.exists() {
+            return Ok(RuntimeInspection::Uninitialized);
+        }
+        if !runtime_dir.is_dir() {
+            return Err(RuntimeStoreError::Io);
+        }
+        let _inspection_lease = WorkspaceLease::probe(&runtime_dir.join("writer.lock"))?
+            .ok_or(RuntimeStoreError::Recovery)?;
+        let snapshot = journal::inspect_read_only(&runtime_dir.join("sessions.jsonl"))?;
+        let machine = SessionMachine::replay(snapshot.records.clone())
+            .map_err(|_| RuntimeStoreError::Recovery)?;
+        RuntimeIndex::inspect_read_only(&runtime_dir, &snapshot, &machine)?;
+        Ok(RuntimeInspection::Healthy)
+    }
+
     pub fn open(project_root: impl AsRef<Path>) -> Result<Self, RuntimeStoreError> {
         let project_root = project_root
             .as_ref()
@@ -167,6 +196,23 @@ impl RuntimeStore {
     #[must_use]
     pub fn current_index_path(&self) -> &Path {
         &self.current_index
+    }
+
+    #[must_use]
+    pub fn trace_entries(&self, session_id: &SessionId) -> Vec<TraceEntry> {
+        let mut entries = self
+            .records_by_id
+            .values()
+            .filter_map(|record| match &record.record {
+                minimax_protocol::JournalRecord::TraceStored {
+                    session_id: stored_session_id,
+                    entry,
+                } if stored_session_id == session_id => Some(entry.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        entries.sort_by_key(|entry| entry.recorded_at_unix_ms);
+        entries
     }
 
     #[must_use]

@@ -11,8 +11,8 @@ use minimax_cli::{
 use minimax_core::PermissionMode;
 use minimax_protocol::{
     ModelBinding, ModelId, ProviderId, ProviderProtocolKind, RuntimeErrorCode, RuntimeEvent,
-    RuntimeEventV1, RuntimeFailure, RuntimeTerminalOutcome, StreamEvent, TerminalOutcome, Usage,
-    parse_runtime_event_v1,
+    RuntimeEventV1, RuntimeFailure, RuntimeTerminalOutcome, StreamEvent, TerminalOutcome,
+    TraceCode, Usage, parse_runtime_event_v1,
 };
 use minimax_provider::{ConfigLayer, CredentialError, CredentialSource, resolve_config};
 use minimax_tools::SandboxCapability;
@@ -50,6 +50,8 @@ impl MockProvider {
 }
 
 impl ProviderPort for MockProvider {
+    fn rebind(&mut self, _binding: &ModelBinding) {}
+
     fn stream<'a>(
         &'a mut self,
         _request: &'a minimax_protocol::TurnRequest,
@@ -108,6 +110,61 @@ async fn mock_run_projects_byte_stable_schema_v1_jsonl_without_terminal_hooks() 
     assert_eq!(EventRenderer::event(&parsed[1]), "hello ");
     assert_eq!(EventRenderer::event(&parsed[2]), "world");
     assert!(!raw.contains("schemaVersion\":0"));
+}
+
+#[tokio::test]
+async fn safe_trace_is_allowlisted_durable_and_excludes_conversation_content() {
+    let project = tempfile::tempdir().expect("temporary project");
+    let expected;
+    {
+        let mut driver = RuntimeDriver::open(
+            project.path(),
+            binding(),
+            MockProvider::completed(),
+            DriverIds::new("safe-trace", 2_000),
+        )
+        .expect("driver");
+        driver
+            .run_prompt("DO_NOT_PERSIST_PROMPT", 128)
+            .await
+            .expect("run");
+        expected = driver.active_trace_entries();
+        assert!(
+            expected
+                .iter()
+                .any(|entry| entry.code == TraceCode::TurnStarted)
+        );
+        assert!(
+            expected
+                .iter()
+                .any(|entry| entry.code == TraceCode::ProviderConnected)
+        );
+        let serialized = serde_json::to_string(&expected).expect("trace JSON");
+        for prohibited in [
+            "DO_NOT_PERSIST_PROMPT",
+            "hello world",
+            "synthetic-secret",
+            "raw_frame",
+            "tool_body",
+            "<think>",
+        ] {
+            assert!(
+                !serialized.contains(prohibited),
+                "trace leaked {prohibited}"
+            );
+        }
+    }
+
+    let reopened = RuntimeDriver::open(
+        project.path(),
+        binding(),
+        MockProvider {
+            runs: VecDeque::new(),
+        },
+        DriverIds::new("safe-trace-reopen", 3_000),
+    )
+    .expect("reopened driver");
+    assert_eq!(reopened.active_trace_entries(), expected);
 }
 
 #[test]
@@ -187,6 +244,20 @@ fn clap_routes_all_phase_two_and_later_maintenance_commands() {
 }
 
 #[test]
+fn empty_cli_arguments_select_the_default_chat_route() {
+    let project = tempfile::tempdir().expect("temporary project");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_minimax-cli"))
+        .current_dir(project.path())
+        .env_remove("MINIMAX_API_KEY")
+        .output()
+        .expect("default chat route");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).expect("stderr UTF-8");
+    assert!(stderr.contains("MINIMAX_API_KEY"), "{stderr}");
+    assert!(!stderr.contains("Usage:"), "{stderr}");
+}
+
+#[test]
 fn doctor_is_actionable_and_never_serializes_secret_material() {
     let project = tempfile::tempdir().expect("temporary project");
     let environment = BTreeMap::new();
@@ -207,6 +278,10 @@ fn doctor_is_actionable_and_never_serializes_secret_material() {
     assert!(json.contains("credentialSource\":\"environment"));
     assert!(!json.contains("DO_NOT_PERSIST_SECRET"));
     assert!(!json.contains("api.minimax.io"));
+    assert!(
+        !project.path().join(".minimax").exists(),
+        "doctor must not initialize or repair runtime state"
+    );
 
     let missing = inspect(
         project.path(),
@@ -215,6 +290,22 @@ fn doctor_is_actionable_and_never_serializes_secret_material() {
         true,
     );
     assert!(!missing.healthy);
+}
+
+#[test]
+fn missing_credential_error_names_the_environment_key_and_doctor() {
+    let project = tempfile::tempdir().expect("temporary project");
+    let output = std::process::Command::new(env!("CARGO_BIN_EXE_minimax-cli"))
+        .args(["chat", "--prompt", "hello", "--project"])
+        .arg(project.path())
+        .env_remove("MINIMAX_API_KEY")
+        .output()
+        .expect("Rust CLI credential guidance");
+    assert_eq!(output.status.code(), Some(2));
+    let stderr = String::from_utf8(output.stderr).expect("stderr UTF-8");
+    assert!(stderr.contains("MINIMAX_API_KEY"), "{stderr}");
+    assert!(stderr.contains("minimax-codex doctor"), "{stderr}");
+    assert!(!stderr.contains("synthetic-secret"));
 }
 
 #[test]

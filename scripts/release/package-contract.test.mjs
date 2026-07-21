@@ -42,9 +42,10 @@ const HASHES = Object.freeze({
   npm: "f".repeat(64)
 });
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "../..");
+const CURRENT_VERSION = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8")).version;
 
 test("universal npm archive has one exact two-platform allowlist", () => {
-  const actual = expectedUniversalNpmEntries("0.1.0");
+  const actual = expectedUniversalNpmEntries(CURRENT_VERSION);
   const directories = [
     "package/",
     "package/bin/",
@@ -72,9 +73,9 @@ test("universal npm archive has one exact two-platform allowlist", () => {
 
 test("published package metadata excludes install-time code and dependencies", () => {
   const healthy = healthySourcePackage();
-  assert.deepEqual(createPublishedPackageJson(healthy, "0.1.0"), {
+  assert.deepEqual(createPublishedPackageJson(healthy, CURRENT_VERSION), {
     name: "minimax-codex",
-    version: "0.1.0",
+    version: CURRENT_VERSION,
     description: "A Codex-style interactive CLI shell for MiniMax.",
     license: "MIT OR Apache-2.0",
     type: "module",
@@ -90,7 +91,7 @@ test("published package metadata excludes install-time code and dependencies", (
     const candidate = structuredClone(healthy);
     candidate.scripts[lifecycle] = "node install.js";
     assertContractError(
-      () => createPublishedPackageJson(candidate, "0.1.0"),
+      () => createPublishedPackageJson(candidate, CURRENT_VERSION),
       "PACKAGE_METADATA_FORBIDDEN",
       lifecycle
     );
@@ -105,13 +106,13 @@ test("published package metadata excludes install-time code and dependencies", (
     const candidate = structuredClone(healthy);
     candidate[field] = field === "bundledDependencies" ? [] : {};
     assertContractError(
-      () => createPublishedPackageJson(candidate, "0.1.0"),
+      () => createPublishedPackageJson(candidate, CURRENT_VERSION),
       "PACKAGE_METADATA_FORBIDDEN",
       field
     );
   }
   for (const [label, mutate] of [
-    ["version drift", (value) => value.version = "0.1.1"],
+    ["version drift", (value) => value.version = "9.9.9"],
     ["license drift", (value) => value.license = "MIT"],
     ["repository drift", (value) => value.repository.url = "https://example.invalid/repo.git"],
     ["private access", (value) => value.publishConfig.access = "restricted"]
@@ -119,7 +120,7 @@ test("published package metadata excludes install-time code and dependencies", (
     const candidate = structuredClone(healthy);
     mutate(candidate);
     assertContractError(
-      () => createPublishedPackageJson(candidate, "0.1.0"),
+      () => createPublishedPackageJson(candidate, CURRENT_VERSION),
       "PACKAGE_METADATA_IDENTITY",
       label
     );
@@ -281,7 +282,7 @@ test("package assembly is byte-identical and emits one strict external manifest"
     const host = /^host:\s*(.+)$/mu.exec(rustc.stdout)?.[1]?.trim();
     const target = contract.targets.find((candidate) => candidate.rustcHost === host);
     assert.ok(target, `unsupported test rustc host: ${host}`);
-    const base = `minimax-codex-v0.1.0-${target.id}`;
+    const base = `minimax-codex-v${CURRENT_VERSION}-${target.id}`;
     const manifestName = `${base}-RELEASE-MANIFEST.json`;
     const expectedFiles = [
       `${base}.tar.gz`,
@@ -348,14 +349,14 @@ test("universal packager consumes exactly one verified hosted artifact per OS", 
         schemaVersion: 1,
         mode: "universal-npm",
         productFingerprint: currentProduct.fingerprint,
-        version: "0.1.0"
+        version: CURRENT_VERSION
       }
     );
 
     const expectedFiles = [
-      "minimax-codex-0.1.0.tgz",
-      "minimax-codex-0.1.0.tgz.sha256",
-      "minimax-codex-v0.1.0-NPM-MANIFEST.json"
+      `minimax-codex-${CURRENT_VERSION}.tgz`,
+      `minimax-codex-${CURRENT_VERSION}.tgz.sha256`,
+      `minimax-codex-v${CURRENT_VERSION}-NPM-MANIFEST.json`
     ];
     assert.deepEqual(readdirSync(firstOutput).sort(), expectedFiles);
     assert.deepEqual(readdirSync(secondOutput).sort(), expectedFiles);
@@ -367,15 +368,15 @@ test("universal packager consumes exactly one verified hosted artifact per OS", 
       );
     }
     const manifest = JSON.parse(
-      readFileSync(resolve(firstOutput, "minimax-codex-v0.1.0-NPM-MANIFEST.json"), "utf8")
+      readFileSync(resolve(firstOutput, `minimax-codex-v${CURRENT_VERSION}-NPM-MANIFEST.json`), "utf8")
     );
     validateUniversalNpmCandidate({
       manifest,
       contract: loadTargetContract(),
       thresholds: loadReleaseThresholds(),
       expectedProduct: currentProduct,
-      archiveBytes: readFileSync(resolve(firstOutput, "minimax-codex-0.1.0.tgz")),
-      checksumBytes: readFileSync(resolve(firstOutput, "minimax-codex-0.1.0.tgz.sha256"))
+      archiveBytes: readFileSync(resolve(firstOutput, `minimax-codex-${CURRENT_VERSION}.tgz`)),
+      checksumBytes: readFileSync(resolve(firstOutput, `minimax-codex-${CURRENT_VERSION}.tgz.sha256`))
     });
   } finally {
     rmSync(workspace, {recursive: true, force: true});
@@ -415,7 +416,7 @@ test("universal packager rejects unsafe and mismatched inputs before output", as
         "utf8"
       );
     }, "E_FINGERPRINT_STALE"],
-    ["version mismatch", (fixture) => fixture.args[fixture.args.length - 1] = "0.1.1", "UNIVERSAL_INPUT_VERSION"],
+    ["version mismatch", (fixture) => fixture.args[fixture.args.length - 1] = "9.9.9", "UNIVERSAL_INPUT_VERSION"],
     ["wrong Windows binary magic", (fixture) => {
       rmSync(fixture.windowsArtifacts, {recursive: true, force: true});
       writeArtifactCandidateDirectory(
@@ -445,7 +446,7 @@ test("universal packager rejects unsafe and mismatched inputs before output", as
     }, "UNIVERSAL_OUTPUT_NOT_EMPTY"],
     ["pre-existing archive output", (fixture) => {
       mkdirSync(fixture.output, {recursive: true});
-      writeFileSync(resolve(fixture.output, "minimax-codex-0.1.0.tgz"), "occupied\n", "utf8");
+      writeFileSync(resolve(fixture.output, `minimax-codex-${CURRENT_VERSION}.tgz`), "occupied\n", "utf8");
     }, "UNIVERSAL_OUTPUT_EXISTS"],
     ["unknown argument", (fixture) => fixture.args.push("--surprise", "value"), "invalid package argument"]
   ]) {
@@ -622,7 +623,7 @@ test("release CLIs require one explicit current fingerprint and bind artifacts t
 function healthySourcePackage() {
   return {
     name: "minimax-codex",
-    version: "0.1.0",
+    version: CURRENT_VERSION,
     description: "A Codex-style interactive CLI shell for MiniMax.",
     license: "MIT OR Apache-2.0",
     type: "module",
@@ -640,7 +641,7 @@ function healthySourcePackage() {
 function healthyUniversalCandidate() {
   const contract = loadTargetContract();
   const thresholds = loadReleaseThresholds();
-  const version = "0.1.0";
+  const version = CURRENT_VERSION;
   const linuxBytes = Buffer.concat([
     Buffer.from([0x7f, 0x45, 0x4c, 0x46]),
     Buffer.from("synthetic-linux-binary\n", "utf8")
@@ -774,7 +775,7 @@ function renameUniversalEntry(candidate, path, renamed) {
 
 function healthyManifest(contract) {
   const target = contract.targets[0];
-  const version = "0.1.0";
+  const version = CURRENT_VERSION;
   const nativeEntries = evidenceEntries(expectedArchiveEntries(target, version, "native"));
   const npmEntries = evidenceEntries(expectedArchiveEntries(target, version, "npm"));
   setContentEvidence(nativeEntries, `minimax-codex-v${version}-${target.id}/${target.binaryName}`, HASHES.binary, 1024);
@@ -844,7 +845,7 @@ function healthyArtifactCandidate(
   const contract = loadTargetContract();
   const target = contract.targets.find((candidate) => candidate.id === targetId);
   assert.ok(target, `unknown artifact test target ${targetId}`);
-  const version = "0.1.0";
+  const version = CURRENT_VERSION;
   const nativePrefix = `minimax-codex-v${version}-${target.id}/`;
   const overrides = binaryOverride ? new Map([[target.binaryName, binaryOverride]]) : new Map();
   const nativeEntries = materializeTestEntries(
@@ -1098,7 +1099,7 @@ function runUniversalPackage(windowsArtifacts, linuxArtifacts, output, fingerpri
     "--linux-artifacts", linuxArtifacts,
     "--output", output,
     "--fingerprint-file", fingerprintFile,
-    "--version", "0.1.0"
+    "--version", CURRENT_VERSION
   ]);
   assert.equal(result.status, 0, result.stderr || result.stdout);
   return result;
@@ -1134,7 +1135,7 @@ function setupUniversalPackageInputs() {
       "--linux-artifacts", linuxArtifacts,
       "--output", output,
       "--fingerprint-file", fingerprintFile,
-      "--version", "0.1.0"
+      "--version", CURRENT_VERSION
     ]
   };
 }

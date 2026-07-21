@@ -7,7 +7,7 @@ use minimax_protocol::{SessionId, SessionStatus};
 use serde::{Deserialize, Serialize};
 
 use super::RuntimeStoreError;
-use super::journal::{MAX_RECORD_BYTES, RuntimeJournal};
+use super::journal::{JournalSnapshot, MAX_RECORD_BYTES, RuntimeJournal};
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
@@ -31,6 +31,44 @@ struct IndexSession {
 pub(crate) struct RuntimeIndex;
 
 impl RuntimeIndex {
+    pub(crate) fn inspect_read_only(
+        runtime_dir: &Path,
+        journal: &JournalSnapshot,
+        machine: &SessionMachine,
+    ) -> Result<(), RuntimeStoreError> {
+        let index_dir = runtime_dir.join("indexes");
+        let expected = RuntimeIndexV1::from_snapshot(journal, machine)?;
+        let mut matched = false;
+        for entry in read_dir(&index_dir).map_err(|_| RuntimeStoreError::IndexConflict)? {
+            let path = entry.map_err(|_| RuntimeStoreError::IndexConflict)?.path();
+            if path.extension().and_then(|value| value.to_str()) != Some("json") {
+                continue;
+            }
+            let bytes = std::fs::read(&path).map_err(|_| RuntimeStoreError::Io)?;
+            if bytes.len() > MAX_RECORD_BYTES {
+                return Err(RuntimeStoreError::IndexTooLarge);
+            }
+            let existing: RuntimeIndexV1 =
+                serde_json::from_slice(&bytes).map_err(|_| RuntimeStoreError::IndexConflict)?;
+            if existing.schema_version != 1 {
+                return Err(RuntimeStoreError::IndexConflict);
+            }
+            if existing.journal_len == expected.journal_len
+                && existing.record_count == expected.record_count
+            {
+                if existing != expected {
+                    return Err(RuntimeStoreError::IndexConflict);
+                }
+                matched = true;
+            }
+        }
+        if matched {
+            Ok(())
+        } else {
+            Err(RuntimeStoreError::IndexConflict)
+        }
+    }
+
     pub(crate) fn ensure(
         runtime_dir: &Path,
         journal: &RuntimeJournal,
@@ -117,25 +155,41 @@ impl RuntimeIndexV1 {
         journal: &RuntimeJournal,
         machine: &SessionMachine,
     ) -> Result<Self, RuntimeStoreError> {
-        let sessions = machine
-            .sessions()
-            .values()
-            .map(|session| {
-                Ok(IndexSession {
-                    session_id: session.session_id.clone(),
-                    status: session.status,
-                    updated_at_unix_ms: session.updated_at_unix_ms,
-                    turn_count: u64::try_from(session.turns.len())
-                        .map_err(|_| RuntimeStoreError::IndexTooLarge)?,
-                })
-            })
-            .collect::<Result<Vec<_>, RuntimeStoreError>>()?;
         Ok(Self {
             schema_version: 1,
             journal_len: journal.len(),
             record_count: journal.record_count(),
             journal_hash: format!("{:016x}", journal.hash()),
-            sessions,
+            sessions: index_sessions(machine)?,
         })
     }
+
+    fn from_snapshot(
+        journal: &JournalSnapshot,
+        machine: &SessionMachine,
+    ) -> Result<Self, RuntimeStoreError> {
+        Ok(Self {
+            schema_version: 1,
+            journal_len: journal.len,
+            record_count: journal.record_count,
+            journal_hash: format!("{:016x}", journal.hash),
+            sessions: index_sessions(machine)?,
+        })
+    }
+}
+
+fn index_sessions(machine: &SessionMachine) -> Result<Vec<IndexSession>, RuntimeStoreError> {
+    machine
+        .sessions()
+        .values()
+        .map(|session| {
+            Ok(IndexSession {
+                session_id: session.session_id.clone(),
+                status: session.status,
+                updated_at_unix_ms: session.updated_at_unix_ms,
+                turn_count: u64::try_from(session.turns.len())
+                    .map_err(|_| RuntimeStoreError::IndexTooLarge)?,
+            })
+        })
+        .collect()
 }

@@ -8,6 +8,8 @@ use minimax_protocol::{
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::reasoning_filter::ChatReasoningFilter;
+
 /// Final compatibility events compared with the language-neutral fixtures.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -186,11 +188,20 @@ pub fn replay_fixture<'a>(
     let mut stream_events = Vec::new();
     let mut compatibility_events = Vec::new();
     let mut tools = ToolAccumulator::default();
+    let mut reasoning = ChatReasoningFilter::default();
 
     for raw in raw_events {
         let parsed = match protocol {
             ProviderProtocolKind::Responses => parse_responses_event(raw)?,
             ProviderProtocolKind::ChatCompletions => parse_chat_completions_event(raw)?,
+        };
+        let parsed = if protocol == ProviderProtocolKind::ChatCompletions {
+            parsed
+                .into_iter()
+                .flat_map(|event| reasoning.accept(event))
+                .collect()
+        } else {
+            parsed
         };
         for event in parsed {
             if !matches!(event, StreamEvent::ToolCallFragments { .. }) {

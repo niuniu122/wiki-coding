@@ -43,6 +43,8 @@ impl MockProvider {
 }
 
 impl ProviderPort for MockProvider {
+    fn rebind(&mut self, _binding: &ModelBinding) {}
+
     fn stream<'a>(
         &'a mut self,
         _request: &'a minimax_protocol::TurnRequest,

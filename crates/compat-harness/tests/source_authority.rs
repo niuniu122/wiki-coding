@@ -506,7 +506,7 @@ fn package_publication_metadata_is_exact_and_dependency_free() {
             "workspace version drift",
             |repository: &SyntheticRepository| {
                 repository.mutate_package(|package| {
-                    package["version"] = Value::String("0.1.1".into());
+                    package["version"] = Value::String("9.9.9".into());
                 });
             },
         ),

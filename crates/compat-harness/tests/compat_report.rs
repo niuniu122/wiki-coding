@@ -688,7 +688,7 @@ fn synthetic_hosted_job(
         )
     };
     let native = serde_json::json!({
-        "installedVersionOutput": "minimax-codex-rust 0.1.0",
+        "installedVersionOutput": format!("minimax-codex-rust {}", env!("CARGO_PKG_VERSION")),
         "packagedBinarySha256": binary_hash,
         "capabilityStatusSmoke": true,
         "capabilityStatusOutputSha256": "7".repeat(64),

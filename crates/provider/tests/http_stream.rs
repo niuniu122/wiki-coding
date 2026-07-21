@@ -141,6 +141,61 @@ async fn responses_and_chat_completions_converge_on_safe_stream_events() {
 }
 
 #[tokio::test]
+async fn chat_content_think_blocks_never_become_visible_or_persistable_events() {
+    let cases = [
+        concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"<think>PRIVATE_REASONING</think>visible\"}}]}\n\n",
+            "data: [DONE]\n\n"
+        ),
+        concat!(
+            "data: {\"choices\":[{\"delta\":{\"content\":\"prefix<th\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"ink>PRIVATE\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"_REASONING</thi\"}}]}\n\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"nk>suffix\"}}]}\n\n",
+            "data: [DONE]\n\n"
+        ),
+    ];
+
+    for (index, body) in cases.into_iter().enumerate() {
+        let (endpoint, _) =
+            fixture_server(200, vec![body.as_bytes().to_vec()], Duration::ZERO).await;
+        let client =
+            HttpProviderClient::new(&endpoint, Some(Duration::from_secs(2))).expect("valid client");
+        let events = client
+            .stream_collect(
+                &request(ProviderProtocolKind::ChatCompletions),
+                &secret(),
+                &CancellationToken::new(),
+            )
+            .await
+            .expect("fixture stream should complete");
+        let visible = events
+            .iter()
+            .filter_map(|event| match event {
+                StreamEvent::VisibleTextDelta { delta } => Some(delta.as_str()),
+                _ => None,
+            })
+            .collect::<String>();
+        let expected = if index == 0 {
+            "visible"
+        } else {
+            "prefixsuffix"
+        };
+        assert_eq!(visible, expected);
+        assert!(
+            events
+                .iter()
+                .any(|event| matches!(event, StreamEvent::ReasoningFiltered))
+        );
+
+        let serialized = serde_json::to_string(&events).expect("events serialize");
+        assert!(!serialized.contains("PRIVATE_REASONING"));
+        assert!(!serialized.contains("<think>"));
+        assert!(!serialized.contains("</think>"));
+    }
+}
+
+#[tokio::test]
 async fn caller_cancellation_and_deadline_are_distinct() {
     let cancellation = CancellationToken::new();
     cancellation.cancel();

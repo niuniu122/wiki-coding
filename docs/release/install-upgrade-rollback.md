@@ -50,6 +50,31 @@ The installed `minimax-codex` command launches only the fixed sibling
 performs no shell invocation, `PATH` search, override lookup, fallback, or
 download.
 
+## Configure the MiniMax credential and start chat
+
+Set the credential for the current terminal session, verify the environment,
+and launch chat without a subcommand.
+
+PowerShell:
+
+```powershell
+$env:MINIMAX_API_KEY = "<your-key>"
+minimax-codex doctor
+minimax-codex
+```
+
+POSIX shell:
+
+```bash
+export MINIMAX_API_KEY="<your-key>"
+minimax-codex doctor
+minimax-codex
+```
+
+The CLI reads `MINIMAX_API_KEY` at startup and never copies its value into
+project configuration, runtime journals, traces, or Vault evidence. `/api`
+prints setup commands with a placeholder and never accepts or echoes the key.
+
 ## Project-local installation
 
 Install the CLI as a development dependency when a project needs a pinned
@@ -74,7 +99,7 @@ For an offline install, first download the release tarball and `.sha256`
 sidecar on a connected machine, verify them, then install the exact file:
 
 ```bash
-npm install --global --ignore-scripts ./minimax-codex-0.1.0.tgz
+npm install --global --ignore-scripts ./minimax-codex-0.1.1.tgz
 ```
 
 The universal tarball still supports only Windows x64 and Linux x64.
@@ -203,7 +228,7 @@ changed targets manually and preserve the receipt as audit evidence.
 ## Migration fixture support window
 
 Static TypeScript-era migration fixtures are retained by a machine-checkable
-release-count rule, not a day count. Cutover release `3.0.0` must be followed by
+release-count rule, not a day count. Cutover release `0.1.0` must be followed by
 at least two distinct, ordered public releases recorded in
 `fixtures/compat/migration/typescript-v1/support-window.v1.json` before fixture
 removal can become eligible. The current source data remains immutable during

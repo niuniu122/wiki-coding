@@ -1,4 +1,4 @@
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 use std::fmt;
 use std::future::Future;
 use std::io::Write as _;
@@ -11,17 +11,17 @@ use minimax_core::{
     AgentBudget, ApprovalPort, CancellationFuture, CancellationPort, CompactionBudget,
     CompactionError, InvocationEffect, InvocationError, InvocationInput, InvocationMachine,
     InvocationRegistry, InvocationState, LocalCompactor, PermissionMode, RunEffect, RunInput,
-    RunMachine, RunState, SessionCommand, SessionEffect, SessionSummary, ToolPort,
-    WikiGenerationError, WikiGenerationFuture, WikiGenerationOutput, WikiGenerationPort,
-    WikiGenerationRequest,
+    RunMachine, RunState, SafeTraceFact, SafeTraceRecorder, SessionCommand, SessionEffect,
+    SessionSummary, ToolPort, WikiGenerationError, WikiGenerationFuture, WikiGenerationOutput,
+    WikiGenerationPort, WikiGenerationRequest,
 };
 use minimax_protocol::{
     AgentLimits, AssistantToolCallBatch, CompactionId, CompactionRecord, ConversationItem,
     JournalRecord, MessageRole, ModelBinding, ModelMessage, OutputSettings, RecordId, RequestId,
     RuntimeErrorCode, RuntimeEvent, RuntimeEventV1, RuntimeFailure, SchemaVersion, SessionId,
     SessionRecord, SessionRecordV1, StreamEvent, TerminalOutcome, ToolDecision, ToolDecisionKind,
-    ToolDefinition, ToolInvocation, ToolResult, ToolResultMessage, ToolTerminalStatus, TurnId,
-    TurnReceipt, TurnRequest, Usage,
+    ToolDefinition, ToolInvocation, ToolResult, ToolResultMessage, ToolTerminalStatus, TraceCode,
+    TraceEntry, TurnId, TurnReceipt, TurnRequest, Usage,
 };
 use minimax_provider::{HttpProviderClient, ResolvedCredential};
 use minimax_tools::BuiltinToolPort;
@@ -33,6 +33,8 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 pub trait ProviderPort {
+    fn rebind(&mut self, binding: &ModelBinding);
+
     fn stream<'a>(
         &'a mut self,
         request: &'a TurnRequest,
@@ -60,9 +62,18 @@ impl HttpProviderPort {
             binding,
         }
     }
+
+    #[must_use]
+    pub const fn binding(&self) -> &ModelBinding {
+        &self.binding
+    }
 }
 
 impl ProviderPort for HttpProviderPort {
+    fn rebind(&mut self, binding: &ModelBinding) {
+        self.binding.clone_from(binding);
+    }
+
     fn stream<'a>(
         &'a mut self,
         request: &'a TurnRequest,
@@ -527,6 +538,10 @@ impl<P: ProviderPort> RuntimeDriver<P> {
         if driver.store.machine().active_session().is_none() || active_is_finalized {
             driver.create_session(binding)?;
         }
+        let active_binding = driver
+            .active_binding()
+            .ok_or(DriverError::Runtime(RuntimeErrorCode::Recovery))?;
+        driver.provider.rebind(&active_binding);
         Ok(driver)
     }
 
@@ -555,6 +570,24 @@ impl<P: ProviderPort> RuntimeDriver<P> {
     #[must_use]
     pub fn session(&self, session_id: &SessionId) -> Option<SessionRecord> {
         self.store.machine().sessions().get(session_id).cloned()
+    }
+
+    #[must_use]
+    pub fn active_binding(&self) -> Option<ModelBinding> {
+        self.store
+            .machine()
+            .active_session()
+            .map(|session| session.binding.clone())
+    }
+
+    #[must_use]
+    pub fn active_trace_entries(&self) -> Vec<TraceEntry> {
+        self.store
+            .machine()
+            .active_session()
+            .map_or_else(Vec::new, |session| {
+                self.store.trace_entries(&session.session_id)
+            })
     }
 
     #[must_use]
@@ -591,9 +624,10 @@ impl<P: ProviderPort> RuntimeDriver<P> {
         self.store.apply_command(SessionCommand::Create {
             record_id,
             session_id: session_id.clone(),
-            binding,
+            binding: binding.clone(),
             now_unix_ms,
         })?;
+        self.provider.rebind(&binding);
         Ok(session_id)
     }
 
@@ -616,6 +650,10 @@ impl<P: ProviderPort> RuntimeDriver<P> {
             session_id,
             now_unix_ms,
         })?;
+        let binding = self
+            .active_binding()
+            .ok_or(DriverError::Runtime(RuntimeErrorCode::Recovery))?;
+        self.provider.rebind(&binding);
         Ok(())
     }
 
@@ -732,6 +770,29 @@ impl<P: ProviderPort> RuntimeDriver<P> {
             },
         );
         self.store.append(envelope)?;
+        record_trace(
+            &mut self.store,
+            &mut self.ids,
+            TraceCode::CompactionCompleted,
+            BTreeMap::from([
+                (
+                    "compaction_id".to_owned(),
+                    SafeTraceFact::String(compaction.compaction_id.as_str().to_owned()),
+                ),
+                (
+                    "covered_through_turn_id".to_owned(),
+                    SafeTraceFact::String(compaction.covered_through_turn_id.as_str().to_owned()),
+                ),
+                (
+                    "before_tokens".to_owned(),
+                    SafeTraceFact::U64(compaction.before_estimated_tokens),
+                ),
+                (
+                    "after_tokens".to_owned(),
+                    SafeTraceFact::U64(compaction.after_estimated_tokens),
+                ),
+            ]),
+        )?;
         Ok(compaction)
     }
 
@@ -1065,12 +1126,17 @@ impl<P: ProviderPort> RuntimeDriver<P> {
         };
         let provider_future = self.provider.stream(request, run_cancellation, &mut emit);
         tokio::pin!(provider_future);
+        let mut provider_observed = false;
 
         let provider_result = loop {
             tokio::select! {
                 event = receiver.recv() => {
                     if let Some(event) = event
                         && matches!(machine.state(), RunState::Running { .. }) {
+                        if !provider_observed {
+                            record_provider_connected(&mut self.store, &mut self.ids, request)?;
+                            provider_observed = true;
+                        }
                         apply_runtime_input(
                             &mut self.store,
                             &mut self.ids,
@@ -1090,6 +1156,10 @@ impl<P: ProviderPort> RuntimeDriver<P> {
         while let Ok(event) = receiver.try_recv() {
             if !matches!(machine.state(), RunState::Running { .. }) {
                 break;
+            }
+            if !provider_observed {
+                record_provider_connected(&mut self.store, &mut self.ids, request)?;
+                provider_observed = true;
             }
             apply_runtime_input(
                 &mut self.store,
@@ -1153,6 +1223,17 @@ fn apply_runtime_input(
     for effect in effects {
         match effect {
             RunEffect::Persist(event) => match &event.event {
+                RuntimeEvent::TurnStarted { turn_id, .. } => {
+                    record_trace(
+                        store,
+                        ids,
+                        TraceCode::TurnStarted,
+                        BTreeMap::from([(
+                            "turn_id".to_owned(),
+                            SafeTraceFact::String(turn_id.as_str().to_owned()),
+                        )]),
+                    )?;
+                }
                 RuntimeEvent::VisibleTextDelta { delta } => {
                     let turn_id = running_turn_id(store)?;
                     store.apply_command(SessionCommand::RecordDelta {
@@ -1163,7 +1244,63 @@ fn apply_runtime_input(
                     })?;
                     assistant.push_str(delta);
                 }
-                RuntimeEvent::Terminal { .. } => {
+                RuntimeEvent::Terminal { outcome } => {
+                    match outcome {
+                        minimax_protocol::RuntimeTerminalOutcome::Failed { failure } => {
+                            let session = store
+                                .machine()
+                                .active_session()
+                                .ok_or(DriverError::Runtime(RuntimeErrorCode::Recovery))?;
+                            let turn = session
+                                .turns
+                                .last()
+                                .ok_or(DriverError::Runtime(RuntimeErrorCode::Recovery))?;
+                            let mut facts = BTreeMap::from([
+                                (
+                                    "provider_id".to_owned(),
+                                    SafeTraceFact::String(
+                                        session.binding.provider_id.as_str().to_owned(),
+                                    ),
+                                ),
+                                (
+                                    "kind".to_owned(),
+                                    SafeTraceFact::String(format!("{:?}", failure.code)),
+                                ),
+                                (
+                                    "request_id".to_owned(),
+                                    SafeTraceFact::String(turn.request_id.as_str().to_owned()),
+                                ),
+                            ]);
+                            if let Some(status) = failure.http_status {
+                                facts.insert(
+                                    "status".to_owned(),
+                                    SafeTraceFact::U64(u64::from(status)),
+                                );
+                            }
+                            record_trace(store, ids, TraceCode::ProviderFailed, facts)?;
+                        }
+                        minimax_protocol::RuntimeTerminalOutcome::Interrupted => {
+                            record_trace(
+                                store,
+                                ids,
+                                TraceCode::TurnInterrupted,
+                                BTreeMap::from([
+                                    (
+                                        "turn_id".to_owned(),
+                                        SafeTraceFact::String(
+                                            running_turn_id(store)?.as_str().to_owned(),
+                                        ),
+                                    ),
+                                    (
+                                        "had_assistant_draft".to_owned(),
+                                        SafeTraceFact::Bool(!assistant.is_empty()),
+                                    ),
+                                ]),
+                            )?;
+                        }
+                        minimax_protocol::RuntimeTerminalOutcome::Completed
+                        | minimax_protocol::RuntimeTerminalOutcome::Stopped => {}
+                    }
                     let receipt = receipt
                         .clone()
                         .ok_or(DriverError::Runtime(RuntimeErrorCode::Recovery))?;
@@ -1174,8 +1311,7 @@ fn apply_runtime_input(
                         now_unix_ms: ids.now_unix_ms(),
                     })?;
                 }
-                RuntimeEvent::TurnStarted { .. }
-                | RuntimeEvent::ReasoningFiltered
+                RuntimeEvent::ReasoningFiltered
                 | RuntimeEvent::ToolCallObserved { .. }
                 | RuntimeEvent::Usage { .. }
                 | RuntimeEvent::Diagnostic { .. } => {}
@@ -1188,6 +1324,51 @@ fn apply_runtime_input(
             RunEffect::AbortProvider => cancellation.cancel(),
         }
     }
+    Ok(())
+}
+
+fn record_provider_connected(
+    store: &mut RuntimeStore,
+    ids: &mut DriverIds,
+    request: &TurnRequest,
+) -> Result<(), DriverError> {
+    record_trace(
+        store,
+        ids,
+        TraceCode::ProviderConnected,
+        BTreeMap::from([
+            (
+                "provider_id".to_owned(),
+                SafeTraceFact::String(request.provider_id.as_str().to_owned()),
+            ),
+            (
+                "protocol".to_owned(),
+                SafeTraceFact::String(format!("{:?}", request.protocol)),
+            ),
+            (
+                "model".to_owned(),
+                SafeTraceFact::String(request.model_id.as_str().to_owned()),
+            ),
+        ]),
+    )
+}
+
+fn record_trace(
+    store: &mut RuntimeStore,
+    ids: &mut DriverIds,
+    code: TraceCode,
+    facts: BTreeMap<String, SafeTraceFact>,
+) -> Result<(), DriverError> {
+    let session_id = store
+        .machine()
+        .active_session()
+        .map(|session| session.session_id.clone())
+        .ok_or(DriverError::Runtime(RuntimeErrorCode::Recovery))?;
+    let entry = SafeTraceRecorder::record(ids.now_unix_ms(), code, facts);
+    store.append(SessionRecordV1::new(
+        ids.record_id()?,
+        JournalRecord::TraceStored { session_id, entry },
+    ))?;
     Ok(())
 }
 

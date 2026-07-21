@@ -1,6 +1,6 @@
 {
   "name": "minimax-codex",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A Codex-style interactive CLI shell for MiniMax.",
   "license": "MIT OR Apache-2.0",
   "repository": {

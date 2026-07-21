@@ -12,7 +12,9 @@ use reqwest::redirect::Policy;
 use secrecy::{ExposeSecret as _, SecretString};
 use tokio_util::sync::CancellationToken;
 
-use crate::{ChatCompletionsAdapter, ResponsesAdapter, SseDecoder};
+use crate::{
+    ChatCompletionsAdapter, ResponsesAdapter, SseDecoder, reasoning_filter::ChatReasoningFilter,
+};
 
 const DEFAULT_TIMEOUT: Duration = Duration::from_secs(300);
 
@@ -97,6 +99,7 @@ impl HttpProviderClient {
         let mut decoder = SseDecoder::new();
         let mut sequence = StreamSequence::new();
         let mut tools = ToolAssembler::default();
+        let mut reasoning = ChatReasoningFilter::default();
         let mut body_stream = response.bytes_stream();
         loop {
             let next = tokio::select! {
@@ -115,6 +118,7 @@ impl HttpProviderClient {
                     &frame,
                     &mut sequence,
                     &mut tools,
+                    &mut reasoning,
                     &mut publish,
                 )
                 .await?;
@@ -126,6 +130,7 @@ impl HttpProviderClient {
                 &frame,
                 &mut sequence,
                 &mut tools,
+                &mut reasoning,
                 &mut publish,
             )
             .await?;
@@ -144,6 +149,7 @@ async fn process_frame<F, Fut>(
     frame: &str,
     sequence: &mut StreamSequence,
     tools: &mut ToolAssembler,
+    reasoning: &mut ChatReasoningFilter,
     publish: &mut F,
 ) -> Result<(), RuntimeFailure>
 where
@@ -156,6 +162,15 @@ where
     }
     .map_err(RuntimeErrorCode::from)
     .map_err(RuntimeFailure::new)?;
+
+    let events = if protocol == ProviderProtocolKind::ChatCompletions {
+        events
+            .into_iter()
+            .flat_map(|event| reasoning.accept(event))
+            .collect()
+    } else {
+        events
+    };
 
     for event in events {
         if let StreamEvent::ToolCallFragments { fragments } = event {

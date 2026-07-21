@@ -8,6 +8,7 @@ mod client;
 mod config;
 mod credentials;
 mod fixture_protocol;
+mod reasoning_filter;
 mod responses;
 mod sse;
 
