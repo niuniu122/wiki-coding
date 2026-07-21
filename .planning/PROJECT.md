@@ -27,13 +27,18 @@ A non-programmer can describe a goal and safely use one local, recoverable CLI t
 
 ### Active
 
-- None — all v3.0 Rust Convergence implementation requirements are validated; milestone audit/archive remains a separate lifecycle action.
+- [ ] Shell tool definitions and execution authority are available only while the current process is in `full-access`; `confirm` rejects forged Shell calls before approval or execution.
+- [ ] Users can execute one-shot commands through the native platform shell with an optional working directory and bounded initial output.
+- [ ] Long-running and interactive commands continue as process-scoped PTY sessions that can be polled, written to, and explicitly stopped.
+- [ ] Session count, unread output, aggregate output, command, path, input, and per-result output limits fail predictably without leaking sensitive content.
+- [ ] Permission downgrade, normal exit, cancellation, and explicit stop clean up the complete child process tree without leaving background sessions.
+- [ ] Shell traces expose safe metadata only, while tests and user documentation cover Windows PowerShell and Linux shell behavior.
 
 ### Out of Scope
 
 - SQLite, SQLx, Diesel, ORM, connection pools, or an external database service — the Vault is ordinary files.
 - Automatic installation, authorization, or execution of discovered projects, Skills, or MCP servers — discovery must not grant authority.
-- A general plugin runtime, subagents, daemons, and unrestricted shell in this milestone — they widen the execution surface beyond the capability workspace.
+- A general plugin runtime, model subagents, or background daemon — those are separate execution surfaces and are not required for direct full-access Shell support.
 - Application-layer Vault encryption — transparent Markdown is intentional; OS permissions and disk encryption protect the device.
 - Bundling an embedding model in the base executable — semantic resources are separately installed and verified.
 - macOS v1 support — it follows after keyring, terminal, file replacement, and packaging tests pass.
@@ -58,6 +63,8 @@ The v1 Rust rewrite, Phase 8 subprocess hardening, Phase 9 capability workspace,
 - **Compatibility support**: TypeScript source data remains importable through Rust for at least two public releases after v3.0; fixtures remain static evidence and are not an executable legacy runtime.
 - **Authority**: Search and recommendation are read-only. A result may describe a next action but may never install, authorize, or execute it.
 - **Permissions**: Public modes are exactly `confirm` and `full-access`; hard safety gates remain in both.
+- **Shell authority**: Arbitrary Shell execution exists only in process-scoped `full-access`; `confirm` neither advertises nor executes Shell tools.
+- **Shell implementation**: Use Rust PTY/ConPTY support and native platform shells; do not add Pi, Node/TypeScript, tmux, or an external terminal runtime.
 - **Credentials**: Environment variables override OS keyring; headless systems without keyring accept env only; plaintext persistence is forbidden.
 - **Performance**: Cold start <= 500 ms excluding recovery/model load, idle RSS <= 150 MB, base compressed artifact <= 50 MB, and BM25 p95 <= 100 ms at 10k Wiki pages.
 - **Execution**: v3 planning starts from the completed Phase 9 branch; implementation proceeds in small verified slices and does not require a branch switch during planning.
@@ -87,18 +94,21 @@ The v1 Rust rewrite, Phase 8 subprocess hardening, Phase 9 capability workspace,
 | Discovered TypeScript tests are graph-preflighted before import | Retain transitional static checks while preventing direct or transitive execution of `src/eval/**` | Locked |
 | Candidate evidence precedes strict closure | Require a remotely visible pending record before the ordinary strict push run | Locked |
 | Windows MSVC builds use reproducible linking | Require `/Brepro` and exact candidate/strict artifact equality | Locked |
+| Full-access Shell uses two model tools | Keep one-shot launch separate from poll/write/stop session control | Locked |
+| Shell sessions are process-scoped PTYs | Support interactive commands while guaranteeing downgrade and shutdown cleanup | Locked |
+| Pi is design reference only | Preserve one Rust runtime and avoid a second Node/TypeScript execution authority | Locked |
 
-## Current Milestone: v3.0 Rust Convergence
+## Current Milestone: v3.1 Full Access Shell
 
-**Goal:** Make Rust the only executable product and verification authority while retaining npm as a thin, no-fallback distribution shell and preserving safe upgrades from TypeScript-era user data.
+**Goal:** Let users run arbitrary one-shot or interactive Shell commands directly in process-scoped `full-access`, with bounded output and reliable session cleanup.
 
 **Target features:**
 
-- A source/ownership gate that forbids TypeScript business logic and dual state writers.
-- Rust-native tests and deterministic retrieval/Provider evaluations replacing TypeScript verification authority.
-- A fixture-driven compatibility harness and Rust migration support that no longer execute `dist/cli.js`.
-- An npm package whose only runtime path launches the supported platform Rust binary with clear fail-closed errors.
-- Final removal of `.ts/.tsx`, legacy CLI/build dependencies, and TypeScript CI jobs after all replacement gates pass.
+- `shell_command` for native-shell one-shot execution that yields a session when work continues.
+- `shell_session` for incremental polling, stdin writes, and explicit stop.
+- Windows ConPTY with PowerShell and Linux PTY with the configured absolute shell plus safe fallbacks.
+- Full-access-only schemas and execution preflight, with no per-command confirmation.
+- Fixed per-session and aggregate resource bounds, safe trace metadata, process-tree cleanup, TUI status, documentation, and cross-platform verification.
 
 ## Evolution
 
@@ -116,4 +126,4 @@ This document evolves at phase transitions and milestone boundaries.
 3. Update context with shipped behavior and evaluation evidence.
 
 ---
-*Last updated: 2026-07-18 after Phase 14 completed Rust-only removal, documentation, and hosted Windows/Linux closure*
+*Last updated: 2026-07-21 when milestone v3.1 Full Access Shell started*
