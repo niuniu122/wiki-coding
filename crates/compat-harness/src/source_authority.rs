@@ -468,11 +468,44 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
     }
     let native_pty_name = "- name: Run native PTY Shell integration";
     let native_pty_command = "cargo test -p minimax-tools --test shell_pty --locked -- --nocapture";
-    let native_pty_step = format!("{native_pty_name}\n        run: {native_pty_command}");
-    if normalized.matches(native_pty_name).count() != 1
-        || normalized.matches(native_pty_command).count() != 1
-        || !normalized.contains(&native_pty_step)
-    {
+    let native_pty_headers = lines
+        .iter()
+        .enumerate()
+        .filter(|(_, line)| line.trim() == native_pty_name)
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    let [native_pty_start] = native_pty_headers.as_slice() else {
+        return violation("CI must run native PTY Shell integration on every hosted platform");
+    };
+    let native_pty_indent = lines[*native_pty_start]
+        .len()
+        .saturating_sub(lines[*native_pty_start].trim_start().len());
+    let native_pty_end = lines
+        .iter()
+        .enumerate()
+        .skip(*native_pty_start + 1)
+        .find(|(_, line)| {
+            let trimmed = line.trim_start();
+            !trimmed.is_empty() && line.len().saturating_sub(trimmed.len()) <= native_pty_indent
+        })
+        .map_or(lines.len(), |(index, _)| index);
+    let native_pty_step = &lines[*native_pty_start..native_pty_end];
+    let native_pty_run = format!("run: {native_pty_command}");
+    let valid_native_pty_step = native_pty_step
+        .iter()
+        .filter(|line| line.trim() == native_pty_run)
+        .count()
+        == 1
+        && lines
+            .iter()
+            .filter(|line| line.trim() == native_pty_run)
+            .count()
+            == 1
+        && !native_pty_step.iter().any(|line| {
+            let line = line.trim_start();
+            line.starts_with("if:") || line.starts_with("continue-on-error:")
+        });
+    if !valid_native_pty_step {
         return violation("CI must run native PTY Shell integration on every hosted platform");
     }
     if normalized.contains("continue-on-error:") {

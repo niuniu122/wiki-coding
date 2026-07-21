@@ -53,6 +53,10 @@ impl ReaderSpawner for SystemReaderSpawner {
 pub type PtyTerminateFuture<'a> = Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>>;
 
 pub trait PtyBackend: Send + Sync {
+    fn requires_cursor_handshake(&self) -> bool {
+        false
+    }
+
     fn spawn(&self, request: &ShellSpawnRequest) -> io::Result<SpawnedPty>;
     fn terminate_tree<'a>(&'a self, process_id: u32) -> PtyTerminateFuture<'a>;
 }

@@ -88,13 +88,22 @@ async fn poll_session(
     session_id: minimax_protocol::ShellSessionId,
     yield_time: Duration,
 ) -> Result<minimax_protocol::ShellReceipt, String> {
+    poll_session_with_output_limit(manager, session_id, yield_time, MAX_SHELL_OUTPUT_BYTES).await
+}
+
+async fn poll_session_with_output_limit(
+    manager: &ShellSessionManager,
+    session_id: minimax_protocol::ShellSessionId,
+    yield_time: Duration,
+    max_output_bytes: usize,
+) -> Result<minimax_protocol::ShellReceipt, String> {
     tokio::time::timeout(
         TEST_TIMEOUT,
         manager.poll(
             ShellPollRequest {
                 session_id,
                 yield_time,
-                max_output_bytes: MAX_SHELL_OUTPUT_BYTES,
+                max_output_bytes,
             },
             &NeverCancelled,
         ),
@@ -124,6 +133,27 @@ async fn settle_session(
         output.push_str(&receipt.output);
     }
     Ok((receipt, output))
+}
+
+async fn poll_until_truncated_or_terminal(
+    manager: &ShellSessionManager,
+    mut receipt: ShellReceipt,
+) -> Result<ShellReceipt, String> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+    loop {
+        if receipt.output_truncated || receipt.state != ShellSessionState::Running {
+            return Ok(receipt);
+        }
+        if tokio::time::Instant::now() >= deadline {
+            return Err(
+                "oversized output did not truncate or terminate before deadline".to_owned(),
+            );
+        }
+        tokio::task::yield_now().await;
+        receipt =
+            poll_session_with_output_limit(manager, receipt.session_id.clone(), Duration::ZERO, 1)
+                .await?;
+    }
 }
 
 async fn cleanup(manager: &ShellSessionManager) -> Result<(), String> {
@@ -373,10 +403,7 @@ async fn unread_output_over_one_mib_is_truncated_and_result_stays_bounded() {
 
     let first = start_command(&manager, oversized_output_command(), &root, Duration::ZERO).await;
     let receipt = match first {
-        Ok(first) => {
-            tokio::time::sleep(Duration::from_secs(2)).await;
-            poll_session(&manager, first.session_id, Duration::ZERO).await
-        }
+        Ok(first) => poll_until_truncated_or_terminal(&manager, first).await,
         Err(error) => Err(error),
     };
     let stopped = match receipt.as_ref() {
@@ -395,10 +422,7 @@ async fn unread_output_over_one_mib_is_truncated_and_result_stays_bounded() {
     stopped.expect("oversized output session stops");
     let receipt = receipt.expect("oversized output remains observable");
     assert!(receipt.output_truncated, "{receipt:?}");
-    assert!(
-        receipt.output.len() <= MAX_SHELL_OUTPUT_BYTES,
-        "{receipt:?}"
-    );
+    assert!(receipt.output.len() <= 49_152, "{receipt:?}");
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -693,7 +717,7 @@ fn oversized_output_command() -> &'static str {
 
 #[cfg(windows)]
 fn process_tree_command() -> &'static str {
-    "$exe = Join-Path $PSHOME 'powershell.exe'; $child = Start-Process -FilePath $exe -ArgumentList @('-NoLogo','-NoProfile','-Command','Start-Sleep -Seconds 120') -NoNewWindow -PassThru; Write-Output \"parent=$PID;child=$($child.Id)\"; Start-Sleep -Seconds 120"
+    "$exe = (Get-Process -Id $PID).Path; $child = Start-Process -FilePath $exe -ArgumentList @('-NoLogo','-NoProfile','-Command','Start-Sleep -Seconds 120') -NoNewWindow -PassThru; Write-Output \"parent=$PID;child=$($child.Id)\"; Start-Sleep -Seconds 120"
 }
 
 #[cfg(target_os = "linux")]

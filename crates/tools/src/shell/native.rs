@@ -16,6 +16,10 @@ const PROCESS_NONCE_BYTES: usize = 8;
 pub struct NativePtyBackend;
 
 impl PtyBackend for NativePtyBackend {
+    fn requires_cursor_handshake(&self) -> bool {
+        cfg!(windows)
+    }
+
     fn spawn(&self, request: &ShellSpawnRequest) -> io::Result<SpawnedPty> {
         let resolved = resolve_native_shell(&request.command)?;
         let pair = portable_pty::native_pty_system()
@@ -278,10 +282,16 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::{
-        ProcessShellSessionIds, acquire_handles_then_spawn, is_executable_with_access_check,
-        process_id_or_cleanup, resolve_linux_shell, resolve_windows_shell,
+        NativePtyBackend, ProcessShellSessionIds, acquire_handles_then_spawn,
+        is_executable_with_access_check, process_id_or_cleanup, resolve_linux_shell,
+        resolve_windows_shell,
     };
-    use crate::shell::{ShellManagerError, ShellSessionIdSource};
+    use crate::shell::{PtyBackend, ShellManagerError, ShellSessionIdSource};
+
+    #[test]
+    fn native_backend_requires_startup_cursor_handshake_only_on_windows() {
+        assert_eq!(NativePtyBackend.requires_cursor_handshake(), cfg!(windows));
+    }
 
     #[test]
     fn native_startup_acquires_both_fallible_master_handles_before_spawn() {

@@ -1,7 +1,7 @@
 use std::collections::BTreeMap;
 use std::io::{self, Write};
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, AtomicU8, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicU8, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex as StdMutex, mpsc};
 use std::thread;
 use std::time::Duration;
@@ -31,6 +31,7 @@ const PROCESS_POLL_INTERVAL: Duration = Duration::from_millis(5);
 const CLEANUP_WAIT: Duration = Duration::from_secs(2);
 const DEFAULT_OUTPUT_BUDGET_BYTES: usize = 8 * 1_024 * 1_024;
 const READER_CHUNK_BYTES: usize = 8 * 1_024;
+const STARTUP_CURSOR_HANDSHAKE_WAIT: Duration = Duration::from_secs(2);
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ShellCommandRequest {
@@ -109,7 +110,6 @@ struct ShellSession {
     cleanup_started: bool,
     cleanup_result: Option<Result<(), ShellManagerError>>,
     cleanup_notify: Arc<tokio::sync::Notify>,
-    terminal_handshake_failed: Arc<AtomicBool>,
     slot_release_deferred: bool,
     exit_code: Option<i32>,
     terminal_at_unix_ms: Option<u64>,
@@ -182,7 +182,7 @@ impl ShellSessionManager {
                 return Err(ShellManagerError::Launch);
             }
         };
-        let resources = match self.own_spawned_resources(spawned) {
+        let mut resources = match self.own_spawned_resources(spawned) {
             Ok(resources) => resources,
             Err(resources) => {
                 let session = Arc::new(StdMutex::new(
@@ -192,6 +192,16 @@ impl ShellSessionManager {
                 return Err(ShellManagerError::Io);
             }
         };
+        if let Err(error) = self
+            .wait_for_startup_cursor_handshake(&mut resources, cancellation)
+            .await
+        {
+            let session = Arc::new(StdMutex::new(
+                resources.into_unpublished_session(self.next_unpublished_id()),
+            ));
+            self.settle_unpublished_start(Some(session)).await?;
+            return Err(error);
+        }
         let id = match self.ids.next_session_id() {
             Ok(id) => id,
             Err(_) => {
@@ -484,6 +494,7 @@ impl ShellSessionManager {
             writer,
             guard,
         } = spawned;
+        let requires_cursor_handshake = self.backend.requires_cursor_handshake();
         let process_id = child.process_id();
         let child = Arc::new(StdMutex::new(child));
         let writer = Arc::new(StdMutex::new(writer));
@@ -491,43 +502,72 @@ impl ShellSessionManager {
             &self.output_budget,
         ))));
         let reader_output = Arc::clone(&output);
-        let reader_writer = Arc::clone(&writer);
-        let terminal_handshake_failed = Arc::new(AtomicBool::new(false));
-        let reader_handshake_failed = Arc::clone(&terminal_handshake_failed);
+        let mut handshake_writer = requires_cursor_handshake.then(|| Arc::clone(&writer));
+        let (handshake_sender, handshake_receiver) = if requires_cursor_handshake {
+            let (sender, receiver) = mpsc::sync_channel(1);
+            (Some(sender), Some(receiver))
+        } else {
+            (None, None)
+        };
         let (reader_done_tx, reader_done) = mpsc::sync_channel(1);
         let reader = self.reader_spawner.spawn(
             format!("shell-reader-{process_id}"),
             Box::new(move || {
                 let mut chunk = [0_u8; READER_CHUNK_BYTES];
-                let mut terminal_query = Vec::new();
+                let mut handshake = requires_cursor_handshake.then(StartupCursorHandshake::default);
+                let mut handshake_sender = handshake_sender;
                 loop {
                     match reader.read(&mut chunk) {
                         Ok(0) => {
+                            report_startup_handshake_failure(&mut handshake_sender);
+                            handshake_writer.take();
                             if let Ok(mut output) = reader_output.lock() {
                                 output.finish();
                             }
                             break;
                         }
                         Ok(read) => {
-                            let handshake = respond_to_terminal_cursor_queries(
-                                &chunk[..read],
-                                &mut terminal_query,
-                                &reader_writer,
-                            );
+                            let handshake_observed = handshake
+                                .as_mut()
+                                .is_some_and(|handshake| handshake.observe(&chunk[..read]));
+                            let handshake_result = handshake_observed.then(|| {
+                                handshake.take();
+                                let result = handshake_writer
+                                    .take()
+                                    .ok_or_else(|| io::Error::other("PTY writer missing"))
+                                    .and_then(|writer| {
+                                        let mut writer = writer
+                                            .lock()
+                                            .map_err(|_| io::Error::other("PTY writer poisoned"))?;
+                                        writer.write_all(b"\x1b[1;1R")?;
+                                        writer.flush()
+                                    });
+                                if let Some(sender) = handshake_sender.take() {
+                                    let _ = sender.send(if result.is_ok() {
+                                        StartupHandshakeOutcome::Complete
+                                    } else {
+                                        StartupHandshakeOutcome::Failed
+                                    });
+                                }
+                                result
+                            });
+                            let handshake_failed =
+                                handshake_result.as_ref().is_some_and(Result::is_err);
                             if let Ok(mut output) = reader_output.lock() {
                                 output.append(&chunk[..read]);
-                                if handshake.is_err() {
+                                if handshake_failed {
                                     output.finish();
                                 }
                             } else {
                                 break;
                             }
-                            if handshake.is_err() {
-                                reader_handshake_failed.store(true, Ordering::Release);
+                            if handshake_failed {
                                 break;
                             }
                         }
                         Err(_) => {
+                            report_startup_handshake_failure(&mut handshake_sender);
+                            handshake_writer.take();
                             if let Ok(mut output) = reader_output.lock() {
                                 output.finish();
                             }
@@ -543,7 +583,7 @@ impl ShellSessionManager {
             child: Arc::clone(&child),
             writer: Arc::clone(&writer),
             output: Arc::clone(&output),
-            terminal_handshake_failed: Arc::clone(&terminal_handshake_failed),
+            startup_handshake: handshake_receiver,
             reader,
             reader_done,
             guard: None,
@@ -557,6 +597,37 @@ impl ShellSessionManager {
                 guard: Some(guard),
                 ..resources(None, None)
             }),
+        }
+    }
+
+    async fn wait_for_startup_cursor_handshake(
+        &self,
+        resources: &mut OwnedSessionResources,
+        cancellation: &dyn CancellationPort,
+    ) -> Result<(), ShellManagerError> {
+        let Some(receiver) = resources.startup_handshake.take() else {
+            return Ok(());
+        };
+        let deadline = tokio::time::Instant::now() + STARTUP_CURSOR_HANDSHAKE_WAIT;
+        loop {
+            match receiver.try_recv() {
+                Ok(StartupHandshakeOutcome::Complete) => return Ok(()),
+                Ok(StartupHandshakeOutcome::Failed) | Err(mpsc::TryRecvError::Disconnected) => {
+                    return Err(ShellManagerError::Io);
+                }
+                Err(mpsc::TryRecvError::Empty) => {}
+            }
+            if cancellation.is_cancelled() {
+                return Err(ShellManagerError::Cancelled);
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(ShellManagerError::Io);
+            }
+            let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+            tokio::select! {
+                () = cancellation.cancelled() => return Err(ShellManagerError::Cancelled),
+                () = tokio::time::sleep(PROCESS_POLL_INTERVAL.min(remaining)) => {}
+            }
         }
     }
 
@@ -585,15 +656,6 @@ impl ShellSessionManager {
         loop {
             if cancellation.is_cancelled() {
                 return Err(ShellManagerError::Cancelled);
-            }
-            let terminal_handshake_failed = session
-                .lock()
-                .map_err(|_| ShellManagerError::Io)?
-                .terminal_handshake_failed
-                .load(Ordering::Acquire);
-            if terminal_handshake_failed {
-                self.ensure_cleanup(&session).await?;
-                return Err(ShellManagerError::Io);
             }
             if self.refresh_session(&session).await.is_err() {
                 self.ensure_cleanup(&session).await?;
@@ -1035,7 +1097,7 @@ struct OwnedSessionResources {
     child: Arc<StdMutex<Box<dyn PtyChild>>>,
     writer: Arc<StdMutex<Box<dyn Write + Send>>>,
     output: Arc<StdMutex<ShellOutputBuffer>>,
-    terminal_handshake_failed: Arc<AtomicBool>,
+    startup_handshake: Option<mpsc::Receiver<StartupHandshakeOutcome>>,
     reader: Option<thread::JoinHandle<()>>,
     reader_done: Option<mpsc::Receiver<()>>,
     guard: Option<Box<dyn PtyGuard>>,
@@ -1057,7 +1119,6 @@ impl OwnedSessionResources {
             cleanup_started: false,
             cleanup_result: None,
             cleanup_notify: Arc::new(tokio::sync::Notify::new()),
-            terminal_handshake_failed: self.terminal_handshake_failed,
             slot_release_deferred: false,
             exit_code: None,
             terminal_at_unix_ms: None,
@@ -1109,33 +1170,41 @@ fn validate_command_request(request: &ShellCommandRequest) -> Result<(), ShellMa
     validate_yield_and_output(request.yield_time, request.max_output_bytes)
 }
 
-fn respond_to_terminal_cursor_queries(
-    chunk: &[u8],
-    pending: &mut Vec<u8>,
-    writer: &Arc<StdMutex<Box<dyn Write + Send>>>,
-) -> io::Result<()> {
-    const CURSOR_QUERY: &[u8] = b"\x1b[6n";
-    const CURSOR_RESPONSE: &[u8] = b"\x1b[1;1R";
+#[derive(Default)]
+struct StartupCursorHandshake {
+    matched: usize,
+}
 
-    for &byte in chunk {
-        if CURSOR_QUERY.get(pending.len()).copied() == Some(byte) {
-            pending.push(byte);
-            if pending.len() == CURSOR_QUERY.len() {
-                let mut writer = writer
-                    .lock()
-                    .map_err(|_| io::Error::other("PTY writer poisoned"))?;
-                writer.write_all(CURSOR_RESPONSE)?;
-                writer.flush()?;
-                pending.clear();
-            }
-        } else {
-            pending.clear();
-            if byte == CURSOR_QUERY[0] {
-                pending.push(byte);
+impl StartupCursorHandshake {
+    fn observe(&mut self, chunk: &[u8]) -> bool {
+        const CURSOR_QUERY: &[u8] = b"\x1b[6n";
+        for &byte in chunk {
+            if CURSOR_QUERY.get(self.matched).copied() == Some(byte) {
+                self.matched += 1;
+                if self.matched == CURSOR_QUERY.len() {
+                    self.matched = 0;
+                    return true;
+                }
+            } else {
+                self.matched = usize::from(byte == CURSOR_QUERY[0]);
             }
         }
+        false
     }
-    Ok(())
+}
+
+#[derive(Clone, Copy)]
+enum StartupHandshakeOutcome {
+    Complete,
+    Failed,
+}
+
+fn report_startup_handshake_failure(
+    sender: &mut Option<mpsc::SyncSender<StartupHandshakeOutcome>>,
+) {
+    if let Some(sender) = sender.take() {
+        let _ = sender.send(StartupHandshakeOutcome::Failed);
+    }
 }
 
 fn validate_write_request(request: &ShellWriteRequest) -> Result<(), ShellManagerError> {
@@ -1162,97 +1231,27 @@ fn validate_yield_and_output(
 
 #[cfg(test)]
 mod terminal_handshake_tests {
-    use std::io::{self, Write};
-    use std::sync::{Arc, Mutex};
+    use super::StartupCursorHandshake;
 
-    use super::respond_to_terminal_cursor_queries;
+    #[test]
+    fn complete_cursor_query_finishes_the_startup_handshake() {
+        let mut handshake = StartupCursorHandshake::default();
 
-    type SharedWriter = Arc<Mutex<Box<dyn Write + Send>>>;
-    type SharedBytes = Arc<Mutex<Vec<u8>>>;
-
-    #[derive(Clone)]
-    struct RecordingWriter {
-        bytes: Arc<Mutex<Vec<u8>>>,
-        fail: bool,
-    }
-
-    impl Write for RecordingWriter {
-        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
-            if self.fail {
-                return Err(io::Error::other("scripted handshake failure"));
-            }
-            self.bytes.lock().expect("recording writer").extend(bytes);
-            Ok(bytes.len())
-        }
-
-        fn flush(&mut self) -> io::Result<()> {
-            if self.fail {
-                Err(io::Error::other("scripted handshake failure"))
-            } else {
-                Ok(())
-            }
-        }
-    }
-
-    fn writer(fail: bool) -> (SharedWriter, SharedBytes) {
-        let bytes = Arc::new(Mutex::new(Vec::new()));
-        let writer = RecordingWriter {
-            bytes: Arc::clone(&bytes),
-            fail,
-        };
-        (Arc::new(Mutex::new(Box::new(writer))), bytes)
+        assert!(handshake.observe(b"\x1b[6n"));
     }
 
     #[test]
-    fn complete_cursor_query_receives_one_fixed_response() {
-        let (writer, bytes) = writer(false);
-        let mut pending = Vec::new();
+    fn split_cursor_query_finishes_only_after_its_final_chunk() {
+        let mut handshake = StartupCursorHandshake::default();
 
-        respond_to_terminal_cursor_queries(b"\x1b[6n", &mut pending, &writer)
-            .expect("cursor response");
-
-        assert!(pending.is_empty());
-        assert_eq!(&*bytes.lock().expect("recorded response"), b"\x1b[1;1R");
+        assert!(!handshake.observe(b"prefix\x1b["));
+        assert!(handshake.observe(b"6n\x1b[6n"));
     }
 
     #[test]
-    fn split_and_adjacent_cursor_queries_are_each_answered() {
-        let (writer, bytes) = writer(false);
-        let mut pending = Vec::new();
+    fn ordinary_terminal_content_does_not_finish_the_startup_handshake() {
+        let mut handshake = StartupCursorHandshake::default();
 
-        respond_to_terminal_cursor_queries(b"prefix\x1b[", &mut pending, &writer)
-            .expect("partial cursor query");
-        assert!(bytes.lock().expect("recorded response").is_empty());
-        respond_to_terminal_cursor_queries(b"6n\x1b[6n", &mut pending, &writer)
-            .expect("completed cursor queries");
-
-        assert!(pending.is_empty());
-        assert_eq!(
-            &*bytes.lock().expect("recorded response"),
-            b"\x1b[1;1R\x1b[1;1R"
-        );
-    }
-
-    #[test]
-    fn ordinary_terminal_content_does_not_trigger_a_response() {
-        let (writer, bytes) = writer(false);
-        let mut pending = Vec::new();
-
-        respond_to_terminal_cursor_queries(b"hello [6n \x1b[31mred", &mut pending, &writer)
-            .expect("ordinary terminal content");
-
-        assert!(pending.is_empty());
-        assert!(bytes.lock().expect("recorded response").is_empty());
-    }
-
-    #[test]
-    fn cursor_response_write_failure_is_reported_to_the_reader() {
-        let (writer, _) = writer(true);
-        let mut pending = Vec::new();
-
-        let error = respond_to_terminal_cursor_queries(b"\x1b[6n", &mut pending, &writer)
-            .expect_err("handshake write failure must be visible");
-
-        assert_eq!(error.kind(), io::ErrorKind::Other);
+        assert!(!handshake.observe(b"hello [6n \x1b[31mred"));
     }
 }

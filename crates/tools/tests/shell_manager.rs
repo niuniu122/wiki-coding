@@ -6,7 +6,9 @@ use std::sync::{Arc, Condvar, Mutex};
 use std::time::Duration;
 
 use minimax_core::{CancellationFuture, CancellationPort, Clock};
-use minimax_protocol::{MAX_SHELL_UNREAD_BYTES, ShellSessionId, ShellSessionState};
+use minimax_protocol::{
+    MAX_SHELL_INPUT_BYTES, MAX_SHELL_UNREAD_BYTES, ShellSessionId, ShellSessionState,
+};
 use minimax_tools::{
     MAX_RUNNING_SHELL_SESSIONS, MAX_TERMINAL_SHELL_RECEIPTS, ProcessShellSessionIds, PtyBackend,
     PtyChild, PtyTerminateFuture, ReaderSpawner, ReaderTask, ShellCleanupError,
@@ -520,6 +522,7 @@ impl SpawnGate {
 struct FakeBackend {
     plans: Mutex<VecDeque<FakePlan>>,
     processes: Mutex<HashMap<u32, Arc<FakeShared>>>,
+    cursor_handshake_required: AtomicBool,
     spawns: AtomicUsize,
     terminations: AtomicUsize,
     termination_error: AtomicBool,
@@ -529,6 +532,11 @@ struct FakeBackend {
 }
 
 impl FakeBackend {
+    fn require_cursor_handshake(&self) {
+        self.cursor_handshake_required
+            .store(true, Ordering::Release);
+    }
+
     fn queue_process(&self) -> FakeControl {
         self.queue_process_with_gate(None)
     }
@@ -605,6 +613,10 @@ impl FakeBackend {
 }
 
 impl PtyBackend for FakeBackend {
+    fn requires_cursor_handshake(&self) -> bool {
+        self.cursor_handshake_required.load(Ordering::Acquire)
+    }
+
     fn spawn(&self, request: &ShellSpawnRequest) -> io::Result<SpawnedPty> {
         assert_eq!((request.cols, request.rows), (120, 30));
         let plan = self
@@ -923,6 +935,215 @@ async fn long_command_returns_id_and_poll_delivers_only_new_output() {
         .expect("empty poll succeeds");
     assert!(empty.output.is_empty());
     manager.shutdown().await.expect("cleanup succeeds");
+}
+
+#[tokio::test]
+async fn ordinary_fake_backend_does_not_wait_for_a_cursor_handshake() {
+    let backend = Arc::new(FakeBackend::default());
+    backend.queue_process();
+    let manager = enabled_manager(Arc::clone(&backend), Arc::new(ManualClock::default())).await;
+
+    let started = tokio::time::timeout(
+        Duration::from_secs(1),
+        manager.start(command_request("ordinary", Duration::ZERO), &NeverCancelled),
+    )
+    .await;
+    let cleanup = manager.shutdown().await;
+
+    cleanup.expect("ordinary fake cleanup succeeds");
+    let receipt = started
+        .expect("ordinary fake start does not wait")
+        .expect("ordinary fake start succeeds");
+    assert_eq!(receipt.state, ShellSessionState::Running);
+}
+
+#[tokio::test]
+async fn required_cursor_handshake_completes_before_session_publication() {
+    let backend = Arc::new(FakeBackend::default());
+    backend.require_cursor_handshake();
+    let control = backend.queue_process();
+    let manager = enabled_manager(Arc::clone(&backend), Arc::new(ManualClock::default())).await;
+    let start_manager = manager.clone();
+    let start = tokio::spawn(async move {
+        start_manager
+            .start(command_request("required", Duration::ZERO), &NeverCancelled)
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(1), backend.wait_for_spawn_count(1))
+        .await
+        .expect("required handshake reaches backend spawn");
+    let published_before_query = start.is_finished();
+    control.emit(b"prefix\x1b[6n".to_vec());
+    let started = tokio::time::timeout(Duration::from_secs(1), start).await;
+    let handshake_input = control.input();
+    let cleanup = manager.shutdown().await;
+
+    cleanup.expect("required handshake cleanup succeeds");
+    assert!(
+        !published_before_query,
+        "session published before handshake"
+    );
+    let receipt = started
+        .expect("required handshake completes")
+        .expect("required handshake task joins")
+        .expect("required handshake start succeeds");
+    assert_eq!(receipt.state, ShellSessionState::Running);
+    assert_eq!(handshake_input, b"\x1b[1;1R");
+}
+
+#[tokio::test]
+async fn required_cursor_handshake_recognizes_a_split_query_before_publication() {
+    let backend = Arc::new(FakeBackend::default());
+    backend.require_cursor_handshake();
+    let control = backend.queue_process();
+    let manager = enabled_manager(Arc::clone(&backend), Arc::new(ManualClock::default())).await;
+    let start_manager = manager.clone();
+    let start = tokio::spawn(async move {
+        start_manager
+            .start(command_request("split", Duration::ZERO), &NeverCancelled)
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(1), backend.wait_for_spawn_count(1))
+        .await
+        .expect("split handshake reaches backend spawn");
+    control.emit(b"prefix\x1b[".to_vec());
+    tokio::task::yield_now().await;
+    let published_after_prefix = start.is_finished();
+    control.emit(b"6n".to_vec());
+    let started = tokio::time::timeout(Duration::from_secs(1), start).await;
+    let handshake_input = control.input();
+    let cleanup = manager.shutdown().await;
+
+    cleanup.expect("split handshake cleanup succeeds");
+    assert!(
+        !published_after_prefix,
+        "partial query published the session"
+    );
+    let receipt = started
+        .expect("split handshake completes")
+        .expect("split handshake task joins")
+        .expect("split handshake start succeeds");
+    assert_eq!(receipt.state, ShellSessionState::Running);
+    assert_eq!(handshake_input, b"\x1b[1;1R");
+}
+
+#[tokio::test]
+async fn required_cursor_handshake_write_failure_cleans_up_before_start_returns() {
+    let backend = Arc::new(FakeBackend::default());
+    backend.require_cursor_handshake();
+    let control = backend.queue_process();
+    control.set_flush_error(io::ErrorKind::BrokenPipe);
+    let manager = enabled_manager(Arc::clone(&backend), Arc::new(ManualClock::default())).await;
+    let start_manager = manager.clone();
+    let start = tokio::spawn(async move {
+        start_manager
+            .start(
+                command_request("write-failure", Duration::ZERO),
+                &NeverCancelled,
+            )
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(1), backend.wait_for_spawn_count(1))
+        .await
+        .expect("failing handshake reaches backend spawn");
+    control.emit(b"\x1b[6n".to_vec());
+    let result = tokio::time::timeout(Duration::from_secs(3), start).await;
+    let cleanup = manager.shutdown().await;
+
+    cleanup.expect("failed handshake leaves no cleanup debt");
+    assert_eq!(
+        result
+            .expect("failed handshake returns")
+            .expect("failed handshake task joins"),
+        Err(ShellManagerError::Io)
+    );
+    assert!(!control.is_running());
+    assert_eq!(control.guard_drops(), 1);
+}
+
+#[tokio::test(start_paused = true)]
+async fn required_cursor_handshake_timeout_cleans_up_before_start_returns() {
+    let backend = Arc::new(FakeBackend::default());
+    backend.require_cursor_handshake();
+    let control = backend.queue_process();
+    let manager = enabled_manager(Arc::clone(&backend), Arc::new(ManualClock::default())).await;
+    let start_manager = manager.clone();
+    let start = tokio::spawn(async move {
+        start_manager
+            .start(command_request("timeout", Duration::ZERO), &NeverCancelled)
+            .await
+    });
+    backend.wait_for_spawn_count(1).await;
+    tokio::time::advance(Duration::from_secs(3)).await;
+    let result = start.await;
+    let cleanup = manager.shutdown().await;
+
+    cleanup.expect("timed out handshake leaves no cleanup debt");
+    assert_eq!(
+        result.expect("timed out handshake task joins"),
+        Err(ShellManagerError::Io)
+    );
+    assert!(!control.is_running());
+    assert_eq!(control.guard_drops(), 1);
+}
+
+#[tokio::test]
+async fn cursor_queries_after_publication_never_write_a_second_response() {
+    let backend = Arc::new(FakeBackend::default());
+    backend.require_cursor_handshake();
+    let control = backend.queue_process();
+    let manager = enabled_manager(Arc::clone(&backend), Arc::new(ManualClock::default())).await;
+    let start_manager = manager.clone();
+    let start = tokio::spawn(async move {
+        start_manager
+            .start(command_request("one-shot", Duration::ZERO), &NeverCancelled)
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(1), backend.wait_for_spawn_count(1))
+        .await
+        .expect("one-shot handshake reaches backend spawn");
+    control.emit(b"\x1b[6n".to_vec());
+    let started = tokio::time::timeout(Duration::from_secs(1), start)
+        .await
+        .expect("one-shot handshake completes")
+        .expect("one-shot handshake task joins")
+        .expect("one-shot handshake start succeeds");
+    control.emit(b"late\x1b[6n".to_vec());
+    let polled = manager
+        .poll(
+            poll_request(started.session_id.clone(), Duration::from_millis(100)),
+            &NeverCancelled,
+        )
+        .await;
+    let user_input = "x".repeat(MAX_SHELL_INPUT_BYTES);
+    let written = manager
+        .write(
+            ShellWriteRequest {
+                session_id: started.session_id,
+                input: user_input.clone(),
+                submit: false,
+                yield_time: Duration::ZERO,
+                max_output_bytes: OUTPUT_LIMIT,
+            },
+            &NeverCancelled,
+        )
+        .await;
+    let input_before_cleanup = control.input();
+    let cleanup = manager.shutdown().await;
+
+    cleanup.expect("one-shot handshake cleanup succeeds");
+    let output = polled.expect("post-publication query remains ordinary output");
+    assert!(output.output.contains("late"), "{output:?}");
+    written.expect("maximum-size user write is not contested by a responder");
+    assert_eq!(
+        input_before_cleanup.len(),
+        b"\x1b[1;1R".len() + MAX_SHELL_INPUT_BYTES
+    );
+    assert!(input_before_cleanup.starts_with(b"\x1b[1;1R"));
+    assert_eq!(
+        &input_before_cleanup[b"\x1b[1;1R".len()..],
+        user_input.as_bytes()
+    );
 }
 
 #[tokio::test]
