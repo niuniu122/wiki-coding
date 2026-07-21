@@ -12,6 +12,7 @@ mod policy;
 mod process;
 mod read;
 mod sandbox;
+mod shell;
 mod write;
 
 pub use error::{ToolDenial, ToolDenialCode};
@@ -26,6 +27,7 @@ pub use process::{
     SandboxCapability, SandboxCapabilityState, SandboxLaunchReceipt, TokioProcessLauncher,
 };
 pub use read::{ListDirectoryTool, ReadFileTool};
+pub use shell::{ShellOutputBudget, ShellOutputBuffer, ShellOutputChunk};
 pub use write::{ApplyPatchTool, WriteFileTool};
 
 /// Human-readable boundary used by architecture checks and documentation.

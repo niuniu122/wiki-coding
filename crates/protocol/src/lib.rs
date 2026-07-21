@@ -8,6 +8,7 @@ mod knowledge;
 mod retrieval;
 mod runtime;
 mod session;
+mod shell;
 mod tool;
 mod vault;
 
@@ -39,6 +40,11 @@ pub use session::{
     ModelBinding, RecordId, RecoveryRecord, SessionRecord, SessionRecordV1, SessionStatus,
     ToolInvocationRecord, TraceCode, TraceEntry, TurnRecord, TurnStatus, VisibleMessage,
     parse_session_record_v1,
+};
+pub use shell::{
+    MAX_SHELL_COMMAND_BYTES, MAX_SHELL_CWD_BYTES, MAX_SHELL_INPUT_BYTES, MAX_SHELL_OUTPUT_BYTES,
+    MAX_SHELL_SESSION_ID_BYTES, MAX_SHELL_UNREAD_BYTES, ShellReceipt, ShellSessionId,
+    ShellSessionState,
 };
 pub use tool::{
     MAX_TOOL_ARGUMENT_BYTES, MAX_TOOL_CODE_BYTES, MAX_TOOL_DESCRIPTION_BYTES, MAX_TOOL_NAME_BYTES,

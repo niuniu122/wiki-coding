@@ -35,6 +35,7 @@ pub enum ToolValidationError {
     MissingArgument,
     InvalidCode,
     ResultTooLarge,
+    InvalidShellReceipt,
 }
 
 impl fmt::Display for ToolValidationError {
