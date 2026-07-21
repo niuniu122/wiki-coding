@@ -934,14 +934,15 @@ fn terminal_is_legal(invocation: &ToolInvocationRecord, status: ToolTerminalStat
         ToolTerminalStatus::Succeeded => invocation.started_at_unix_ms.is_some(),
         ToolTerminalStatus::Failed => true,
         ToolTerminalStatus::Rejected => {
-            invocation.started_at_unix_ms.is_none()
-                && !matches!(
-                    invocation
-                        .decision
-                        .as_ref()
-                        .map(|decision| decision.decision),
-                    Some(ToolDecisionKind::Approved)
-                )
+            invocation.started_at_unix_ms.is_some()
+                || (invocation.started_at_unix_ms.is_none()
+                    && !matches!(
+                        invocation
+                            .decision
+                            .as_ref()
+                            .map(|decision| decision.decision),
+                        Some(ToolDecisionKind::Approved)
+                    ))
         }
         ToolTerminalStatus::Cancelled => invocation.started_at_unix_ms.is_none(),
         ToolTerminalStatus::Indeterminate => invocation.started_at_unix_ms.is_some(),

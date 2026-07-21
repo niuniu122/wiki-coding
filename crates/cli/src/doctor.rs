@@ -39,13 +39,13 @@ pub struct DoctorReport {
 pub fn permission_status(mode: PermissionMode, capability: SandboxCapability) -> String {
     match mode {
         PermissionMode::Confirm => format!(
-            "permission mode: confirm | approval: required | subprocess sandbox: {} ({}) | {}",
+            "permission mode: confirm | approval: required | subprocess sandbox: {} ({}) | arbitrary Shell: disabled | {}",
             capability.state().as_str(),
             capability.backend(),
             capability.detail()
         ),
         PermissionMode::FullAccess => format!(
-            "permission mode: full-access | approval: skipped | subprocess sandbox: {} | trusted projects only; workspace, secret, command, size, timeout, and cancellation gates remain enforced",
+            "permission mode: full-access | approval: skipped | subprocess sandbox: {} | arbitrary Shell: enabled for this process | commands can access host files, network, and environment credentials; tool output is persisted locally and sent to the configured Provider",
             SandboxCapabilityState::DisabledByFullAccess.as_str()
         ),
     }

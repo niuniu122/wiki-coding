@@ -1,13 +1,23 @@
 use std::collections::VecDeque;
 use std::future::Future;
 use std::pin::Pin;
+use std::sync::{Arc, Mutex};
 
-use minimax_cli::{DriverIds, ExitClass, ProviderPort, RuntimeDriver, exit_for_report};
-use minimax_core::CompactionBudget;
-use minimax_protocol::{
-    ModelBinding, ModelId, ProviderId, ProviderProtocolKind, RuntimeErrorCode, RuntimeFailure,
-    RuntimeTerminalOutcome, StreamEvent, TerminalOutcome, TurnId, TurnStatus, Usage,
+use minimax_cli::{
+    DriverIds, ExitClass, HeadlessApprovalPort, ProviderPort, RuntimeDriver, exit_for_report,
 };
+use minimax_core::{
+    CancellationPort, CompactionBudget, PermissionMode, ToolExecutionContext, ToolFuture,
+    ToolLifecycleFuture, ToolPort,
+};
+use minimax_protocol::{
+    AgentLimits, FULL_ACCESS_TOOL_NAMES, ModelBinding, ModelId, ProviderId, ProviderProtocolKind,
+    RuntimeErrorCode, RuntimeFailure, RuntimeTerminalOutcome, SHELL_TOOL_NAMES, SchemaVersion,
+    ShellReceipt, ShellSessionId, ShellSessionState, StreamEvent, TerminalOutcome,
+    ToolCallFragment, ToolCallId, ToolInvocation, ToolResult, ToolTerminalStatus, TurnId,
+    TurnStatus, Usage,
+};
+use minimax_tools::BuiltinToolPort;
 use minimax_vault::{RuntimeStore, RuntimeStoreError};
 use tokio_util::sync::CancellationToken;
 
@@ -71,6 +81,172 @@ impl ProviderPort for MockProvider {
             }
         })
     }
+}
+
+#[derive(Default)]
+struct ProcessShellState {
+    accepting: bool,
+    sessions: Vec<String>,
+}
+
+#[derive(Clone, Default)]
+struct ProcessScopedShellPort {
+    state: Arc<Mutex<ProcessShellState>>,
+}
+
+impl ToolPort for ProcessScopedShellPort {
+    fn preflight(
+        &self,
+        invocation: &ToolInvocation,
+        context: ToolExecutionContext,
+        _cancellation: &dyn CancellationPort,
+    ) -> Result<(), ToolResult> {
+        if SHELL_TOOL_NAMES.contains(&invocation.call.name.as_str())
+            && (context.permission_mode() != PermissionMode::FullAccess
+                || !self.state.lock().expect("shell state").accepting)
+        {
+            return Err(shell_result(
+                invocation,
+                ToolTerminalStatus::Rejected,
+                "shell_requires_full_access",
+                None,
+            ));
+        }
+        Ok(())
+    }
+
+    fn execute<'a>(
+        &'a self,
+        invocation: &'a ToolInvocation,
+        _context: ToolExecutionContext,
+        _cancellation: &'a dyn CancellationPort,
+    ) -> ToolFuture<'a> {
+        Box::pin(async move {
+            match invocation.call.name.as_str() {
+                "shell_command" => {
+                    let mut state = self.state.lock().expect("shell state");
+                    let session_id = format!("shell-process-{:04}", state.sessions.len() + 1);
+                    state.sessions.push(session_id.clone());
+                    shell_result(
+                        invocation,
+                        ToolTerminalStatus::Succeeded,
+                        "shell_running",
+                        Some(running_receipt(&session_id)),
+                    )
+                }
+                "shell_session" => {
+                    let arguments: serde_json::Value =
+                        serde_json::from_str(&invocation.call.arguments_json)
+                            .expect("session arguments");
+                    let session_id = arguments["session_id"].as_str().unwrap_or_default();
+                    if self
+                        .state
+                        .lock()
+                        .expect("shell state")
+                        .sessions
+                        .iter()
+                        .any(|known| known == session_id)
+                    {
+                        shell_result(
+                            invocation,
+                            ToolTerminalStatus::Succeeded,
+                            "shell_running",
+                            Some(running_receipt(session_id)),
+                        )
+                    } else {
+                        shell_result(
+                            invocation,
+                            ToolTerminalStatus::Rejected,
+                            "shell_session_not_found",
+                            None,
+                        )
+                    }
+                }
+                _ => shell_result(invocation, ToolTerminalStatus::Succeeded, "ok", None),
+            }
+        })
+    }
+
+    fn transition_permission<'a>(&'a self, mode: PermissionMode) -> ToolLifecycleFuture<'a> {
+        Box::pin(async move {
+            let mut state = self.state.lock().expect("shell state");
+            state.accepting = mode == PermissionMode::FullAccess;
+            if mode == PermissionMode::Confirm {
+                state.sessions.clear();
+            }
+            Ok(())
+        })
+    }
+
+    fn shutdown<'a>(&'a self) -> ToolLifecycleFuture<'a> {
+        Box::pin(async move {
+            let mut state = self.state.lock().expect("shell state");
+            state.accepting = false;
+            state.sessions.clear();
+            Ok(())
+        })
+    }
+}
+
+fn shell_result(
+    invocation: &ToolInvocation,
+    status: ToolTerminalStatus,
+    code: &str,
+    output: Option<String>,
+) -> ToolResult {
+    ToolResult {
+        schema_version: SchemaVersion,
+        call_id: invocation.call.call_id.clone(),
+        tool_name: invocation.call.name.clone(),
+        status,
+        code: code.to_owned(),
+        output,
+    }
+}
+
+fn running_receipt(session_id: &str) -> String {
+    serde_json::to_string(
+        &ShellReceipt::new(
+            ShellSessionId::new(session_id).expect("session id"),
+            ShellSessionState::Running,
+            None,
+            String::new(),
+            false,
+        )
+        .expect("receipt"),
+    )
+    .expect("receipt JSON")
+}
+
+fn shell_tool_run(name: &str, arguments: serde_json::Value) -> MockRun {
+    MockRun::Events(vec![
+        StreamEvent::ToolCallFragments {
+            fragments: vec![ToolCallFragment {
+                call_id: ToolCallId::new(format!("call-{name}")).expect("call id"),
+                stream_id: Some(format!("stream-{name}")),
+                name: Some(name.to_owned()),
+                arguments_delta: Some(arguments.to_string()),
+                arguments_complete: true,
+                index: Some(0),
+            }],
+        },
+        StreamEvent::Terminal {
+            outcome: TerminalOutcome::Completed,
+        },
+    ])
+}
+
+fn full_tool_definitions() -> Vec<minimax_protocol::ToolDefinition> {
+    let definitions = BuiltinToolPort::definitions_for(PermissionMode::FullAccess)
+        .expect("full-access definitions");
+    assert_eq!(
+        definitions
+            .iter()
+            .map(|definition| definition.name.as_str())
+            .collect::<Vec<_>>(),
+        FULL_ACCESS_TOOL_NAMES
+    );
+    definitions
 }
 
 #[tokio::test]
@@ -288,6 +464,87 @@ async fn controlled_cancellation_persists_once_and_releases_lease() {
             .outcome,
         RuntimeTerminalOutcome::Interrupted
     );
+}
+
+#[tokio::test]
+async fn restart_returns_to_confirm_and_old_shell_session_id_is_not_reused() {
+    let project = tempfile::tempdir().expect("temporary project");
+    let old_session_id;
+    {
+        let mut driver = RuntimeDriver::open_with_agent_ports(
+            project.path(),
+            binding(),
+            MockProvider {
+                runs: VecDeque::from([
+                    shell_tool_run(
+                        "shell_command",
+                        serde_json::json!({"command": "long-running"}),
+                    ),
+                    MockProvider::completed(&["started"]),
+                ]),
+            },
+            DriverIds::new("shell-process-one", 40_000),
+            Box::new(HeadlessApprovalPort),
+            Box::new(ProcessScopedShellPort::default()),
+            full_tool_definitions(),
+            AgentLimits::default(),
+        )
+        .expect("first process");
+        driver
+            .set_permission_mode(PermissionMode::FullAccess)
+            .await
+            .expect("enable Shell");
+        let report = driver
+            .run_agent("start", 128)
+            .await
+            .expect("start Shell session");
+        let receipt: ShellReceipt = serde_json::from_str(
+            report.tool_results[0]
+                .output
+                .as_deref()
+                .expect("running receipt"),
+        )
+        .expect("running receipt JSON");
+        old_session_id = receipt.session_id;
+        driver
+            .shutdown_tools()
+            .await
+            .expect("first process shutdown");
+    }
+
+    let mut restarted = RuntimeDriver::open_with_agent_ports(
+        project.path(),
+        binding(),
+        MockProvider {
+            runs: VecDeque::from([
+                shell_tool_run(
+                    "shell_session",
+                    serde_json::json!({
+                        "session_id": old_session_id.as_str(),
+                        "action": "poll"
+                    }),
+                ),
+                MockProvider::completed(&["not found"]),
+            ]),
+        },
+        DriverIds::new("shell-process-two", 41_000),
+        Box::new(HeadlessApprovalPort),
+        Box::new(ProcessScopedShellPort::default()),
+        full_tool_definitions(),
+        AgentLimits::default(),
+    )
+    .expect("restarted process");
+    assert_eq!(restarted.permission_mode(), PermissionMode::Confirm);
+    restarted
+        .set_permission_mode(PermissionMode::FullAccess)
+        .await
+        .expect("enable new process Shell");
+    let report = restarted
+        .run_agent("poll old session", 128)
+        .await
+        .expect("terminal old session result");
+    assert_eq!(report.tool_results[0].status, ToolTerminalStatus::Rejected);
+    assert_eq!(report.tool_results[0].code, "shell_session_not_found");
 }
 
 fn binding() -> ModelBinding {

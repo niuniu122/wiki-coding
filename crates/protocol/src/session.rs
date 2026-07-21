@@ -177,6 +177,7 @@ pub enum TraceCode {
     TurnRecovered,
     CompactionCompleted,
     CommandRejected,
+    ToolCompleted,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]

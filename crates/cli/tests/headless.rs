@@ -8,7 +8,7 @@ use minimax_cli::{
     Cli, CliCommand, DriverError, DriverIds, ExitClass, JsonlWriter, MigrateAction, PermissionArg,
     ProviderPort, RuntimeDriver, exit_for_error, exit_for_report, inspect, permission_status,
 };
-use minimax_core::PermissionMode;
+use minimax_core::{PermissionMode, ToolLifecycleError};
 use minimax_protocol::{
     ModelBinding, ModelId, ProviderId, ProviderProtocolKind, RuntimeErrorCode, RuntimeEvent,
     RuntimeEventV1, RuntimeFailure, RuntimeTerminalOutcome, StreamEvent, TerminalOutcome,
@@ -190,6 +190,13 @@ fn exit_classes_are_exactly_zero_two_three_four_five() {
         exit_for_error(&DriverError::Store(RuntimeStoreError::Busy)),
         ExitClass::Workspace
     );
+    assert_eq!(
+        exit_for_error(&DriverError::ToolLifecycle(ToolLifecycleError {
+            code: "shell_stop_indeterminate",
+            session_ids: vec!["shell-failed-0001".to_owned()],
+        })),
+        ExitClass::Workspace
+    );
 }
 
 #[test]
@@ -319,11 +326,13 @@ fn permission_status_separates_approval_from_subprocess_isolation() {
         capability.state().as_str()
     )));
     assert!(confirm.contains(capability.backend()));
+    assert!(confirm.contains("arbitrary Shell: disabled"));
 
     let full_access = permission_status(PermissionMode::FullAccess, capability);
-    assert!(full_access.contains("approval: skipped"));
-    assert!(full_access.contains("subprocess sandbox: disabled-by-full-access"));
-    assert!(full_access.contains("trusted projects only"));
+    assert_eq!(
+        full_access,
+        "permission mode: full-access | approval: skipped | subprocess sandbox: disabled-by-full-access | arbitrary Shell: enabled for this process | commands can access host files, network, and environment credentials; tool output is persisted locally and sent to the configured Provider"
+    );
 }
 
 #[test]

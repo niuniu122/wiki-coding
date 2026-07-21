@@ -5,18 +5,22 @@ use std::pin::Pin;
 use std::sync::{Arc, Mutex};
 
 use minimax_cli::{
-    DriverIds, HeadlessApprovalPort, InteractiveApprovalPort, ProviderPort, RuntimeDriver,
+    DriverError, DriverIds, HeadlessApprovalPort, InteractiveApprovalPort, ProviderPort,
+    RuntimeDriver,
 };
 use minimax_core::{
     ApprovalFuture, ApprovalPort, CancellationPort, PermissionMode, ToolExecutionContext,
-    ToolFuture, ToolPort, ToolSandboxPolicy,
+    ToolFuture, ToolLifecycleError, ToolLifecycleFuture, ToolPort, ToolSandboxPolicy,
 };
 use minimax_protocol::{
-    AgentLimits, ConversationItem, JournalRecord, ModelBinding, ModelId, ProviderId,
-    ProviderProtocolKind, RuntimeErrorCode, RuntimeFailure, SchemaVersion, StreamEvent,
-    TerminalOutcome, ToolCall, ToolCallFragment, ToolCallId, ToolDecision, ToolDecisionKind,
-    ToolDefinition, ToolEffect, ToolInvocation, ToolResult, ToolTerminalStatus, TurnRequest,
+    AgentLimits, ConversationItem, FULL_ACCESS_TOOL_NAMES, JournalRecord, ModelBinding, ModelId,
+    ProviderId, ProviderProtocolKind, RuntimeErrorCode, RuntimeFailure, SHELL_TOOL_NAMES,
+    SchemaVersion, ShellReceipt, ShellSessionId, ShellSessionState, StreamEvent, TerminalOutcome,
+    ToolCall, ToolCallFragment, ToolCallId, ToolDecision, ToolDecisionKind, ToolDefinition,
+    ToolEffect, ToolInvocation, ToolResult, ToolTerminalStatus, TraceCode, TurnRequest,
+    V1_TOOL_NAMES,
 };
+use minimax_tools::BuiltinToolPort;
 use minimax_tui::ApprovalInput;
 use serde::Deserialize;
 use tokio_util::sync::CancellationToken;
@@ -224,6 +228,166 @@ impl ToolPort for ToolSpy {
     }
 }
 
+#[derive(Default)]
+struct FakeShellState {
+    accepting: bool,
+    transitions: Vec<PermissionMode>,
+    shutdown_calls: usize,
+    spawn_calls: usize,
+    sessions: Vec<String>,
+    cleanup_failure_ids: Vec<String>,
+}
+
+#[derive(Clone, Default)]
+struct FakeShellPort {
+    state: Arc<Mutex<FakeShellState>>,
+}
+
+impl FakeShellPort {
+    fn spawn_count(&self) -> usize {
+        self.state.lock().expect("fake shell state").spawn_calls
+    }
+
+    fn transitions(&self) -> Vec<PermissionMode> {
+        self.state
+            .lock()
+            .expect("fake shell state")
+            .transitions
+            .clone()
+    }
+
+    fn shutdown_count(&self) -> usize {
+        self.state.lock().expect("fake shell state").shutdown_calls
+    }
+
+    fn fail_cleanup_for(&self, session_ids: &[&str]) {
+        self.state
+            .lock()
+            .expect("fake shell state")
+            .cleanup_failure_ids = session_ids.iter().map(|id| (*id).to_owned()).collect();
+    }
+}
+
+impl ToolPort for FakeShellPort {
+    fn preflight(
+        &self,
+        invocation: &ToolInvocation,
+        context: ToolExecutionContext,
+        _cancellation: &dyn CancellationPort,
+    ) -> Result<(), ToolResult> {
+        if SHELL_TOOL_NAMES.contains(&invocation.call.name.as_str()) {
+            let accepting = self.state.lock().expect("fake shell state").accepting;
+            if context.permission_mode() != PermissionMode::FullAccess || !accepting {
+                return Err(result_for(
+                    invocation,
+                    ToolTerminalStatus::Rejected,
+                    "shell_requires_full_access",
+                    None,
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    fn execute<'a>(
+        &'a self,
+        invocation: &'a ToolInvocation,
+        _context: ToolExecutionContext,
+        _cancellation: &'a dyn CancellationPort,
+    ) -> ToolFuture<'a> {
+        Box::pin(async move {
+            match invocation.call.name.as_str() {
+                "shell_command" => {
+                    let mut state = self.state.lock().expect("fake shell state");
+                    if !state.accepting {
+                        return result_for(
+                            invocation,
+                            ToolTerminalStatus::Rejected,
+                            "shell_requires_full_access",
+                            None,
+                        );
+                    }
+                    state.spawn_calls += 1;
+                    let session_id = format!("shell-fake-{:04}", state.spawn_calls);
+                    state.sessions.push(session_id.clone());
+                    let receipt = ShellReceipt::new(
+                        ShellSessionId::new(session_id).expect("fake session id"),
+                        ShellSessionState::Running,
+                        None,
+                        "DO_NOT_PERSIST_OUTPUT sk-output-secret".to_owned(),
+                        false,
+                    )
+                    .expect("fake shell receipt");
+                    result_for(
+                        invocation,
+                        ToolTerminalStatus::Succeeded,
+                        "shell_running",
+                        Some(serde_json::to_string(&receipt).expect("receipt JSON")),
+                    )
+                }
+                "shell_session" => {
+                    let arguments: serde_json::Value =
+                        serde_json::from_str(&invocation.call.arguments_json)
+                            .expect("shell session arguments");
+                    let session_id = arguments["session_id"].as_str().unwrap_or_default();
+                    let state = self.state.lock().expect("fake shell state");
+                    if !state.sessions.iter().any(|known| known == session_id) {
+                        return result_for(
+                            invocation,
+                            ToolTerminalStatus::Rejected,
+                            "shell_session_not_found",
+                            None,
+                        );
+                    }
+                    let receipt = ShellReceipt::new(
+                        ShellSessionId::new(session_id).expect("known session id"),
+                        ShellSessionState::Running,
+                        None,
+                        String::new(),
+                        false,
+                    )
+                    .expect("fake shell receipt");
+                    result_for(
+                        invocation,
+                        ToolTerminalStatus::Succeeded,
+                        "shell_running",
+                        Some(serde_json::to_string(&receipt).expect("receipt JSON")),
+                    )
+                }
+                _ => result_for(invocation, ToolTerminalStatus::Succeeded, "ok", None),
+            }
+        })
+    }
+
+    fn transition_permission<'a>(&'a self, mode: PermissionMode) -> ToolLifecycleFuture<'a> {
+        Box::pin(async move {
+            let mut state = self.state.lock().expect("fake shell state");
+            state.transitions.push(mode);
+            state.accepting = mode == PermissionMode::FullAccess;
+            if mode == PermissionMode::Confirm && !state.cleanup_failure_ids.is_empty() {
+                return Err(ToolLifecycleError {
+                    code: "shell_stop_indeterminate",
+                    session_ids: state.cleanup_failure_ids.clone(),
+                });
+            }
+            if mode == PermissionMode::Confirm {
+                state.sessions.clear();
+            }
+            Ok(())
+        })
+    }
+
+    fn shutdown<'a>(&'a self) -> ToolLifecycleFuture<'a> {
+        Box::pin(async move {
+            let mut state = self.state.lock().expect("fake shell state");
+            state.shutdown_calls += 1;
+            state.accepting = false;
+            state.sessions.clear();
+            Ok(())
+        })
+    }
+}
+
 fn result_for(
     invocation: &ToolInvocation,
     status: ToolTerminalStatus,
@@ -285,6 +449,54 @@ fn tool_round(calls: &[(&str, &str)]) -> ScriptRound {
         ],
         required_terminal_records: 0,
     }
+}
+
+fn shell_command_round(call_id: &str, command: &str, cwd: &str) -> ScriptRound {
+    ScriptRound {
+        events: vec![
+            StreamEvent::ToolCallFragments {
+                fragments: vec![ToolCallFragment {
+                    call_id: ToolCallId::new(call_id).expect("call"),
+                    stream_id: Some(format!("stream-{call_id}")),
+                    name: Some("shell_command".to_owned()),
+                    arguments_delta: Some(
+                        serde_json::json!({"command": command, "cwd": cwd}).to_string(),
+                    ),
+                    arguments_complete: true,
+                    index: Some(0),
+                }],
+            },
+            StreamEvent::Terminal {
+                outcome: TerminalOutcome::Completed,
+            },
+        ],
+        required_terminal_records: 0,
+    }
+}
+
+fn tool_names(request: &TurnRequest) -> Vec<&str> {
+    request
+        .tools
+        .iter()
+        .map(|tool| tool.name.as_str())
+        .collect()
+}
+
+fn all_tool_definitions() -> Vec<ToolDefinition> {
+    BuiltinToolPort::definitions_for(PermissionMode::FullAccess).expect("full-access definitions")
+}
+
+fn shell_invocation(call_id: &str, name: &str, arguments: serde_json::Value) -> ToolInvocation {
+    ToolInvocation::new(
+        ToolCall::new(
+            ToolCallId::new(call_id).expect("call id"),
+            name,
+            arguments.to_string(),
+        )
+        .expect("tool call"),
+        ToolEffect::Process,
+    )
+    .expect("tool invocation")
 }
 
 fn final_round(required_terminal_records: usize) -> ScriptRound {
@@ -556,7 +768,10 @@ async fn full_access_skips_prompt_but_still_preflights_persists_and_executes() {
         AgentLimits::default(),
     )
     .expect("driver");
-    driver.set_permission_mode(PermissionMode::FullAccess);
+    driver
+        .set_permission_mode(PermissionMode::FullAccess)
+        .await
+        .expect("enable full-access");
     driver.run_agent("read", 128).await.expect("run");
     assert!(approvals.lock().expect("approvals").is_empty());
     assert_eq!(preflights.lock().expect("preflights").len(), 1);
@@ -605,6 +820,236 @@ async fn full_access_skips_prompt_but_still_preflights_persists_and_executes() {
         "test/permission-service.test.ts",
         "ts-permission-reset-on-restart",
         "full_access_skips_prompt_but_still_preflights_persists_and_executes",
+    );
+}
+
+#[tokio::test]
+async fn provider_definitions_are_permission_filtered_and_forged_confirm_shell_is_rejected() {
+    let project = tempfile::tempdir().expect("project");
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let approvals = Arc::new(Mutex::new(Vec::new()));
+    let tools = FakeShellPort::default();
+    let provider = ScriptedProvider {
+        rounds: VecDeque::from([
+            shell_command_round(
+                "call-forged-shell",
+                "echo DO_NOT_PERSIST_COMMAND sk-command-secret",
+                "C:\\DO_NOT_PERSIST_CWD",
+            ),
+            final_round(1),
+        ]),
+        requests: Arc::clone(&requests),
+        journal_path: journal_path(project.path()),
+    };
+    let mut driver = RuntimeDriver::open_with_agent_ports(
+        project.path(),
+        binding(ProviderProtocolKind::Responses),
+        provider,
+        DriverIds::new("forged-shell", 2_600),
+        Box::new(ApprovalSpy {
+            decisions: Mutex::new(VecDeque::new()),
+            calls: Arc::clone(&approvals),
+            unavailable: false,
+        }),
+        Box::new(tools.clone()),
+        all_tool_definitions(),
+        AgentLimits::default(),
+    )
+    .expect("driver");
+
+    let report = driver
+        .run_agent("forged shell", 128)
+        .await
+        .expect("terminal run");
+    assert_eq!(report.tool_results.len(), 1);
+    assert_eq!(report.tool_results[0].code, "shell_requires_full_access");
+    assert_eq!(report.tool_results[0].status, ToolTerminalStatus::Rejected);
+    assert!(approvals.lock().expect("approval calls").is_empty());
+    assert_eq!(tools.spawn_count(), 0);
+
+    let captured = requests.lock().expect("provider requests");
+    assert_eq!(captured.len(), 2);
+    assert_eq!(tool_names(&captured[0]), V1_TOOL_NAMES);
+    assert_eq!(tool_names(&captured[1]), V1_TOOL_NAMES);
+    let session = driver.session(&report.receipt.session_id).expect("session");
+    assert_eq!(
+        session.turns[0].tool_invocations[0]
+            .terminal_result
+            .as_ref()
+            .expect("durable forged result")
+            .code,
+        "shell_requires_full_access"
+    );
+}
+
+#[tokio::test]
+async fn full_access_shell_lifecycle_is_idempotent_and_trace_is_metadata_only() {
+    let project = tempfile::tempdir().expect("project");
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let approvals = Arc::new(Mutex::new(Vec::new()));
+    let tools = FakeShellPort::default();
+    let provider = ScriptedProvider {
+        rounds: VecDeque::from([
+            shell_command_round(
+                "call-running-shell",
+                "echo DO_NOT_PERSIST_COMMAND sk-command-secret",
+                "C:\\DO_NOT_PERSIST_CWD",
+            ),
+            final_round(1),
+        ]),
+        requests: Arc::clone(&requests),
+        journal_path: journal_path(project.path()),
+    };
+    let mut driver = RuntimeDriver::open_with_agent_ports(
+        project.path(),
+        binding(ProviderProtocolKind::Responses),
+        provider,
+        DriverIds::new("running-shell", 2_700),
+        Box::new(ApprovalSpy {
+            decisions: Mutex::new(VecDeque::new()),
+            calls: Arc::clone(&approvals),
+            unavailable: false,
+        }),
+        Box::new(tools.clone()),
+        all_tool_definitions(),
+        AgentLimits::default(),
+    )
+    .expect("driver");
+
+    driver
+        .set_permission_mode(PermissionMode::FullAccess)
+        .await
+        .expect("enable full-access");
+    driver
+        .set_permission_mode(PermissionMode::FullAccess)
+        .await
+        .expect("repeat full-access");
+    assert_eq!(tools.transitions(), [PermissionMode::FullAccess]);
+
+    let report = driver
+        .run_agent("start persistent shell", 128)
+        .await
+        .expect("agent run");
+    assert!(approvals.lock().expect("approval calls").is_empty());
+    assert_eq!(tools.spawn_count(), 1);
+    assert_eq!(report.tool_results[0].code, "shell_running");
+    {
+        let captured = requests.lock().expect("provider requests");
+        assert_eq!(tool_names(&captured[0]), FULL_ACCESS_TOOL_NAMES);
+        assert_eq!(tool_names(&captured[1]), FULL_ACCESS_TOOL_NAMES);
+    }
+
+    let trace = driver
+        .active_trace_entries()
+        .into_iter()
+        .find(|entry| entry.code == TraceCode::ToolCompleted)
+        .expect("Shell completion trace");
+    assert_eq!(
+        trace.facts.keys().map(String::as_str).collect::<Vec<_>>(),
+        [
+            "elapsed_ms",
+            "exit_code",
+            "output_bytes",
+            "session_id",
+            "state",
+            "tool",
+            "truncated",
+        ]
+    );
+    assert_eq!(trace.facts["tool"], "shell_command");
+    assert_eq!(trace.facts["state"], "running");
+    let serialized = serde_json::to_string(&trace).expect("trace JSON");
+    for prohibited in [
+        "DO_NOT_PERSIST_COMMAND",
+        "DO_NOT_PERSIST_CWD",
+        "DO_NOT_PERSIST_OUTPUT",
+        "sk-command-secret",
+        "sk-output-secret",
+    ] {
+        assert!(
+            !serialized.contains(prohibited),
+            "trace leaked {prohibited}"
+        );
+    }
+
+    driver
+        .set_permission_mode(PermissionMode::Confirm)
+        .await
+        .expect("disable Shell");
+    driver
+        .set_permission_mode(PermissionMode::Confirm)
+        .await
+        .expect("repeat confirm");
+    assert_eq!(driver.permission_mode(), PermissionMode::Confirm);
+    assert_eq!(
+        tools.transitions(),
+        [PermissionMode::FullAccess, PermissionMode::Confirm]
+    );
+    let new_work = shell_invocation(
+        "call-after-downgrade",
+        "shell_command",
+        serde_json::json!({"command": "echo blocked"}),
+    );
+    let denial = tools
+        .preflight(
+            &new_work,
+            ToolExecutionContext::for_permission_mode(PermissionMode::FullAccess),
+            &minimax_tools::NeverCancelled,
+        )
+        .expect_err("draining port rejects new Shell work");
+    assert_eq!(denial.code, "shell_requires_full_access");
+
+    driver.shutdown_tools().await.expect("tool shutdown");
+    assert_eq!(tools.shutdown_count(), 1);
+}
+
+#[tokio::test]
+async fn permission_cleanup_failure_stays_confirm_and_reports_exact_session_ids() {
+    let project = tempfile::tempdir().expect("project");
+    let tools = FakeShellPort::default();
+    let mut driver = RuntimeDriver::open_with_agent_ports(
+        project.path(),
+        binding(ProviderProtocolKind::Responses),
+        ScriptedProvider {
+            rounds: VecDeque::new(),
+            requests: Arc::new(Mutex::new(Vec::new())),
+            journal_path: journal_path(project.path()),
+        },
+        DriverIds::new("cleanup-failure", 2_800),
+        Box::new(HeadlessApprovalPort),
+        Box::new(tools.clone()),
+        all_tool_definitions(),
+        AgentLimits::default(),
+    )
+    .expect("driver");
+    driver
+        .set_permission_mode(PermissionMode::FullAccess)
+        .await
+        .expect("enable full-access");
+    tools.fail_cleanup_for(&["shell-failed-0001", "shell-failed-0002"]);
+
+    let error = driver
+        .set_permission_mode(PermissionMode::Confirm)
+        .await
+        .expect_err("cleanup must report indeterminate sessions");
+    assert_eq!(driver.permission_mode(), PermissionMode::Confirm);
+    assert_eq!(
+        error,
+        DriverError::ToolLifecycle(ToolLifecycleError {
+            code: "shell_stop_indeterminate",
+            session_ids: vec![
+                "shell-failed-0001".to_owned(),
+                "shell-failed-0002".to_owned(),
+            ],
+        })
+    );
+    assert_eq!(
+        error.to_string(),
+        "tool lifecycle error: shell_stop_indeterminate: shell-failed-0001,shell-failed-0002"
+    );
+    assert_eq!(
+        tools.transitions(),
+        [PermissionMode::FullAccess, PermissionMode::Confirm]
     );
 }
 
@@ -685,7 +1130,10 @@ async fn full_access_cannot_bypass_a_preflight_denial() {
         AgentLimits::default(),
     )
     .expect("driver");
-    driver.set_permission_mode(PermissionMode::FullAccess);
+    driver
+        .set_permission_mode(PermissionMode::FullAccess)
+        .await
+        .expect("enable full-access");
     driver.run_agent("read", 128).await.expect("run");
     assert!(approvals.lock().expect("approvals").is_empty());
     assert!(executions.lock().expect("executions").is_empty());
@@ -728,7 +1176,10 @@ async fn provider_round_budget_exhaustion_is_one_durable_terminal_failure() {
         },
     )
     .expect("driver");
-    driver.set_permission_mode(PermissionMode::FullAccess);
+    driver
+        .set_permission_mode(PermissionMode::FullAccess)
+        .await
+        .expect("enable full-access");
     let report = driver
         .run_agent("read", 128)
         .await
@@ -831,7 +1282,10 @@ async fn cancellation_after_started_persists_indeterminate_and_never_reexecutes(
         AgentLimits::default(),
     )
     .expect("driver");
-    driver.set_permission_mode(PermissionMode::FullAccess);
+    driver
+        .set_permission_mode(PermissionMode::FullAccess)
+        .await
+        .expect("enable full-access");
     *cancellation.lock().expect("cancellation") = Some(driver.cancellation_token());
 
     let report = driver
@@ -999,7 +1453,10 @@ async fn concrete_builtin_tools_complete_on_both_provider_protocols_in_full_acce
             Box::new(HeadlessApprovalPort),
         )
         .expect("builtin tools");
-        driver.set_permission_mode(PermissionMode::FullAccess);
+        driver
+            .set_permission_mode(PermissionMode::FullAccess)
+            .await
+            .expect("enable full-access");
 
         let report = driver
             .run_agent("read fixture", 128)

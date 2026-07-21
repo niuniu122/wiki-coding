@@ -623,16 +623,20 @@ fn render_wiki_report(jsonl: bool, report: &WikiRunReport) -> ExitClass {
 }
 
 async fn finish_chat_session<P>(
-    driver: &RuntimeDriver<P>,
+    driver: &mut RuntimeDriver<P>,
     binding: &minimax_cli::ProjectVaultBinding,
     base_exit: ExitClass,
+    jsonl: bool,
 ) -> ExitClass
 where
     P: minimax_cli::ProviderPort + WikiGenerationPort,
 {
+    if let Err(error) = driver.shutdown_tools().await {
+        eprintln!("HIGH PRIORITY: tool cleanup failed: {error}");
+    }
     match finalize_active_wiki(driver, binding).await {
         Ok(Some(report)) => {
-            if render_wiki_report(false, &report) == ExitClass::Completed {
+            if render_wiki_report(jsonl, &report) == ExitClass::Completed {
                 base_exit
             } else {
                 ExitClass::Workspace
@@ -676,8 +680,12 @@ async fn execute_run(args: RunArgs) -> ExitClass {
             return exit_for_error(&error);
         }
     };
-    if args.agent {
-        driver.set_permission_mode(args.permission.into());
+    if args.agent
+        && let Err(error) = driver.set_permission_mode(args.permission.into()).await
+    {
+        eprintln!("permission transition failed: {error}");
+        let exit = exit_for_error(&error);
+        return finish_chat_session(&mut driver, &vault_binding, exit, args.jsonl).await;
     }
     let prompt = if args.agent {
         match augment_agent_prompt(
@@ -691,7 +699,13 @@ async fn execute_run(args: RunArgs) -> ExitClass {
             Ok(prompt) => prompt,
             Err(error) => {
                 eprintln!("project discovery failed: {error}");
-                return ExitClass::Workspace;
+                return finish_chat_session(
+                    &mut driver,
+                    &vault_binding,
+                    ExitClass::Workspace,
+                    args.jsonl,
+                )
+                .await;
             }
         }
     } else {
@@ -713,7 +727,13 @@ async fn execute_run(args: RunArgs) -> ExitClass {
         };
         if output_failed {
             eprintln!("run failed: output stream is unavailable");
-            return ExitClass::Workspace;
+            return finish_chat_session(
+                &mut driver,
+                &vault_binding,
+                ExitClass::Workspace,
+                args.jsonl,
+            )
+            .await;
         }
         report
     } else {
@@ -733,29 +753,14 @@ async fn execute_run(args: RunArgs) -> ExitClass {
         }
         report
     };
-    match report {
-        Ok(report) => {
-            let run_exit = exit_for_report(&report);
-            match finalize_active_wiki(&driver, &vault_binding).await {
-                Ok(Some(wiki)) => {
-                    if render_wiki_report(args.jsonl, &wiki) == ExitClass::Completed {
-                        run_exit
-                    } else {
-                        ExitClass::Workspace
-                    }
-                }
-                Ok(None) => run_exit,
-                Err(error) => {
-                    eprintln!("Wiki workflow failed: {error}");
-                    ExitClass::Workspace
-                }
-            }
-        }
+    let exit = match report {
+        Ok(report) => exit_for_report(&report),
         Err(error) => {
             eprintln!("run failed: {error}");
             exit_for_error(&error)
         }
-    }
+    };
+    finish_chat_session(&mut driver, &vault_binding, exit, args.jsonl).await
 }
 
 async fn execute_chat(args: ChatArgs) -> ExitClass {
@@ -781,7 +786,7 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
             }
         };
         let exit = render_chat_turn(&mut driver, prompt, config.max_output_tokens).await;
-        return finish_chat_session(&driver, &vault_binding, exit).await;
+        return finish_chat_session(&mut driver, &vault_binding, exit, false).await;
     }
 
     let hooks = CrosstermTerminalHooks;
@@ -819,17 +824,38 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
     loop {
         print!("> ");
         if io::stdout().flush().is_err() {
-            return ExitClass::Workspace;
+            return finish_chat_session(&mut driver, &vault_binding, ExitClass::Workspace, false)
+                .await;
         }
         let line = match session.read_line() {
             Ok(Some(line)) => line,
             Ok(None) => {
-                return finish_chat_session(&driver, &vault_binding, ExitClass::Completed).await;
+                return finish_chat_session(
+                    &mut driver,
+                    &vault_binding,
+                    ExitClass::Completed,
+                    false,
+                )
+                .await;
             }
             Err(error) if error.kind() == io::ErrorKind::Interrupted => {
-                return finish_chat_session(&driver, &vault_binding, ExitClass::Interrupted).await;
+                return finish_chat_session(
+                    &mut driver,
+                    &vault_binding,
+                    ExitClass::Interrupted,
+                    false,
+                )
+                .await;
             }
-            Err(_) => return ExitClass::Workspace,
+            Err(_) => {
+                return finish_chat_session(
+                    &mut driver,
+                    &vault_binding,
+                    ExitClass::Workspace,
+                    false,
+                )
+                .await;
+            }
         };
         let parsed = match parse_input(&line) {
             Ok(parsed) => parsed,
@@ -842,7 +868,7 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
             ParsedInput::Prompt(prompt) => {
                 let exit = render_chat_turn(&mut driver, prompt, config.max_output_tokens).await;
                 if exit != ExitClass::Completed {
-                    return finish_chat_session(&driver, &vault_binding, exit).await;
+                    return finish_chat_session(&mut driver, &vault_binding, exit, false).await;
                 }
             }
             ParsedInput::Command(intent) => {
@@ -855,14 +881,20 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
                 }
                 match intent {
                     CommandIntent::Exit => {
-                        return finish_chat_session(&driver, &vault_binding, ExitClass::Completed)
-                            .await;
+                        return finish_chat_session(
+                            &mut driver,
+                            &vault_binding,
+                            ExitClass::Completed,
+                            false,
+                        )
+                        .await;
                     }
                     CommandIntent::ChatSubmit(prompt) => {
                         let exit =
                             render_chat_turn(&mut driver, prompt, config.max_output_tokens).await;
                         if exit != ExitClass::Completed {
-                            return finish_chat_session(&driver, &vault_binding, exit).await;
+                            return finish_chat_session(&mut driver, &vault_binding, exit, false)
+                                .await;
                         }
                     }
                     CommandIntent::AgentSubmit(prompt) => {
@@ -883,7 +915,8 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
                         let exit =
                             render_agent_turn(&mut driver, prompt, config.max_output_tokens).await;
                         if exit != ExitClass::Completed {
-                            return finish_chat_session(&driver, &vault_binding, exit).await;
+                            return finish_chat_session(&mut driver, &vault_binding, exit, false)
+                                .await;
                         }
                     }
                     CommandIntent::AgentContinue => {
@@ -893,7 +926,8 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
                         let exit =
                             render_agent_turn(&mut driver, prompt, config.max_output_tokens).await;
                         if exit != ExitClass::Completed {
-                            return finish_chat_session(&driver, &vault_binding, exit).await;
+                            return finish_chat_session(&mut driver, &vault_binding, exit, false)
+                                .await;
                         }
                     }
                     CommandIntent::Permissions(None) => println!(
@@ -908,14 +942,17 @@ async fn execute_chat(args: ChatArgs) -> ExitClass {
                             minimax_tui::PermissionName::Confirm => PermissionMode::Confirm,
                             minimax_tui::PermissionName::FullAccess => PermissionMode::FullAccess,
                         };
-                        driver.set_permission_mode(mode);
+                        let transition = driver.set_permission_mode(mode).await;
                         println!(
                             "{}",
                             permission_status(
-                                mode,
+                                driver.permission_mode(),
                                 SandboxCapability::detect(&args.common.project),
                             )
                         );
+                        if let Err(error) = transition {
+                            eprintln!("HIGH PRIORITY: permission transition failed: {error}");
+                        }
                     }
                     CommandIntent::NewSession => {
                         match finalize_active_wiki(&driver, &vault_binding).await {
@@ -1295,7 +1332,27 @@ fn environment() -> BTreeMap<String, String> {
 
 #[cfg(test)]
 mod tests {
-    use super::{credential_setup_guidance, vault_command_guidance};
+    use std::future::Future;
+    use std::pin::Pin;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    use minimax_cli::{
+        DriverIds, ExitClass, HeadlessApprovalPort, ProjectVaultBinding, ProviderPort,
+        RuntimeDriver,
+    };
+    use minimax_core::{
+        CancellationPort, ToolExecutionContext, ToolFuture, ToolLifecycleError,
+        ToolLifecycleFuture, ToolPort, WikiGenerationError, WikiGenerationFuture,
+        WikiGenerationPort, WikiGenerationRequest,
+    };
+    use minimax_protocol::{
+        AgentLimits, ModelBinding, ModelId, ProjectId, ProviderId, ProviderProtocolKind,
+        RuntimeFailure, StreamEvent, ToolInvocation, ToolResult, TurnRequest,
+    };
+    use tokio_util::sync::CancellationToken;
+
+    use super::{credential_setup_guidance, finish_chat_session, vault_command_guidance};
 
     #[test]
     fn installed_command_guidance_is_secret_safe_and_uses_the_npm_binary_name() {
@@ -1307,5 +1364,114 @@ mod tests {
         let vault = vault_command_guidance("status");
         assert!(vault.contains("minimax-codex vault"));
         assert!(!vault.contains("minimax-codex-rust vault"));
+    }
+
+    struct NoopProvider;
+
+    impl ProviderPort for NoopProvider {
+        fn rebind(&mut self, _binding: &ModelBinding) {}
+
+        fn stream<'a>(
+            &'a mut self,
+            _request: &'a TurnRequest,
+            _cancellation: &'a CancellationToken,
+            _emit: &'a mut (dyn FnMut(StreamEvent) + Send),
+        ) -> Pin<Box<dyn Future<Output = Result<(), RuntimeFailure>> + Send + 'a>> {
+            Box::pin(async { panic!("empty session does not call Provider") })
+        }
+    }
+
+    impl WikiGenerationPort for NoopProvider {
+        fn generate<'a>(&'a self, _request: &'a WikiGenerationRequest) -> WikiGenerationFuture<'a> {
+            Box::pin(async { Err(WikiGenerationError::Failed) })
+        }
+    }
+
+    struct ShutdownSpy {
+        calls: Arc<AtomicUsize>,
+        fail: bool,
+    }
+
+    impl ToolPort for ShutdownSpy {
+        fn preflight(
+            &self,
+            _invocation: &ToolInvocation,
+            _context: ToolExecutionContext,
+            _cancellation: &dyn CancellationPort,
+        ) -> Result<(), ToolResult> {
+            unreachable!("empty session has no tool calls")
+        }
+
+        fn execute<'a>(
+            &'a self,
+            _invocation: &'a ToolInvocation,
+            _context: ToolExecutionContext,
+            _cancellation: &'a dyn CancellationPort,
+        ) -> ToolFuture<'a> {
+            Box::pin(async { unreachable!("empty session has no tool calls") })
+        }
+
+        fn shutdown<'a>(&'a self) -> ToolLifecycleFuture<'a> {
+            Box::pin(async move {
+                self.calls.fetch_add(1, Ordering::SeqCst);
+                if self.fail {
+                    Err(ToolLifecycleError {
+                        code: "shell_stop_indeterminate",
+                        session_ids: vec!["shell-failed-0001".to_owned()],
+                    })
+                } else {
+                    Ok(())
+                }
+            })
+        }
+    }
+
+    fn test_binding() -> ModelBinding {
+        ModelBinding {
+            provider_id: ProviderId::new("fixture").expect("provider"),
+            model_id: ModelId::new("fixture-model").expect("model"),
+            protocol: ProviderProtocolKind::Responses,
+        }
+    }
+
+    #[tokio::test]
+    async fn normal_cli_finish_shuts_tools_once_and_preserves_original_exit_class() {
+        for (index, (base_exit, fail_cleanup)) in [
+            (ExitClass::Completed, false),
+            (ExitClass::Interrupted, false),
+            (ExitClass::Provider, true),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let project = tempfile::tempdir().expect("project");
+            let vault = tempfile::tempdir().expect("vault");
+            let calls = Arc::new(AtomicUsize::new(0));
+            let mut driver = RuntimeDriver::open_with_agent_ports(
+                project.path(),
+                test_binding(),
+                NoopProvider,
+                DriverIds::new(format!("finish-{index}"), 50_000),
+                Box::new(HeadlessApprovalPort),
+                Box::new(ShutdownSpy {
+                    calls: Arc::clone(&calls),
+                    fail: fail_cleanup,
+                }),
+                Vec::new(),
+                AgentLimits::default(),
+            )
+            .expect("driver");
+            let binding = ProjectVaultBinding {
+                project_root: project.path().to_path_buf(),
+                vault_root: vault.path().to_path_buf(),
+                project_id: ProjectId::new(format!("project-{index}")).expect("project id"),
+                created_at_unix_ms: 1,
+            };
+
+            let exit = finish_chat_session(&mut driver, &binding, base_exit, false).await;
+
+            assert_eq!(exit, base_exit);
+            assert_eq!(calls.load(Ordering::SeqCst), 1);
+        }
     }
 }

@@ -5,23 +5,24 @@ use std::io::Write as _;
 use std::path::Path;
 use std::pin::Pin;
 use std::sync::Arc;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use minimax_core::{
     AgentBudget, ApprovalPort, CancellationFuture, CancellationPort, CompactionBudget,
     CompactionError, InvocationEffect, InvocationError, InvocationInput, InvocationMachine,
     InvocationRegistry, InvocationState, LocalCompactor, PermissionMode, RunEffect, RunInput,
     RunMachine, RunState, SafeTraceFact, SafeTraceRecorder, SessionCommand, SessionEffect,
-    SessionSummary, ToolExecutionContext, ToolPort, WikiGenerationError, WikiGenerationFuture,
-    WikiGenerationOutput, WikiGenerationPort, WikiGenerationRequest,
+    SessionSummary, ToolExecutionContext, ToolLifecycleError, ToolPort, WikiGenerationError,
+    WikiGenerationFuture, WikiGenerationOutput, WikiGenerationPort, WikiGenerationRequest,
 };
 use minimax_protocol::{
     AgentLimits, AssistantToolCallBatch, CompactionId, CompactionRecord, ConversationItem,
     JournalRecord, MessageRole, ModelBinding, ModelMessage, OutputSettings, RecordId, RequestId,
-    RuntimeErrorCode, RuntimeEvent, RuntimeEventV1, RuntimeFailure, SchemaVersion, SessionId,
-    SessionRecord, SessionRecordV1, StreamEvent, TerminalOutcome, ToolDecision, ToolDecisionKind,
-    ToolDefinition, ToolInvocation, ToolResult, ToolResultMessage, ToolTerminalStatus, TraceCode,
-    TraceEntry, TurnId, TurnReceipt, TurnRequest, Usage,
+    RuntimeErrorCode, RuntimeEvent, RuntimeEventV1, RuntimeFailure, SHELL_TOOL_NAMES,
+    SchemaVersion, SessionId, SessionRecord, SessionRecordV1, ShellReceipt, ShellSessionState,
+    StreamEvent, TerminalOutcome, ToolDecision, ToolDecisionKind, ToolDefinition, ToolInvocation,
+    ToolResult, ToolResultMessage, ToolTerminalStatus, TraceCode, TraceEntry, TurnId, TurnReceipt,
+    TurnRequest, Usage,
 };
 use minimax_provider::{HttpProviderClient, ResolvedCredential};
 use minimax_tools::BuiltinToolPort;
@@ -403,12 +404,13 @@ impl DriverIds {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DriverError {
     Runtime(RuntimeErrorCode),
     Store(RuntimeStoreError),
     Compaction(CompactionError),
     Invocation(InvocationError),
+    ToolLifecycle(ToolLifecycleError),
 }
 
 impl fmt::Display for DriverError {
@@ -418,6 +420,12 @@ impl fmt::Display for DriverError {
             Self::Store(error) => error.fmt(formatter),
             Self::Compaction(error) => error.fmt(formatter),
             Self::Invocation(error) => write!(formatter, "tool invocation error: {error:?}"),
+            Self::ToolLifecycle(error) => write!(
+                formatter,
+                "tool lifecycle error: {}: {}",
+                error.code,
+                error.session_ids.join(",")
+            ),
         }
     }
 }
@@ -484,7 +492,7 @@ impl<P: ProviderPort> RuntimeDriver<P> {
         let project_root = project_root.as_ref().to_path_buf();
         let tools = BuiltinToolPort::production(&project_root)
             .map_err(|_| DriverError::Runtime(RuntimeErrorCode::Configuration))?;
-        let definitions = BuiltinToolPort::definitions()
+        let definitions = BuiltinToolPort::definitions_for(PermissionMode::FullAccess)
             .map_err(|_| DriverError::Runtime(RuntimeErrorCode::Configuration))?;
         Self::open_with_agent_ports(
             project_root,
@@ -551,8 +559,45 @@ impl<P: ProviderPort> RuntimeDriver<P> {
         self.permission_mode
     }
 
-    pub fn set_permission_mode(&mut self, mode: PermissionMode) {
-        self.permission_mode = mode;
+    pub async fn set_permission_mode(&mut self, mode: PermissionMode) -> Result<(), DriverError> {
+        if self.permission_mode == mode {
+            return Ok(());
+        }
+        match mode {
+            PermissionMode::FullAccess => {
+                self.tools
+                    .transition_permission(mode)
+                    .await
+                    .map_err(DriverError::ToolLifecycle)?;
+                self.permission_mode = mode;
+                Ok(())
+            }
+            PermissionMode::Confirm => {
+                self.permission_mode = PermissionMode::Confirm;
+                self.tools
+                    .transition_permission(PermissionMode::Confirm)
+                    .await
+                    .map_err(DriverError::ToolLifecycle)
+            }
+        }
+    }
+
+    pub async fn shutdown_tools(&self) -> Result<(), DriverError> {
+        self.tools
+            .shutdown()
+            .await
+            .map_err(DriverError::ToolLifecycle)
+    }
+
+    fn tool_definitions_for(&self, mode: PermissionMode) -> Vec<ToolDefinition> {
+        self.tool_definitions
+            .iter()
+            .filter(|definition| {
+                mode == PermissionMode::FullAccess
+                    || !SHELL_TOOL_NAMES.contains(&definition.name.as_str())
+            })
+            .cloned()
+            .collect()
     }
 
     #[must_use]
@@ -685,6 +730,7 @@ impl<P: ProviderPort> RuntimeDriver<P> {
     where
         F: FnMut(&RuntimeEventV1),
     {
+        let mode = self.permission_mode;
         let record_id = self.ids.record_id()?;
         let turn_id = self.ids.turn_id()?;
         let request_id = self.ids.request_id()?;
@@ -698,10 +744,10 @@ impl<P: ProviderPort> RuntimeDriver<P> {
             now_unix_ms,
         })?;
         let mut request = start_request(effects)?;
-        request.tools.clone_from(&self.tool_definitions);
+        request.tools = self.tool_definitions_for(mode);
         request.agent_limits = Some(self.agent_limits);
         let request = request.validate().map_err(DriverError::Runtime)?;
-        self.drive_agent_request(request, &mut publish).await
+        self.drive_agent_request(request, mode, &mut publish).await
     }
 
     pub async fn run_prompt_with<F>(
@@ -839,6 +885,7 @@ impl<P: ProviderPort> RuntimeDriver<P> {
     async fn drive_agent_request(
         &mut self,
         mut request: TurnRequest,
+        mode: PermissionMode,
         publish: &mut dyn FnMut(&RuntimeEventV1),
     ) -> Result<RunReport, DriverError> {
         let mut machine = RunMachine::new();
@@ -849,11 +896,13 @@ impl<P: ProviderPort> RuntimeDriver<P> {
         let mut budget = AgentBudget::new(self.agent_limits, budget_now_unix_ms())
             .map_err(|_| DriverError::Runtime(RuntimeErrorCode::Configuration))?;
         let mut registry = InvocationRegistry::default();
+        let mut machine_request = request.clone();
+        machine_request.tools.clone_from(&self.tool_definitions);
         apply_runtime_input(
             &mut self.store,
             &mut self.ids,
             &mut machine,
-            RunInput::Begin(request.clone()),
+            RunInput::Begin(machine_request),
             &mut events,
             &mut assistant,
             &run_cancellation,
@@ -928,7 +977,12 @@ impl<P: ProviderPort> RuntimeDriver<P> {
                             .register(invocation)
                             .map_err(DriverError::Invocation)?;
                         let result = self
-                            .complete_invocation(invocation.clone(), &mut budget, &run_cancellation)
+                            .complete_invocation(
+                                invocation.clone(),
+                                mode,
+                                &mut budget,
+                                &run_cancellation,
+                            )
                             .await?;
                         results.push(result);
                     }
@@ -946,12 +1000,15 @@ impl<P: ProviderPort> RuntimeDriver<P> {
                         .extend(results.into_iter().map(|tool_result| {
                             ConversationItem::ToolResult(ToolResultMessage { tool_result })
                         }));
-                    request = request.validate().map_err(DriverError::Runtime)?;
+                    let mut machine_request = request.clone();
+                    machine_request.tools.clone_from(&self.tool_definitions);
+                    let machine_request =
+                        machine_request.validate().map_err(DriverError::Runtime)?;
                     apply_runtime_input(
                         &mut self.store,
                         &mut self.ids,
                         &mut machine,
-                        RunInput::ContinueAfterTools(request.clone()),
+                        RunInput::ContinueAfterTools(machine_request),
                         &mut events,
                         &mut assistant,
                         &run_cancellation,
@@ -968,10 +1025,11 @@ impl<P: ProviderPort> RuntimeDriver<P> {
     async fn complete_invocation(
         &mut self,
         invocation: ToolInvocation,
+        mode: PermissionMode,
         budget: &mut AgentBudget,
         cancellation: &CancellationToken,
     ) -> Result<ToolResult, DriverError> {
-        let context = ToolExecutionContext::for_permission_mode(self.permission_mode);
+        let context = ToolExecutionContext::for_permission_mode(mode);
         let (mut machine, initial) = InvocationMachine::request(invocation.clone());
         let _ = self
             .apply_invocation_effects(&mut machine, initial, context, budget, cancellation)
@@ -1011,6 +1069,7 @@ impl<P: ProviderPort> RuntimeDriver<P> {
     ) -> Result<Option<ToolResult>, DriverError> {
         let mut pending = VecDeque::from(effects);
         let mut terminal = None;
+        let mut shell_trace = None;
         while let Some(effect) = pending.pop_front() {
             match effect {
                 InvocationEffect::PersistRequested(invocation) => {
@@ -1079,10 +1138,13 @@ impl<P: ProviderPort> RuntimeDriver<P> {
                         continue;
                     }
                     let cancellation = DriverCancellation(cancellation);
+                    let started = Instant::now();
                     let result = self
                         .tools
                         .execute(&invocation, context, &cancellation)
                         .await;
+                    let elapsed_ms =
+                        u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
                     let result = normalize_execution_result(&invocation, result);
                     let result_bytes = serde_json::to_vec(&result)
                         .map_err(|_| DriverError::Runtime(RuntimeErrorCode::Recovery))?
@@ -1092,6 +1154,15 @@ impl<P: ProviderPort> RuntimeDriver<P> {
                             Ok(()) => result,
                             Err(error) => budget.failure_result(&invocation, error),
                         };
+                    if SHELL_TOOL_NAMES.contains(&result.tool_name.as_str())
+                        && result
+                            .output
+                            .as_deref()
+                            .and_then(|output| serde_json::from_str::<ShellReceipt>(output).ok())
+                            .is_some()
+                    {
+                        shell_trace = Some((result.clone(), elapsed_ms));
+                    }
                     pending.extend(
                         machine
                             .apply(InvocationInput::Complete { result })
@@ -1099,6 +1170,7 @@ impl<P: ProviderPort> RuntimeDriver<P> {
                     );
                 }
                 InvocationEffect::PersistTerminal(result) => {
+                    let call_id = result.call_id.clone();
                     self.store
                         .apply_command(SessionCommand::RecordToolTerminal {
                             record_id: self.ids.record_id()?,
@@ -1106,6 +1178,17 @@ impl<P: ProviderPort> RuntimeDriver<P> {
                             result,
                             now_unix_ms: self.ids.now_unix_ms(),
                         })?;
+                    if let Some((result, elapsed_ms)) = shell_trace
+                        .take()
+                        .filter(|(result, _)| result.call_id == call_id)
+                    {
+                        record_shell_tool_trace(
+                            &mut self.store,
+                            &mut self.ids,
+                            &result,
+                            elapsed_ms,
+                        )?;
+                    }
                 }
                 InvocationEffect::PublishTerminal(result) => {
                     terminal = Some(result);
@@ -1355,6 +1438,64 @@ fn record_provider_connected(
             ),
         ]),
     )
+}
+
+fn record_shell_tool_trace(
+    store: &mut RuntimeStore,
+    ids: &mut DriverIds,
+    result: &ToolResult,
+    elapsed_ms: u64,
+) -> Result<(), DriverError> {
+    let Some(receipt) = result
+        .output
+        .as_deref()
+        .and_then(|output| serde_json::from_str::<ShellReceipt>(output).ok())
+    else {
+        return Ok(());
+    };
+    record_trace(
+        store,
+        ids,
+        TraceCode::ToolCompleted,
+        BTreeMap::from([
+            (
+                "tool".to_owned(),
+                SafeTraceFact::String(result.tool_name.clone()),
+            ),
+            (
+                "session_id".to_owned(),
+                SafeTraceFact::String(receipt.session_id.as_str().to_owned()),
+            ),
+            (
+                "state".to_owned(),
+                SafeTraceFact::String(shell_state_name(receipt.state).to_owned()),
+            ),
+            (
+                "exit_code".to_owned(),
+                receipt.exit_code.map_or(SafeTraceFact::Null, |code| {
+                    SafeTraceFact::I64(i64::from(code))
+                }),
+            ),
+            (
+                "output_bytes".to_owned(),
+                SafeTraceFact::U64(u64::try_from(receipt.output.len()).unwrap_or(u64::MAX)),
+            ),
+            (
+                "truncated".to_owned(),
+                SafeTraceFact::Bool(receipt.output_truncated),
+            ),
+            ("elapsed_ms".to_owned(), SafeTraceFact::U64(elapsed_ms)),
+        ]),
+    )
+}
+
+const fn shell_state_name(state: ShellSessionState) -> &'static str {
+    match state {
+        ShellSessionState::Running => "running",
+        ShellSessionState::Exited => "exited",
+        ShellSessionState::Stopped => "stopped",
+        ShellSessionState::Failed => "failed",
+    }
 }
 
 fn record_trace(

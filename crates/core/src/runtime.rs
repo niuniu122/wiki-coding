@@ -328,9 +328,8 @@ fn effect_for_tool(name: &str) -> Option<ToolEffect> {
     match name {
         "read_file" | "list_directory" => Some(ToolEffect::Read),
         "apply_patch" | "write_file" => Some(ToolEffect::Write),
-        "run_diagnostic" | "git_status" | "git_diff" | "npm_diagnostic" => {
-            Some(ToolEffect::Process)
-        }
+        "run_diagnostic" | "git_status" | "git_diff" | "npm_diagnostic" | "shell_command"
+        | "shell_session" => Some(ToolEffect::Process),
         _ => None,
     }
 }

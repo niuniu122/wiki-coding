@@ -1,7 +1,10 @@
 use std::path::Path;
 use std::sync::Arc;
 
-use minimax_core::{CancellationPort, PermissionMode, ToolExecutionContext, ToolFuture, ToolPort};
+use minimax_core::{
+    CancellationPort, PermissionMode, ToolExecutionContext, ToolFuture, ToolLifecycleError,
+    ToolLifecycleFuture, ToolPort,
+};
 use minimax_protocol::{
     SHELL_TOOL_NAMES, ToolDefinition, ToolInvocation, ToolResult, ToolValidationError,
 };
@@ -136,5 +139,41 @@ impl ToolPort for BuiltinToolPort {
         cancellation: &'a dyn CancellationPort,
     ) -> ToolFuture<'a> {
         Box::pin(self.dispatch(invocation, context, cancellation))
+    }
+
+    fn transition_permission<'a>(&'a self, mode: PermissionMode) -> ToolLifecycleFuture<'a> {
+        Box::pin(async move {
+            match mode {
+                PermissionMode::FullAccess => {
+                    self.shell_manager.enable().await;
+                    Ok(())
+                }
+                PermissionMode::Confirm => self
+                    .shell_manager
+                    .disable_and_stop_all()
+                    .await
+                    .map_err(shell_lifecycle_error),
+            }
+        })
+    }
+
+    fn shutdown<'a>(&'a self) -> ToolLifecycleFuture<'a> {
+        Box::pin(async move {
+            self.shell_manager
+                .shutdown()
+                .await
+                .map_err(shell_lifecycle_error)
+        })
+    }
+}
+
+fn shell_lifecycle_error(error: crate::ShellCleanupError) -> ToolLifecycleError {
+    ToolLifecycleError {
+        code: "shell_stop_indeterminate",
+        session_ids: error
+            .session_ids
+            .into_iter()
+            .map(|session_id| session_id.as_str().to_owned())
+            .collect(),
     }
 }

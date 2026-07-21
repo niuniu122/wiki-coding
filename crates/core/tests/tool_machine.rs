@@ -378,3 +378,32 @@ fn a_pre_start_budget_failure_is_terminal_without_started_or_execute_effects() {
         InvocationEffect::PersistStarted(_) | InvocationEffect::Execute { .. }
     )));
 }
+
+#[test]
+fn a_late_adapter_rejection_after_start_is_one_legal_terminal_result() {
+    let (mut machine, _) = InvocationMachine::request(invocation("call-late-rejection"));
+    machine
+        .apply(InvocationInput::PreflightAllowed {
+            permission_mode: PermissionMode::FullAccess,
+        })
+        .expect("policy approval");
+    machine.apply(InvocationInput::Start).expect("start");
+    let rejected = result(
+        "call-late-rejection",
+        ToolTerminalStatus::Rejected,
+        "shell_session_not_found",
+    );
+
+    assert_eq!(
+        machine
+            .apply(InvocationInput::Complete {
+                result: rejected.clone(),
+            })
+            .expect("late adapter rejection"),
+        vec![
+            InvocationEffect::PersistTerminal(rejected.clone()),
+            InvocationEffect::PublishTerminal(rejected),
+        ]
+    );
+    assert!(matches!(machine.state(), InvocationState::Terminal { .. }));
+}

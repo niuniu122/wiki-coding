@@ -9,6 +9,8 @@ use crate::knowledge::{WikiGenerationError, WikiGenerationOutput, WikiGeneration
 pub type ApprovalFuture<'a> = Pin<Box<dyn Future<Output = ToolDecision> + Send + 'a>>;
 pub type CancellationFuture<'a> = Pin<Box<dyn Future<Output = ()> + Send + 'a>>;
 pub type ToolFuture<'a> = Pin<Box<dyn Future<Output = ToolResult> + Send + 'a>>;
+pub type ToolLifecycleFuture<'a> =
+    Pin<Box<dyn Future<Output = Result<(), ToolLifecycleError>> + Send + 'a>>;
 pub type WikiGenerationFuture<'a> =
     Pin<Box<dyn Future<Output = Result<WikiGenerationOutput, WikiGenerationError>> + Send + 'a>>;
 pub type KnowledgeCommitFuture<'a> =
@@ -38,6 +40,23 @@ pub trait ToolPort: Send + Sync {
         context: ToolExecutionContext,
         cancellation: &'a dyn CancellationPort,
     ) -> ToolFuture<'a>;
+
+    fn transition_permission<'a>(
+        &'a self,
+        _mode: crate::PermissionMode,
+    ) -> ToolLifecycleFuture<'a> {
+        Box::pin(async { Ok(()) })
+    }
+
+    fn shutdown<'a>(&'a self) -> ToolLifecycleFuture<'a> {
+        Box::pin(async { Ok(()) })
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ToolLifecycleError {
+    pub code: &'static str,
+    pub session_ids: Vec<String>,
 }
 
 pub trait WikiGenerationPort: Send + Sync {

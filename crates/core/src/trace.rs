@@ -71,6 +71,15 @@ fn allowed_facts(code: TraceCode) -> &'static [&'static str] {
             "after_tokens",
         ],
         TraceCode::CommandRejected => &["command", "reason"],
+        TraceCode::ToolCompleted => &[
+            "tool",
+            "session_id",
+            "state",
+            "exit_code",
+            "output_bytes",
+            "truncated",
+            "elapsed_ms",
+        ],
     }
 }
 

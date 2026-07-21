@@ -229,3 +229,72 @@ fn trace_keeps_only_bounded_allowlisted_safe_facts_and_folds_deterministically()
     assert_eq!(folded.counts.get(&TraceCode::ProviderFailed), Some(&2));
     assert_eq!(folded.counts.get(&TraceCode::TurnRecovered), Some(&1));
 }
+
+#[test]
+fn shell_completion_trace_keeps_only_bounded_metadata() {
+    let entry = SafeTraceRecorder::record(
+        42,
+        TraceCode::ToolCompleted,
+        BTreeMap::from([
+            (
+                "tool".to_owned(),
+                SafeTraceFact::String("shell_session".to_owned()),
+            ),
+            (
+                "session_id".to_owned(),
+                SafeTraceFact::String("shell-a1b2c3d4e5f6a7b8c9d0-0001".to_owned()),
+            ),
+            (
+                "state".to_owned(),
+                SafeTraceFact::String("running".to_owned()),
+            ),
+            ("exit_code".to_owned(), SafeTraceFact::Null),
+            ("output_bytes".to_owned(), SafeTraceFact::U64(17)),
+            ("truncated".to_owned(), SafeTraceFact::Bool(false)),
+            ("elapsed_ms".to_owned(), SafeTraceFact::U64(9)),
+            (
+                "command".to_owned(),
+                SafeTraceFact::String("echo DO_NOT_PERSIST_COMMAND sk-secret".to_owned()),
+            ),
+            (
+                "cwd".to_owned(),
+                SafeTraceFact::String("C:\\DO_NOT_PERSIST_CWD".to_owned()),
+            ),
+            (
+                "input".to_owned(),
+                SafeTraceFact::String("DO_NOT_PERSIST_INPUT".to_owned()),
+            ),
+            (
+                "output".to_owned(),
+                SafeTraceFact::String("DO_NOT_PERSIST_OUTPUT".to_owned()),
+            ),
+        ]),
+    );
+    assert_eq!(entry.facts["session_id"], "shell-a1b2c3d4e5f6a7b8c9d0-0001");
+
+    assert_eq!(
+        entry.facts.keys().map(String::as_str).collect::<Vec<_>>(),
+        [
+            "elapsed_ms",
+            "exit_code",
+            "output_bytes",
+            "session_id",
+            "state",
+            "tool",
+            "truncated",
+        ]
+    );
+    let serialized = serde_json::to_string(&entry).expect("trace JSON");
+    for prohibited in [
+        "DO_NOT_PERSIST_COMMAND",
+        "DO_NOT_PERSIST_CWD",
+        "DO_NOT_PERSIST_INPUT",
+        "DO_NOT_PERSIST_OUTPUT",
+        "sk-secret",
+    ] {
+        assert!(
+            !serialized.contains(prohibited),
+            "trace leaked {prohibited}"
+        );
+    }
+}

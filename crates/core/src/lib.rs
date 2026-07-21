@@ -23,7 +23,8 @@ pub use knowledge::{
 pub use ports::{
     ApprovalFuture, ApprovalPort, CancellationFuture, CancellationPort, Clock, FixedClock,
     FixedIdGenerator, IdGenerator, KnowledgeCommitError, KnowledgeCommitFuture, KnowledgePort,
-    ToolFuture, ToolPort, WikiGenerationFuture, WikiGenerationPort,
+    ToolFuture, ToolLifecycleError, ToolLifecycleFuture, ToolPort, WikiGenerationFuture,
+    WikiGenerationPort,
 };
 pub use runtime::{RunEffect, RunInput, RunMachine, RunState};
 pub use sequence::{NormalizedReplayRecord, StreamSequence, replay_stream};
