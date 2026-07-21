@@ -141,6 +141,7 @@ async fn poll_until_truncated_or_terminal(
 ) -> Result<ShellReceipt, String> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     loop {
+        assert!(receipt.output.len() <= 49_152, "{receipt:?}");
         if receipt.output_truncated || receipt.state != ShellSessionState::Running {
             return Ok(receipt);
         }
@@ -149,7 +150,8 @@ async fn poll_until_truncated_or_terminal(
                 "oversized output did not truncate or terminate before deadline".to_owned(),
             );
         }
-        tokio::task::yield_now().await;
+        let remaining = deadline.saturating_duration_since(tokio::time::Instant::now());
+        tokio::time::sleep(Duration::from_millis(10).min(remaining)).await;
         receipt =
             poll_session_with_output_limit(manager, receipt.session_id.clone(), Duration::ZERO, 1)
                 .await?;

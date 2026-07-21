@@ -168,6 +168,7 @@ struct FakeShared {
     kill_gate: Mutex<Option<KillGate>>,
     exit_on_interrupt: AtomicBool,
     flush_hook: Mutex<Option<FlushHook>>,
+    write_error: Mutex<Option<io::ErrorKind>>,
     flush_error: Mutex<Option<io::ErrorKind>>,
     guard_drops: AtomicUsize,
 }
@@ -244,6 +245,10 @@ impl FakeControl {
 
     fn set_flush_hook(&self, hook: FlushHook) {
         *self.shared.flush_hook.lock().expect("flush hook lock") = Some(hook);
+    }
+
+    fn set_write_error(&self, kind: io::ErrorKind) {
+        *self.shared.write_error.lock().expect("write error lock") = Some(kind);
     }
 
     fn set_flush_error(&self, kind: io::ErrorKind) {
@@ -565,6 +570,7 @@ impl FakeBackend {
             kill_gate: Mutex::new(None),
             exit_on_interrupt: AtomicBool::new(true),
             flush_hook: Mutex::new(None),
+            write_error: Mutex::new(None),
             flush_error: Mutex::new(None),
             guard_drops: AtomicUsize::new(0),
         });
@@ -750,6 +756,9 @@ struct FakeWriter {
 
 impl Write for FakeWriter {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if let Some(kind) = *self.shared.write_error.lock().expect("write error lock") {
+            return Err(io::Error::new(kind, "scripted write failure"));
+        }
         self.shared
             .input
             .lock()
@@ -827,6 +836,53 @@ async fn enabled_manager(
     let manager = manager(backend, clock);
     manager.enable().await;
     manager
+}
+
+async fn assert_failed_startup_handshake_releases_capacity(
+    manager: &ShellSessionManager,
+    backend: &Arc<FakeBackend>,
+    failed_control: &FakeControl,
+) {
+    assert!(!failed_control.is_running());
+    assert_eq!(failed_control.guard_drops(), 1);
+
+    let mut replacement_controls = Vec::new();
+    for index in 0..MAX_RUNNING_SHELL_SESSIONS {
+        let control = backend.queue_process();
+        let expected_spawns = backend.spawn_count() + 1;
+        let start_manager = manager.clone();
+        let start = tokio::spawn(async move {
+            start_manager
+                .start(
+                    command_request(&format!("replacement-{index}"), Duration::ZERO),
+                    &NeverCancelled,
+                )
+                .await
+        });
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            backend.wait_for_spawn_count(expected_spawns),
+        )
+        .await
+        .expect("released startup slot reaches replacement spawn");
+        control.emit(b"\x1b[6n".to_vec());
+        let receipt = tokio::time::timeout(Duration::from_secs(1), start)
+            .await
+            .expect("replacement startup handshake completes")
+            .expect("replacement startup task joins")
+            .expect("released startup slot accepts replacement session");
+        assert_eq!(receipt.state, ShellSessionState::Running);
+        replacement_controls.push(control);
+    }
+
+    manager
+        .shutdown()
+        .await
+        .expect("failed handshake leaves no shutdown cleanup debt");
+    for control in replacement_controls {
+        assert!(!control.is_running());
+        assert_eq!(control.guard_drops(), 1);
+    }
 }
 
 #[tokio::test]
@@ -1032,7 +1088,7 @@ async fn required_cursor_handshake_write_failure_cleans_up_before_start_returns(
     let backend = Arc::new(FakeBackend::default());
     backend.require_cursor_handshake();
     let control = backend.queue_process();
-    control.set_flush_error(io::ErrorKind::BrokenPipe);
+    control.set_write_error(io::ErrorKind::BrokenPipe);
     let manager = enabled_manager(Arc::clone(&backend), Arc::new(ManualClock::default())).await;
     let start_manager = manager.clone();
     let start = tokio::spawn(async move {
@@ -1048,17 +1104,71 @@ async fn required_cursor_handshake_write_failure_cleans_up_before_start_returns(
         .expect("failing handshake reaches backend spawn");
     control.emit(b"\x1b[6n".to_vec());
     let result = tokio::time::timeout(Duration::from_secs(3), start).await;
-    let cleanup = manager.shutdown().await;
-
-    cleanup.expect("failed handshake leaves no cleanup debt");
     assert_eq!(
         result
             .expect("failed handshake returns")
             .expect("failed handshake task joins"),
         Err(ShellManagerError::Io)
     );
-    assert!(!control.is_running());
-    assert_eq!(control.guard_drops(), 1);
+    assert_failed_startup_handshake_releases_capacity(&manager, &backend, &control).await;
+}
+
+#[tokio::test]
+async fn required_cursor_handshake_flush_failure_cleans_up_before_start_returns() {
+    let backend = Arc::new(FakeBackend::default());
+    backend.require_cursor_handshake();
+    let control = backend.queue_process();
+    control.set_flush_error(io::ErrorKind::BrokenPipe);
+    let manager = enabled_manager(Arc::clone(&backend), Arc::new(ManualClock::default())).await;
+    let start_manager = manager.clone();
+    let start = tokio::spawn(async move {
+        start_manager
+            .start(
+                command_request("flush-failure", Duration::ZERO),
+                &NeverCancelled,
+            )
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(1), backend.wait_for_spawn_count(1))
+        .await
+        .expect("flush-failing handshake reaches backend spawn");
+    control.emit(b"\x1b[6n".to_vec());
+    let result = tokio::time::timeout(Duration::from_secs(3), start).await;
+
+    assert_eq!(
+        result
+            .expect("flush-failed handshake returns")
+            .expect("flush-failed handshake task joins"),
+        Err(ShellManagerError::Io)
+    );
+    assert_failed_startup_handshake_releases_capacity(&manager, &backend, &control).await;
+}
+
+#[tokio::test]
+async fn required_cursor_handshake_eof_before_query_cleans_up_before_start_returns() {
+    let backend = Arc::new(FakeBackend::default());
+    backend.require_cursor_handshake();
+    let control = backend.queue_process();
+    let manager = enabled_manager(Arc::clone(&backend), Arc::new(ManualClock::default())).await;
+    let start_manager = manager.clone();
+    let start = tokio::spawn(async move {
+        start_manager
+            .start(command_request("eof", Duration::ZERO), &NeverCancelled)
+            .await
+    });
+    tokio::time::timeout(Duration::from_secs(1), backend.wait_for_spawn_count(1))
+        .await
+        .expect("EOF handshake reaches backend spawn");
+    control.finish_reader();
+    let result = tokio::time::timeout(Duration::from_secs(3), start).await;
+
+    assert_eq!(
+        result
+            .expect("EOF handshake returns")
+            .expect("EOF handshake task joins"),
+        Err(ShellManagerError::Io)
+    );
+    assert_failed_startup_handshake_releases_capacity(&manager, &backend, &control).await;
 }
 
 #[tokio::test(start_paused = true)]
@@ -1076,15 +1186,11 @@ async fn required_cursor_handshake_timeout_cleans_up_before_start_returns() {
     backend.wait_for_spawn_count(1).await;
     tokio::time::advance(Duration::from_secs(3)).await;
     let result = start.await;
-    let cleanup = manager.shutdown().await;
-
-    cleanup.expect("timed out handshake leaves no cleanup debt");
     assert_eq!(
         result.expect("timed out handshake task joins"),
         Err(ShellManagerError::Io)
     );
-    assert!(!control.is_running());
-    assert_eq!(control.guard_drops(), 1);
+    assert_failed_startup_handshake_releases_capacity(&manager, &backend, &control).await;
 }
 
 #[tokio::test]

@@ -430,6 +430,51 @@ pub fn validate_source_authority(
     Ok(())
 }
 
+fn yaml_mapping_key(line: &str) -> Result<Option<&str>, ()> {
+    let input = line.trim_start();
+    let Some(first) = input.as_bytes().first().copied() else {
+        return Ok(None);
+    };
+    if first == b'#' {
+        return Ok(None);
+    }
+    if first != b'\'' && first != b'"' {
+        let Some(colon) = input.find(':') else {
+            return Ok(None);
+        };
+        let key = input[..colon].trim_end();
+        return Ok((!key.is_empty()).then_some(key));
+    }
+
+    let mut index = 1;
+    let mut escaped = false;
+    while index < input.len() {
+        let byte = input.as_bytes()[index];
+        if first == b'"' && byte == b'\\' {
+            escaped = true;
+            index += 2;
+            continue;
+        }
+        if byte == first {
+            if first == b'\'' && input.as_bytes().get(index + 1) == Some(&b'\'') {
+                escaped = true;
+                index += 2;
+                continue;
+            }
+            let remainder = input[index + 1..].trim_start();
+            if !remainder.starts_with(':') {
+                return Ok(None);
+            }
+            if escaped {
+                return Err(());
+            }
+            return Ok(Some(&input[1..index]));
+        }
+        index += 1;
+    }
+    Err(())
+}
+
 pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityError> {
     let normalized = source.replace("\r\n", "\n");
     let lowercase = normalized.to_ascii_lowercase();
@@ -491,19 +536,29 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
         .map_or(lines.len(), |(index, _)| index);
     let native_pty_step = &lines[*native_pty_start..native_pty_end];
     let native_pty_run = format!("run: {native_pty_command}");
-    let valid_native_pty_step = native_pty_step
+    let native_pty_run_lines = lines
         .iter()
-        .filter(|line| line.trim() == native_pty_run)
-        .count()
-        == 1
-        && lines
-            .iter()
-            .filter(|line| line.trim() == native_pty_run)
-            .count()
-            == 1
-        && !native_pty_step.iter().any(|line| {
-            let line = line.trim_start();
-            line.starts_with("if:") || line.starts_with("continue-on-error:")
+        .enumerate()
+        .filter(|(_, line)| line.trim() == native_pty_run)
+        .map(|(index, _)| index)
+        .collect::<Vec<_>>();
+    let [native_pty_run_index] = native_pty_run_lines.as_slice() else {
+        return violation("CI must run native PTY Shell integration on every hosted platform");
+    };
+    let native_pty_mapping_indent = lines[*native_pty_run_index]
+        .len()
+        .saturating_sub(lines[*native_pty_run_index].trim_start().len());
+    let valid_native_pty_step = (*native_pty_start..native_pty_end).contains(native_pty_run_index)
+        && native_pty_step.iter().all(|line| {
+            let trimmed = line.trim_start();
+            let indent = line.len().saturating_sub(trimmed.len());
+            if indent != native_pty_mapping_indent {
+                return true;
+            }
+            !matches!(
+                yaml_mapping_key(line),
+                Err(()) | Ok(Some("if" | "continue-on-error"))
+            )
         });
     if !valid_native_pty_step {
         return violation("CI must run native PTY Shell integration on every hosted platform");

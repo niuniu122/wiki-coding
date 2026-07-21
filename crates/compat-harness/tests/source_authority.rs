@@ -876,6 +876,25 @@ fn ci_keeps_rust_authority_ahead_of_packaging_and_fails_closed() {
         "CI must run native PTY Shell integration on every hosted platform",
     );
 
+    for forbidden_key in [
+        "        \"if\": runner.os == 'Linux'\n",
+        "        'if' : runner.os == 'Linux'\n",
+        "        if : runner.os == 'Linux'\n",
+        "        \"continue-on-error\": true\n",
+        "        continue-on-error : true\n",
+    ] {
+        let disguised_native_pty_control = source.replace(
+            native_pty_step,
+            &format!(
+                "      - name: Run native PTY Shell integration\n        run: cargo test -p minimax-tools --test shell_pty --locked -- --nocapture\n{forbidden_key}"
+            ),
+        );
+        assert_ci_rejected(
+            &disguised_native_pty_control,
+            "CI must run native PTY Shell integration on every hosted platform",
+        );
+    }
+
     let non_blocking_native_pty = source.replace(
         native_pty_step,
         "      - name: Run native PTY Shell integration\n        continue-on-error: true\n        run: cargo test -p minimax-tools --test shell_pty --locked -- --nocapture\n",
