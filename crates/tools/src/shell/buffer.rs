@@ -84,6 +84,25 @@ impl ShellOutputBuffer {
         self.append_normalized(normalized);
     }
 
+    pub fn peek(&self, max_bytes: usize) -> ShellOutputChunk {
+        let requested = max_bytes.min(self.unread.len());
+        let boundary = utf8_floor_boundary(&self.unread, requested);
+        let bytes = self
+            .unread
+            .iter()
+            .take(boundary)
+            .copied()
+            .collect::<Vec<_>>();
+        let output = match String::from_utf8(bytes) {
+            Ok(output) => output,
+            Err(error) => String::from_utf8_lossy(error.as_bytes()).into_owned(),
+        };
+        ShellOutputChunk {
+            output,
+            truncated: self.truncated,
+        }
+    }
+
     pub fn take(&mut self, max_bytes: usize) -> ShellOutputChunk {
         let requested = max_bytes.min(self.unread.len());
         let boundary = utf8_floor_boundary(&self.unread, requested);

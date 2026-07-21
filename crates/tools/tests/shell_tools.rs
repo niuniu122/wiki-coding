@@ -341,6 +341,138 @@ async fn maximum_shell_output_serializes_within_the_protocol_result_limit() {
     must(result.validate());
 }
 
+#[tokio::test]
+async fn json_escaped_output_is_chunked_without_losing_unreturned_bytes() {
+    let fixture = Fixture::new().await;
+    let expected = "\n\r\t\"\\".repeat(20_000);
+    fixture.backend.queue_running(expected.clone());
+    let started = invoke(
+        &fixture.port,
+        invocation(
+            "shell_command",
+            ToolEffect::Process,
+            json!({
+                "command": "escaped-output",
+                "yield_time_ms": 250,
+                "max_output_bytes": MAX_SHELL_OUTPUT_BYTES
+            }),
+        ),
+    )
+    .await;
+
+    assert_eq!(started.code, "shell_running");
+    must(started.clone().validate());
+    let first = receipt(&started);
+    assert!(!first.output_truncated);
+    let mut delivered = first.output;
+
+    for _ in 0..20 {
+        if delivered.len() == expected.len() {
+            break;
+        }
+        let polled = invoke(
+            &fixture.port,
+            invocation(
+                "shell_session",
+                ToolEffect::Process,
+                json!({
+                    "session_id": first.session_id,
+                    "action": "poll",
+                    "yield_time_ms": 100,
+                    "max_output_bytes": MAX_SHELL_OUTPUT_BYTES
+                }),
+            ),
+        )
+        .await;
+        assert_eq!(polled.code, "shell_running");
+        must(polled.clone().validate());
+        let receipt = receipt(&polled);
+        assert!(!receipt.output_truncated);
+        delivered.push_str(&receipt.output);
+    }
+
+    assert_eq!(delivered, expected);
+}
+
+#[tokio::test]
+async fn stop_honors_explicit_output_limit_and_preserves_the_remainder_for_poll() {
+    let fixture = Fixture::new().await;
+    fixture.backend.queue_running("x".repeat(50_000));
+    let started = invoke(
+        &fixture.port,
+        invocation(
+            "shell_command",
+            ToolEffect::Process,
+            json!({"command": "explicit-stop-limit", "max_output_bytes": 1024}),
+        ),
+    )
+    .await;
+    let started = receipt(&started);
+    assert_eq!(started.output.len(), 1024);
+
+    let stopped = invoke(
+        &fixture.port,
+        invocation(
+            "shell_session",
+            ToolEffect::Process,
+            json!({
+                "session_id": started.session_id,
+                "action": "stop",
+                "max_output_bytes": 1024
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(stopped.code, "shell_stopped");
+    let stopped = receipt(&stopped);
+    assert_eq!(stopped.output.len(), 1024);
+
+    let remaining = invoke(
+        &fixture.port,
+        invocation(
+            "shell_session",
+            ToolEffect::Process,
+            json!({
+                "session_id": stopped.session_id,
+                "action": "poll",
+                "yield_time_ms": 0,
+                "max_output_bytes": MAX_SHELL_OUTPUT_BYTES
+            }),
+        ),
+    )
+    .await;
+    assert_eq!(remaining.code, "shell_stopped");
+    assert_eq!(receipt(&remaining).output.len(), 50_000 - 2 * 1024);
+}
+
+#[tokio::test]
+async fn stop_uses_the_default_sixteen_kib_output_limit() {
+    let fixture = Fixture::new().await;
+    fixture.backend.queue_running("d".repeat(50_000));
+    let started = invoke(
+        &fixture.port,
+        invocation(
+            "shell_command",
+            ToolEffect::Process,
+            json!({"command": "default-stop-limit", "max_output_bytes": 1024}),
+        ),
+    )
+    .await;
+    let started = receipt(&started);
+
+    let stopped = invoke(
+        &fixture.port,
+        invocation(
+            "shell_session",
+            ToolEffect::Process,
+            json!({"session_id": started.session_id, "action": "stop"}),
+        ),
+    )
+    .await;
+    assert_eq!(stopped.code, "shell_stopped");
+    assert_eq!(receipt(&stopped).output.len(), 16 * 1024);
+}
+
 struct Fixture {
     root: TempDir,
     outside: TempDir,
@@ -576,6 +708,10 @@ fn assert_receipt(
     let receipt: ShellReceipt = must(serde_json::from_str(must_option(result.output.as_deref())));
     assert_eq!(receipt.state, state);
     assert_eq!(receipt.exit_code, exit_code);
+}
+
+fn receipt(result: &minimax_protocol::ToolResult) -> ShellReceipt {
+    must(serde_json::from_str(must_option(result.output.as_deref())))
 }
 
 fn canonical(path: &Path) -> PathBuf {

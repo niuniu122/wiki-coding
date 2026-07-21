@@ -1095,7 +1095,7 @@ async fn unpublished_cleanup_failure_retains_slot_and_is_reported_by_disable() {
     let internal_id =
         ShellSessionId::new("shell-unpublished-0001").expect("valid internal session id");
     assert_eq!(
-        manager.stop(&internal_id).await,
+        manager.stop(&internal_id, OUTPUT_LIMIT).await,
         Err(ShellManagerError::SessionNotFound)
     );
     let expected = ShellCleanupError {
@@ -1362,11 +1362,11 @@ async fn stop_is_terminal_and_idempotent() {
         .await
         .expect("long command starts");
     let first = manager
-        .stop(&started.session_id)
+        .stop(&started.session_id, OUTPUT_LIMIT)
         .await
         .expect("first stop succeeds");
     let second = manager
-        .stop(&started.session_id)
+        .stop(&started.session_id, OUTPUT_LIMIT)
         .await
         .expect("second stop is idempotent");
     assert_eq!(first.state, ShellSessionState::Stopped);
@@ -1390,13 +1390,13 @@ async fn concurrent_stop_has_one_cleanup_owner() {
 
     let first_manager = manager.clone();
     let first_id = started.session_id.clone();
-    let first = tokio::spawn(async move { first_manager.stop(&first_id).await });
+    let first = tokio::spawn(async move { first_manager.stop(&first_id, OUTPUT_LIMIT).await });
     tokio::time::advance(Duration::from_secs(2)).await;
     termination_gate.wait_for_entries(1).await;
 
     let second_manager = manager.clone();
     let second_id = started.session_id;
-    let second = tokio::spawn(async move { second_manager.stop(&second_id).await });
+    let second = tokio::spawn(async move { second_manager.stop(&second_id, OUTPUT_LIMIT).await });
     let wait_control = control.clone();
     let duplicate_interrupt = tokio::task::spawn_blocking(move || {
         wait_control.wait_for_interrupts(2, Duration::from_millis(100))
@@ -1434,7 +1434,7 @@ async fn aborted_cleanup_owner_does_not_strand_waiters() {
 
     let owner_manager = manager.clone();
     let owner_id = started.session_id.clone();
-    let owner = tokio::spawn(async move { owner_manager.stop(&owner_id).await });
+    let owner = tokio::spawn(async move { owner_manager.stop(&owner_id, OUTPUT_LIMIT).await });
     tokio::time::advance(Duration::from_secs(2)).await;
     termination_gate.wait_for_entries(1).await;
     owner.abort();
@@ -1448,7 +1448,7 @@ async fn aborted_cleanup_owner_does_not_strand_waiters() {
     termination_gate.release();
     let receipt = tokio::time::timeout(
         Duration::from_millis(100),
-        manager.stop(&started.session_id),
+        manager.stop(&started.session_id, OUTPUT_LIMIT),
     )
     .await
     .expect("aborted owner must not strand later cleanup waiters")
@@ -1479,7 +1479,7 @@ async fn cleanup_failure_is_sticky_for_stop_disable_and_shutdown() {
             .await
             .expect("sticky command starts");
         assert_eq!(
-            manager.stop(&started.session_id).await,
+            manager.stop(&started.session_id, OUTPUT_LIMIT).await,
             Err(ShellManagerError::Indeterminate)
         );
         controls.push(control);
@@ -1487,7 +1487,7 @@ async fn cleanup_failure_is_sticky_for_stop_disable_and_shutdown() {
     }
 
     assert_eq!(
-        manager.stop(&session_ids[0]).await,
+        manager.stop(&session_ids[0], OUTPUT_LIMIT).await,
         Err(ShellManagerError::Indeterminate)
     );
     let expected = ShellCleanupError {
@@ -1501,7 +1501,7 @@ async fn cleanup_failure_is_sticky_for_stop_disable_and_shutdown() {
 
     clock.advance(TERMINAL_RECEIPT_TTL + Duration::from_millis(1));
     assert_eq!(
-        manager.stop(&session_ids[0]).await,
+        manager.stop(&session_ids[0], OUTPUT_LIMIT).await,
         Err(ShellManagerError::SessionNotFound)
     );
 
@@ -1532,19 +1532,22 @@ async fn failed_cleanup_tombstones_are_bounded_by_count() {
             .await
             .expect("failed-cleanup command starts");
         assert_eq!(
-            manager.stop(&started.session_id).await,
+            manager.stop(&started.session_id, OUTPUT_LIMIT).await,
             Err(ShellManagerError::Indeterminate)
         );
         session_ids.push(started.session_id);
     }
 
     assert_eq!(
-        manager.stop(&session_ids[0]).await,
+        manager.stop(&session_ids[0], OUTPUT_LIMIT).await,
         Err(ShellManagerError::SessionNotFound)
     );
     assert_eq!(
         manager
-            .stop(session_ids.last().expect("newest failed tombstone"))
+            .stop(
+                session_ids.last().expect("newest failed tombstone"),
+                OUTPUT_LIMIT,
+            )
             .await,
         Err(ShellManagerError::Indeterminate)
     );
@@ -1639,7 +1642,7 @@ async fn blocking_child_kill_timeout_does_not_relock_child() {
                 advance_gate.wait_until_entered().await;
                 tokio::time::advance(Duration::from_secs(2) + Duration::from_millis(1)).await;
             });
-            let _ = result_tx.send(stop_manager.stop(&stop_id).await);
+            let _ = result_tx.send(stop_manager.stop(&stop_id, OUTPUT_LIMIT).await);
         });
     });
     kill_gate.wait_until_entered().await;
@@ -1680,7 +1683,7 @@ async fn blocking_child_kill_timeout_does_not_relock_child() {
     );
     assert_eq!(result, Err(ShellManagerError::Indeterminate));
     assert_eq!(
-        manager.stop(&started.session_id).await,
+        manager.stop(&started.session_id, OUTPUT_LIMIT).await,
         Err(ShellManagerError::Indeterminate)
     );
 }

@@ -39,7 +39,9 @@ impl ShellSessionTool {
         let result = match arguments {
             ParsedAction::Poll(request) => self.manager.poll(request, cancellation).await,
             ParsedAction::Write(request) => self.manager.write(request, cancellation).await,
-            ParsedAction::Stop(session_id) => self.manager.stop(&session_id).await,
+            ParsedAction::Stop(session_id, max_output_bytes) => {
+                self.manager.stop(&session_id, max_output_bytes).await
+            }
         };
         match result {
             Ok(receipt) => receipt_result(invocation, receipt),
@@ -74,7 +76,7 @@ struct ShellSessionArguments {
 enum ParsedAction {
     Poll(ShellPollRequest),
     Write(ShellWriteRequest),
-    Stop(ShellSessionId),
+    Stop(ShellSessionId, usize),
 }
 
 fn parse_arguments(invocation: &ToolInvocation) -> Result<ParsedAction, ToolDenial> {
@@ -134,7 +136,7 @@ fn parse_arguments(invocation: &ToolInvocation) -> Result<ParsedAction, ToolDeni
             {
                 return Err(ToolDenial::rejected(ToolDenialCode::InvalidArguments));
             }
-            Ok(ParsedAction::Stop(session_id))
+            Ok(ParsedAction::Stop(session_id, max_output_bytes))
         }
     }
 }

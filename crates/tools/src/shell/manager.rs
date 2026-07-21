@@ -9,7 +9,7 @@ use std::time::Duration;
 use minimax_core::{CancellationPort, Clock};
 use minimax_protocol::{
     MAX_SHELL_COMMAND_BYTES, MAX_SHELL_CWD_BYTES, MAX_SHELL_INPUT_BYTES, MAX_SHELL_OUTPUT_BYTES,
-    ShellReceipt, ShellSessionId, ShellSessionState,
+    MAX_TOOL_RESULT_BYTES, ShellReceipt, ShellSessionId, ShellSessionState,
 };
 use tokio::sync::Mutex;
 
@@ -239,10 +239,12 @@ impl ShellSessionManager {
             )
             .await
         {
-            Err(ShellManagerError::Cancelled) => match self.stop_entry(session).await {
-                Ok(_) => Err(ShellManagerError::Cancelled),
-                Err(_) => Err(ShellManagerError::Indeterminate),
-            },
+            Err(ShellManagerError::Cancelled) => {
+                match self.stop_entry(session, MAX_SHELL_OUTPUT_BYTES).await {
+                    Ok(_) => Err(ShellManagerError::Cancelled),
+                    Err(_) => Err(ShellManagerError::Indeterminate),
+                }
+            }
             result => result,
         }
     }
@@ -381,10 +383,12 @@ impl ShellSessionManager {
     pub async fn stop(
         &self,
         session_id: &ShellSessionId,
+        max_output_bytes: usize,
     ) -> Result<ShellReceipt, ShellManagerError> {
         self.gc().await;
+        validate_yield_and_output(Duration::ZERO, max_output_bytes)?;
         let session = self.session(session_id).await?;
-        self.stop_entry(session).await
+        self.stop_entry(session, max_output_bytes).await
     }
 
     pub async fn disable_and_stop_all(&self) -> Result<(), ShellCleanupError> {
@@ -426,7 +430,11 @@ impl ShellSessionManager {
 
         let mut failed = Vec::new();
         for (session_id, session) in sessions {
-            if self.stop_entry(session).await.is_err() {
+            if self
+                .stop_entry(session, MAX_SHELL_OUTPUT_BYTES)
+                .await
+                .is_err()
+            {
                 failed.push(session_id);
             }
         }
@@ -636,9 +644,10 @@ impl ShellSessionManager {
     async fn stop_entry(
         &self,
         session: Arc<StdMutex<ShellSession>>,
+        max_output_bytes: usize,
     ) -> Result<ShellReceipt, ShellManagerError> {
         self.ensure_cleanup(&session).await?;
-        self.receipt(&session, MAX_SHELL_OUTPUT_BYTES)
+        self.receipt(&session, max_output_bytes)
     }
 
     async fn ensure_cleanup(
@@ -840,11 +849,32 @@ impl ShellSessionManager {
         max_output_bytes: usize,
     ) -> Result<ShellReceipt, ShellManagerError> {
         let session = session.lock().map_err(|_| ShellManagerError::Io)?;
-        let output = session
-            .output
-            .lock()
-            .map_err(|_| ShellManagerError::Io)?
-            .take(max_output_bytes.min(MAX_SHELL_OUTPUT_BYTES));
+        let mut output = session.output.lock().map_err(|_| ShellManagerError::Io)?;
+        let requested = max_output_bytes.min(MAX_SHELL_OUTPUT_BYTES);
+        let mut low = 0;
+        let mut high = requested.min(output.unread_bytes());
+        let mut safe_limit = 0;
+        while low <= high {
+            let candidate_limit = low + (high - low) / 2;
+            let candidate_output = output.peek(candidate_limit);
+            let candidate = ShellReceipt {
+                session_id: session.id.clone(),
+                state: session.state,
+                exit_code: session.exit_code,
+                output: candidate_output.output,
+                output_truncated: candidate_output.truncated,
+            };
+            let serialized = serde_json::to_vec(&candidate).map_err(|_| ShellManagerError::Io)?;
+            if serialized.len() <= MAX_TOOL_RESULT_BYTES {
+                safe_limit = candidate_limit;
+                low = candidate_limit.saturating_add(1);
+            } else if candidate_limit == 0 {
+                break;
+            } else {
+                high = candidate_limit - 1;
+            }
+        }
+        let output = output.take(safe_limit);
         Ok(ShellReceipt {
             session_id: session.id.clone(),
             state: session.state,
