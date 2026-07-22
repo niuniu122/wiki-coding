@@ -78,6 +78,7 @@ pub struct ShellCleanupError {
 #[derive(Clone)]
 pub struct ShellSessionManager {
     inner: Arc<Mutex<ShellSessionRegistry>>,
+    lifecycle: Arc<Mutex<()>>,
     backend: Arc<dyn PtyBackend>,
     ids: Arc<dyn ShellSessionIdSource>,
     clock: Arc<dyn Clock + Send + Sync>,
@@ -291,6 +292,7 @@ impl ShellSessionManager {
                 sessions: BTreeMap::new(),
                 unpublished_sessions: BTreeMap::new(),
             })),
+            lifecycle: Arc::new(Mutex::new(())),
             backend,
             ids,
             clock,
@@ -304,6 +306,7 @@ impl ShellSessionManager {
     }
 
     pub async fn enable(&self) {
+        let _lifecycle = self.lifecycle.lock().await;
         self.gc().await;
         self.inner.lock().await.accepting = true;
     }
@@ -553,6 +556,11 @@ impl ShellSessionManager {
     }
 
     pub async fn disable_and_stop_all(&self) -> Result<(), ShellCleanupError> {
+        let _lifecycle = self.lifecycle.lock().await;
+        self.disable_and_stop_all_locked().await
+    }
+
+    async fn disable_and_stop_all_locked(&self) -> Result<(), ShellCleanupError> {
         self.gc().await;
         loop {
             let settled = self.slots.changed.notified();
@@ -1519,13 +1527,42 @@ impl Drop for PendingStart {
             return;
         }
         let (manager, mut settlement) = self.take_settlement();
-        if let Ok(runtime) = tokio::runtime::Handle::try_current() {
-            drop(runtime.spawn(async move {
-                let _ = manager.finish_unpublished_start(settlement).await;
-            }));
+        if tokio::runtime::Handle::try_current().is_ok() {
+            settle_unpublished_start_on_independent_executor(manager, settlement);
         } else {
             settlement.cleanup_without_runtime();
         }
+    }
+}
+
+fn settle_unpublished_start_on_independent_executor(
+    manager: ShellSessionManager,
+    settlement: PendingSettlement,
+) {
+    let work = Arc::new(StdMutex::new(Some((manager, settlement))));
+    let worker_work = Arc::clone(&work);
+    let spawned = thread::Builder::new()
+        .name("shell-unpublished-cleanup".to_owned())
+        .spawn(move || {
+            let Some((manager, mut settlement)) =
+                worker_work.lock().ok().and_then(|mut work| work.take())
+            else {
+                return;
+            };
+            match tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+            {
+                Ok(runtime) => {
+                    let _ = runtime.block_on(manager.finish_unpublished_start(settlement));
+                }
+                Err(_) => settlement.cleanup_without_runtime(),
+            }
+        });
+    if spawned.is_err()
+        && let Some((_manager, mut settlement)) = work.lock().ok().and_then(|mut work| work.take())
+    {
+        settlement.cleanup_without_runtime();
     }
 }
 
@@ -1881,6 +1918,115 @@ mod tests {
         );
         assert!(!early_running_release.load(Ordering::Acquire));
         assert_eq!(manager.slots.starting.load(Ordering::Acquire), 0);
+        assert_eq!(manager.slots.running.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn idle_runtime_pending_start_drop_is_settled_by_an_independent_executor() {
+        let backend = Arc::new(PublishLockBackend::default());
+        let manager = ShellSessionManager::new(
+            backend.clone(),
+            Arc::new(FixedIds),
+            Arc::new(SystemShellClock),
+        );
+        let idle_runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("idle runtime");
+        idle_runtime.block_on(async {
+            manager.enable().await;
+            let (starting_slot, running_slot) = manager.slots.reserve().expect("slot reservation");
+            let mut pending = PendingStart::reserved(manager.clone(), starting_slot, running_slot);
+            let spawned = backend
+                .spawn(&ShellSpawnRequest {
+                    command: "idle-runtime-drop".to_owned(),
+                    cwd: std::path::PathBuf::from("."),
+                    cols: 120,
+                    rows: 30,
+                })
+                .expect("idle-runtime process");
+            let resources = manager
+                .own_spawned_resources(spawned)
+                .unwrap_or_else(|_| panic!("idle-runtime resources"));
+            pending.own_resources(resources);
+            drop(pending);
+        });
+
+        let cleanup_runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("cleanup runtime");
+        cleanup_runtime
+            .block_on(async {
+                tokio::time::timeout(Duration::from_secs(1), manager.disable_and_stop_all()).await
+            })
+            .expect("cleanup must not depend on polling the first runtime")
+            .expect("independent unpublished cleanup succeeds");
+        assert_eq!(manager.slots.starting.load(Ordering::Acquire), 0);
+        assert_eq!(manager.slots.running.load(Ordering::Acquire), 0);
+    }
+
+    #[test]
+    fn idle_runtime_cleanup_failure_is_registered_for_a_later_retry() {
+        let backend = Arc::new(PublishLockBackend::default());
+        let manager = ShellSessionManager::new(
+            backend.clone(),
+            Arc::new(FixedIds),
+            Arc::new(SystemShellClock),
+        );
+        let fail = Arc::new(AtomicBool::new(true));
+        let idle_runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("idle runtime");
+        idle_runtime.block_on(async {
+            manager.enable().await;
+            let (starting_slot, running_slot) = manager.slots.reserve().expect("slot reservation");
+            let mut pending = PendingStart::reserved(manager.clone(), starting_slot, running_slot);
+            let mut spawned = backend
+                .spawn(&ShellSpawnRequest {
+                    command: "idle-runtime-failure".to_owned(),
+                    cwd: std::path::PathBuf::from("."),
+                    cols: 120,
+                    rows: 30,
+                })
+                .expect("idle-runtime process");
+            spawned.guard = Box::new(RecoveringContainmentGuard {
+                process: Arc::clone(&backend.process),
+                fail: Arc::clone(&fail),
+            });
+            let resources = manager
+                .own_spawned_resources(spawned)
+                .unwrap_or_else(|_| panic!("idle-runtime resources"));
+            pending.own_resources(resources);
+            drop(pending);
+        });
+
+        let cleanup_runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("cleanup runtime");
+        let first = cleanup_runtime
+            .block_on(async {
+                tokio::time::timeout(Duration::from_secs(1), manager.disable_and_stop_all()).await
+            })
+            .expect("failed cleanup must still register outside the idle runtime");
+        assert_eq!(
+            first,
+            Err(ShellCleanupError {
+                session_ids: vec![
+                    ShellSessionId::new("shell-unpublished-0001")
+                        .expect("valid unpublished identifier"),
+                ],
+            })
+        );
+        assert_eq!(manager.slots.starting.load(Ordering::Acquire), 0);
+        assert_eq!(manager.slots.running.load(Ordering::Acquire), 1);
+
+        fail.store(false, Ordering::Release);
+        cleanup_runtime
+            .block_on(manager.disable_and_stop_all())
+            .expect("later unpublished cleanup retry succeeds");
         assert_eq!(manager.slots.running.load(Ordering::Acquire), 0);
     }
 

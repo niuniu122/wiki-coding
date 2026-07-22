@@ -2752,6 +2752,63 @@ async fn disable_rejects_new_start_and_write_then_stops_all() {
     assert!(!racing_control.is_running());
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn enable_waits_for_an_in_progress_disable_cleanup_cycle() {
+    let backend = Arc::new(FakeBackend::default());
+    let control = backend.queue_process();
+    control.set_exit_on_interrupt(false);
+    let manager = enabled_manager(Arc::clone(&backend), Arc::new(ManualClock::default())).await;
+    manager
+        .start(
+            command_request("before-disable", Duration::ZERO),
+            &NeverCancelled,
+        )
+        .await
+        .expect("initial command starts");
+    let termination_gate = TerminationGate::new();
+    backend.set_termination_gate(termination_gate.clone());
+
+    let disable_manager = manager.clone();
+    let disable = tokio::spawn(async move { disable_manager.disable_and_stop_all().await });
+    termination_gate
+        .wait_for_entries_bounded(
+            1,
+            Duration::from_secs(3),
+            "disable reaches tree termination",
+        )
+        .await;
+    let enable_manager = manager.clone();
+    let mut enable = tokio::spawn(async move { enable_manager.enable().await });
+
+    assert!(
+        tokio::time::timeout(Duration::from_millis(50), &mut enable)
+            .await
+            .is_err(),
+        "enable reopened the manager before disable cleanup finished"
+    );
+    assert!(control.is_running());
+
+    termination_gate.release();
+    disable
+        .await
+        .expect("disable task joins")
+        .expect("disable cleanup succeeds");
+    enable.await.expect("enable task joins");
+
+    backend.queue_process();
+    manager
+        .start(
+            command_request("after-enable", Duration::ZERO),
+            &NeverCancelled,
+        )
+        .await
+        .expect("manager reopens after the complete disable cycle");
+    manager
+        .shutdown()
+        .await
+        .expect("replacement cleanup succeeds");
+}
+
 #[tokio::test]
 async fn terminal_receipts_expire_by_count_and_clock() {
     let backend = Arc::new(FakeBackend::default());
