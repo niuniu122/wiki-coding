@@ -158,10 +158,15 @@ impl NativeShellBackend {
         rows: u16,
     ) -> io::Result<SpawnedShell> {
         let trusted_host = self.resolve_host_executable()?;
+        let command_payload = super::host::WindowsCommandPayload::stage(request.command.as_str())?;
         let (listener, bootstrap) =
             super::host::HostListener::bind(HOST_STARTUP_TIMEOUT).map_err(io::Error::from)?;
         self.observe_startup("listener_bound");
-        let command = build_host_process_command(&trusted_host, &bootstrap, &request.cwd);
+        let mut command = build_host_process_command(&trusted_host, &bootstrap, &request.cwd);
+        command.env(
+            super::host::WINDOWS_COMMAND_PATH_ENV,
+            command_payload.path(),
+        );
         let minimax_windows_conpty::SpawnedConPty {
             mut child,
             reader,
@@ -221,6 +226,7 @@ impl NativeShellBackend {
             guard: Box::new(NativeShellGuard {
                 conpty: Some(control),
                 job: None,
+                command_payload: Some(command_payload),
                 parent_channel: Some(parent_channel),
                 armed: true,
             }),
@@ -314,6 +320,8 @@ impl NativeShellBackend {
     #[cfg(any(windows, target_os = "linux"))]
     fn spawn_pipe(&self, request: &ShellSpawnRequest) -> io::Result<SpawnedShell> {
         let trusted_host = self.resolve_host_executable()?;
+        #[cfg(windows)]
+        let command_payload = super::host::WindowsCommandPayload::stage(request.command.as_str())?;
         let (listener, bootstrap) =
             super::host::HostListener::bind(HOST_STARTUP_TIMEOUT).map_err(io::Error::from)?;
         self.observe_startup("listener_bound");
@@ -328,6 +336,11 @@ impl NativeShellBackend {
             write: output_write,
         } = filedescriptor::Pipe::new().map_err(descriptor_error)?;
         let mut command = build_host_process_command(&trusted_host, &bootstrap, &request.cwd);
+        #[cfg(windows)]
+        command.env(
+            super::host::WINDOWS_COMMAND_PATH_ENV,
+            command_payload.path(),
+        );
         command
             .stdin(input_read.as_stdio().map_err(descriptor_error)?)
             .stdout(output_write.as_stdio().map_err(descriptor_error)?)
@@ -408,6 +421,8 @@ impl NativeShellBackend {
                 conpty: None,
                 #[cfg(windows)]
                 job: job.take(),
+                #[cfg(windows)]
+                command_payload: Some(command_payload),
                 parent_channel: Some(parent_channel),
                 #[cfg(target_os = "linux")]
                 cleanup_confirmed: false,
@@ -805,6 +820,8 @@ struct NativeShellGuard {
     conpty: Option<minimax_windows_conpty::ConPtyControl>,
     #[cfg(windows)]
     job: Option<Job>,
+    #[cfg(windows)]
+    command_payload: Option<super::host::WindowsCommandPayload>,
     #[cfg(any(windows, target_os = "linux"))]
     parent_channel: Option<super::host::ParentChannel>,
     #[cfg(not(any(windows, target_os = "linux")))]
@@ -825,6 +842,7 @@ impl super::backend::ShellGuard for NativeShellGuard {
                 conpty.terminate_tree();
             }
             drop(self.parent_channel.take());
+            self.remove_command_payload()?;
             self.armed = false;
             Ok(())
         });
@@ -925,6 +943,7 @@ impl Drop for NativeShellGuard {
                 drop(self.job.take());
                 drop(self.conpty.take());
                 drop(self.parent_channel.take());
+                drop(self.command_payload.take());
             }
             #[cfg(target_os = "linux")]
             if let Some(parent_channel) = self.parent_channel.as_mut() {
@@ -934,6 +953,22 @@ impl Drop for NativeShellGuard {
             #[cfg(not(any(windows, target_os = "linux")))]
             let _ = self.process_id;
         }
+    }
+}
+
+#[cfg(windows)]
+impl NativeShellGuard {
+    fn remove_command_payload(&mut self) -> io::Result<()> {
+        let Some(payload) = self.command_payload.as_ref() else {
+            return Ok(());
+        };
+        match std::fs::remove_file(payload.path()) {
+            Ok(()) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+        self.command_payload.take();
+        Ok(())
     }
 }
 
@@ -1226,14 +1261,30 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[cfg(windows)]
-    use super::assign_job_before_host_protocol;
+    use std::sync::Mutex;
+    #[cfg(windows)]
+    use std::time::Duration;
+
+    #[cfg(windows)]
+    use super::{
+        NativePipeChild, NativeShellGuard, WindowsJobBoundary, assign_job_before_host_protocol,
+    };
     use super::{
         NativeShellBackend, ProcessShellSessionIds, acquire_handles_then_spawn,
         build_host_command_with_environment, is_executable_with_access_check,
         process_id_or_cleanup, resolve_linux_shell, resolve_windows_shell,
     };
+    #[cfg(windows)]
+    use crate::NeverCancelled;
     use crate::shell::host::HostListener;
     use crate::shell::{ShellBackend, ShellManagerError, ShellSessionIdSource};
+    #[cfg(windows)]
+    use crate::shell::{
+        ShellCommandRequest, ShellIoMode, ShellSessionManager, ShellSpawnRequest, SpawnedShell,
+        SystemShellClock,
+    };
+    #[cfg(windows)]
+    use minimax_protocol::{MAX_SHELL_OUTPUT_BYTES, ShellSessionState};
 
     #[test]
     fn native_launches_only_the_trusted_host_with_fixed_bootstrap_metadata() {
@@ -1439,6 +1490,254 @@ mod tests {
             0,
             "host protocol activation and command delivery must remain unreachable"
         );
+    }
+
+    #[cfg(windows)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn windows_explicit_stop_deletes_parent_owned_payload_after_job_termination() {
+        assert_parent_owned_payload_cleanup(PayloadCleanupTrigger::ExplicitStop).await;
+    }
+
+    #[cfg(windows)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn windows_permission_downgrade_deletes_parent_owned_payload_after_job_termination() {
+        assert_parent_owned_payload_cleanup(PayloadCleanupTrigger::PermissionDowngrade).await;
+    }
+
+    #[cfg(windows)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn windows_shutdown_parent_disconnect_deletes_parent_owned_payload_after_job_termination()
+    {
+        assert_parent_owned_payload_cleanup(PayloadCleanupTrigger::ShutdownParentDisconnect).await;
+    }
+
+    #[cfg(windows)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn windows_manager_drop_deletes_parent_owned_payload_after_job_termination() {
+        assert_parent_owned_payload_cleanup(PayloadCleanupTrigger::ManagerDrop).await;
+    }
+
+    #[cfg(windows)]
+    #[derive(Clone, Copy)]
+    enum PayloadCleanupTrigger {
+        ExplicitStop,
+        PermissionDowngrade,
+        ShutdownParentDisconnect,
+        ManagerDrop,
+    }
+
+    #[cfg(windows)]
+    async fn assert_parent_owned_payload_cleanup(trigger: PayloadCleanupTrigger) {
+        let fixture = tempfile::tempdir().expect("payload cleanup fixture");
+        let payload =
+            crate::shell::host::WindowsCommandPayload::stage("Write-Output 'payload-must-not-run'")
+                .expect("stage parent-owned payload");
+        let payload_path = payload.path().to_owned();
+        let release_path = fixture.path().join("release.txt");
+        let process_ids_path = fixture.path().join("process-ids.txt");
+        let program = windows_test_shell_program();
+        let script = format!(
+            "while (!(Test-Path -LiteralPath '{}')) {{ Start-Sleep -Milliseconds 10 }}; \
+             $child=Start-Process -FilePath (Get-Process -Id $PID).Path -ArgumentList @('-NoLogo','-NoProfile','-Command','Start-Sleep -Seconds 120') -PassThru; \
+             Set-Content -LiteralPath '{}' -NoNewline -Value \"parent=$PID;child=$($child.Id)\"; Start-Sleep -Seconds 120",
+            powershell_literal(&release_path),
+            powershell_literal(&process_ids_path),
+        );
+        let child = std::process::Command::new(program)
+            .args(["-NoLogo", "-NoProfile", "-Command", &script])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("spawn paused payload cleanup root");
+        let process_id = child.id();
+        let mut job = WindowsJobBoundary::new().expect("create payload cleanup Job");
+        job.assign_process(&child)
+            .expect("assign paused root before activation");
+        std::fs::write(&release_path, []).expect("activate contained process tree");
+        let process_ids = wait_for_windows_process_ids(&process_ids_path).await;
+
+        let guard = NativeShellGuard {
+            conpty: None,
+            job: job.take(),
+            parent_channel: None,
+            command_payload: Some(payload),
+            armed: true,
+        };
+        let backend = Arc::new(OneShotSpawnBackend {
+            spawned: Mutex::new(Some(SpawnedShell {
+                child: Box::new(NativePipeChild { child, process_id }),
+                reader: Box::new(Cursor::new(Vec::new())),
+                writer: Box::new(io::sink()),
+                guard: Box::new(guard),
+            })),
+        });
+        let manager = ShellSessionManager::new(
+            backend,
+            Arc::new(ProcessShellSessionIds::new().expect("process session IDs")),
+            Arc::new(SystemShellClock),
+        );
+        manager.enable().await;
+        let receipt = manager
+            .start(
+                ShellCommandRequest {
+                    command: "Write-Output 'fixture command'".to_owned(),
+                    cwd: fixture.path().to_owned(),
+                    tty: false,
+                    yield_time: Duration::ZERO,
+                    max_output_bytes: MAX_SHELL_OUTPUT_BYTES,
+                },
+                &NeverCancelled,
+            )
+            .await
+            .expect("publish paused payload cleanup fixture");
+        assert_eq!(receipt.state, ShellSessionState::Running);
+
+        match trigger {
+            PayloadCleanupTrigger::ExplicitStop => {
+                manager
+                    .stop(&receipt.session_id, MAX_SHELL_OUTPUT_BYTES)
+                    .await
+                    .expect("explicit stop cleanup");
+                manager.shutdown().await.expect("final shutdown");
+            }
+            PayloadCleanupTrigger::PermissionDowngrade => manager
+                .disable_and_stop_all()
+                .await
+                .expect("permission downgrade cleanup"),
+            PayloadCleanupTrigger::ShutdownParentDisconnect => {
+                manager.shutdown().await.expect("shutdown cleanup")
+            }
+            PayloadCleanupTrigger::ManagerDrop => drop(manager),
+        }
+
+        let survivors = wait_for_windows_processes_to_exit(&process_ids).await;
+        if survivors.is_err() {
+            force_kill_windows_processes(&process_ids);
+        }
+        survivors.expect("Job cleanup removes paused parent and child");
+        assert!(
+            !payload_path.exists(),
+            "payload owner outside the Job must delete after cleanup"
+        );
+    }
+
+    #[cfg(windows)]
+    struct OneShotSpawnBackend {
+        spawned: Mutex<Option<SpawnedShell>>,
+    }
+
+    #[cfg(windows)]
+    impl ShellBackend for OneShotSpawnBackend {
+        fn spawn(&self, request: &ShellSpawnRequest) -> io::Result<SpawnedShell> {
+            assert_eq!(request.io_mode, ShellIoMode::Pipe);
+            self.spawned
+                .lock()
+                .expect("one-shot backend lock")
+                .take()
+                .ok_or_else(|| io::Error::other("one-shot backend already consumed"))
+        }
+    }
+
+    #[cfg(windows)]
+    async fn wait_for_windows_process_ids(path: &Path) -> Vec<u32> {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
+        loop {
+            if let Ok(contents) = std::fs::read_to_string(path) {
+                let process_ids = contents
+                    .split(';')
+                    .filter_map(|field| {
+                        field
+                            .split_once('=')
+                            .and_then(|(_, value)| value.parse().ok())
+                    })
+                    .collect::<Vec<_>>();
+                if process_ids.len() == 2 {
+                    return process_ids;
+                }
+            }
+            assert!(
+                tokio::time::Instant::now() < deadline,
+                "paused process tree did not report identities"
+            );
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    }
+
+    #[cfg(windows)]
+    async fn wait_for_windows_processes_to_exit(process_ids: &[u32]) -> Result<(), Vec<u32>> {
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            let survivors = process_ids
+                .iter()
+                .copied()
+                .filter(|process_id| windows_process_is_alive(*process_id))
+                .collect::<Vec<_>>();
+            if survivors.is_empty() {
+                return Ok(());
+            }
+            if tokio::time::Instant::now() >= deadline {
+                return Err(survivors);
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+    }
+
+    #[cfg(windows)]
+    fn windows_process_is_alive(process_id: u32) -> bool {
+        std::process::Command::new(windows_test_shell_program())
+            .args([
+                "-NoLogo",
+                "-NoProfile",
+                "-Command",
+                &format!(
+                    "if ($null -ne (Get-Process -Id {process_id} -ErrorAction SilentlyContinue)) {{ exit 0 }}; exit 1"
+                ),
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+    }
+
+    #[cfg(windows)]
+    fn force_kill_windows_processes(process_ids: &[u32]) {
+        let taskkill = Path::new(
+            &std::env::var_os("SystemRoot").unwrap_or_else(|| OsString::from("C:\\Windows")),
+        )
+        .join("System32")
+        .join("taskkill.exe");
+        for process_id in process_ids {
+            let _ = std::process::Command::new(&taskkill)
+                .args(["/PID", &process_id.to_string(), "/F"])
+                .status();
+        }
+    }
+
+    #[cfg(windows)]
+    fn windows_test_shell_program() -> PathBuf {
+        std::env::var_os("PATH")
+            .into_iter()
+            .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+            .map(|directory| directory.join("pwsh.exe"))
+            .find(|candidate| candidate.is_file())
+            .or_else(|| {
+                std::env::var_os("SystemRoot")
+                    .map(PathBuf::from)
+                    .map(|root| {
+                        root.join("System32")
+                            .join("WindowsPowerShell")
+                            .join("v1.0")
+                            .join("powershell.exe")
+                    })
+            })
+            .filter(|candidate| candidate.is_file())
+            .expect("PowerShell executable")
+    }
+
+    #[cfg(windows)]
+    fn powershell_literal(path: &Path) -> String {
+        path.to_string_lossy().replace('\'', "''")
     }
 
     #[test]

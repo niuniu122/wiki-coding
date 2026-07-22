@@ -21,7 +21,7 @@ const HOST_TOKEN_ENV: &str = "MINIMAX_SHELL_HOST_TOKEN";
 const HOST_VERSION_ENV: &str = "MINIMAX_SHELL_HOST_VERSION";
 const HOST_TIMEOUT_ENV: &str = "MINIMAX_SHELL_HOST_TIMEOUT_MS";
 #[cfg(windows)]
-const WINDOWS_COMMAND_PATH_ENV: &str = "MINIMAX_SHELL_COMMAND_PATH";
+pub(super) const WINDOWS_COMMAND_PATH_ENV: &str = "MINIMAX_SHELL_COMMAND_PATH";
 #[cfg(windows)]
 const WINDOWS_COMMAND_BOOTSTRAP: &str = "$p=$env:MINIMAX_SHELL_COMMAND_PATH; Remove-Item Env:MINIMAX_SHELL_COMMAND_PATH -ErrorAction SilentlyContinue; try {$c=[IO.File]::ReadAllText($p,[Text.UTF8Encoding]::new($false,$true))} finally {Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue}; Invoke-Expression $c";
 const PROTOCOL_MAGIC: [u8; 8] = *b"MMXHOST1";
@@ -581,7 +581,6 @@ fn linux_root_exit_from_status(status: ExitStatus) -> RootExit {
 #[cfg(windows)]
 struct WindowsProcessSupervisor {
     child: Option<Child>,
-    command_payload: Option<WindowsCommandPayload>,
     observed_exit: Option<RootExit>,
 }
 
@@ -590,7 +589,6 @@ impl WindowsProcessSupervisor {
     fn new() -> Self {
         Self {
             child: None,
-            command_payload: None,
             observed_exit: None,
         }
     }
@@ -609,7 +607,19 @@ impl HostSupervisor for WindowsProcessSupervisor {
                 "shell root process already exists",
             ));
         }
-        let command_payload = WindowsCommandPayload::stage(command)?;
+        let command_payload_path = std::env::var_os(WINDOWS_COMMAND_PATH_ENV).ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "Windows shell command payload path is missing",
+            )
+        })?;
+        let staged_command = std::fs::read_to_string(&command_payload_path)?;
+        if staged_command != command {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "Windows shell command payload does not match the authenticated command",
+            ));
+        }
         let shell = resolve_windows_process_shell()?;
         let mut process = Command::new(shell.program);
         process.args(shell.args);
@@ -621,14 +631,13 @@ impl HostSupervisor for WindowsProcessSupervisor {
         ] {
             process.env_remove(key);
         }
-        process.env(WINDOWS_COMMAND_PATH_ENV, command_payload.path());
+        process.env(WINDOWS_COMMAND_PATH_ENV, command_payload_path);
         process
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit());
         let child = process.spawn()?;
         self.child = Some(child);
-        self.command_payload = Some(command_payload);
         Ok(())
     }
 
@@ -644,17 +653,14 @@ impl HostSupervisor for WindowsProcessSupervisor {
         };
         let exit = root_exit_from_status(status);
         self.observed_exit = Some(exit);
-        self.command_payload.take();
         Ok(Some(exit))
     }
 
     fn cleanup(&mut self) -> io::Result<Option<RootExit>> {
         if let Some(exit) = self.observed_exit {
-            self.command_payload.take();
             return Ok(Some(exit));
         }
         let Some(child) = self.child.as_mut() else {
-            self.command_payload.take();
             return Ok(Some(RootExit::Code(125)));
         };
         let status = match child.try_wait()? {
@@ -666,19 +672,18 @@ impl HostSupervisor for WindowsProcessSupervisor {
         };
         let exit = root_exit_from_status(status);
         self.observed_exit = Some(exit);
-        self.command_payload.take();
         Ok(Some(exit))
     }
 }
 
 #[cfg(windows)]
-struct WindowsCommandPayload {
+pub(super) struct WindowsCommandPayload {
     path: tempfile::TempPath,
 }
 
 #[cfg(windows)]
 impl WindowsCommandPayload {
-    fn stage(command: &str) -> io::Result<Self> {
+    pub(super) fn stage(command: &str) -> io::Result<Self> {
         let mut file = tempfile::Builder::new()
             .prefix("minimax-shell-")
             .suffix(".ps1")
@@ -690,7 +695,7 @@ impl WindowsCommandPayload {
         })
     }
 
-    fn path(&self) -> &Path {
+    pub(super) fn path(&self) -> &Path {
         self.path.as_ref()
     }
 }

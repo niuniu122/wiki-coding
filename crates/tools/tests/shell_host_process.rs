@@ -1,5 +1,7 @@
 #![cfg(any(windows, target_os = "linux"))]
 
+#[cfg(windows)]
+use std::io::Write as _;
 #[cfg(target_os = "linux")]
 use std::io::{BufRead as _, BufReader};
 use std::process::{Command, Stdio};
@@ -10,11 +12,30 @@ use minimax_tools::internal_shell_host::{HostEvent, HostListener, RootExit};
 #[cfg(windows)]
 #[test]
 fn real_internal_host_preserves_exit_stdio_and_hides_bootstrap_environment() {
+    let secret_command_marker = "internal-command-must-not-be-echoed-71f5650d";
+    let shell_command = format!(
+        "$m='{secret_command_marker}'; if ([Environment]::CommandLine.Contains($m)) {{ Write-Output 'argv-dirty' }} else {{ Write-Output 'argv-clean' }}; Write-Output 'shell-stdio-ok'; \
+         'MINIMAX_SHELL_HOST_ADDRESS','MINIMAX_SHELL_HOST_TOKEN','MINIMAX_SHELL_HOST_VERSION','MINIMAX_SHELL_HOST_TIMEOUT_MS','MINIMAX_SHELL_COMMAND_PATH' | \
+         ForEach-Object {{ Write-Output \"$_=$([String]::IsNullOrEmpty([Environment]::GetEnvironmentVariable($_, 'Process')))\" }}; exit 7"
+    );
+    let mut command_payload = tempfile::Builder::new()
+        .prefix("minimax-shell-host-process-")
+        .suffix(".ps1")
+        .tempfile()
+        .expect("stage parent-owned command payload");
+    command_payload
+        .write_all(shell_command.as_bytes())
+        .expect("write command payload");
+    command_payload.flush().expect("flush command payload");
+    let command_payload = command_payload.into_temp_path();
+    let command_payload_path = command_payload.to_path_buf();
+
     let (listener, bootstrap) =
         HostListener::bind(Duration::from_secs(5)).expect("bind internal host listener");
     let mut command = Command::new(env!("CARGO_BIN_EXE_minimax-shell-test-host"));
     command.args(bootstrap.arguments());
     command.envs(bootstrap.environment());
+    command.env("MINIMAX_SHELL_COMMAND_PATH", &command_payload_path);
     command.stdout(Stdio::piped()).stderr(Stdio::piped());
     let child = command.spawn().expect("spawn trusted test host");
 
@@ -23,12 +44,6 @@ fn real_internal_host_preserves_exit_stdio_and_hides_bootstrap_environment() {
     assert_eq!(
         parent.recv_event().expect("contained"),
         HostEvent::Contained
-    );
-    let secret_command_marker = "internal-command-must-not-be-echoed-71f5650d";
-    let shell_command = format!(
-        "$m='{secret_command_marker}'; if ([Environment]::CommandLine.Contains($m)) {{ Write-Output 'argv-dirty' }} else {{ Write-Output 'argv-clean' }}; Write-Output 'shell-stdio-ok'; \
-         'MINIMAX_SHELL_HOST_ADDRESS','MINIMAX_SHELL_HOST_TOKEN','MINIMAX_SHELL_HOST_VERSION','MINIMAX_SHELL_HOST_TIMEOUT_MS','MINIMAX_SHELL_COMMAND_PATH' | \
-         ForEach-Object {{ Write-Output \"$_=$([String]::IsNullOrEmpty([Environment]::GetEnvironmentVariable($_, 'Process')))\" }}; exit 7"
     );
     parent
         .send_command(&shell_command)
@@ -56,6 +71,10 @@ fn real_internal_host_preserves_exit_stdio_and_hides_bootstrap_environment() {
         assert!(stdout.contains(&format!("{key}=True")), "{stdout}");
     }
     assert!(!stdout.contains(secret_command_marker));
+    assert!(
+        !command_payload_path.exists(),
+        "PowerShell bootstrap must delete the parent-owned payload"
+    );
 }
 
 #[cfg(target_os = "linux")]
