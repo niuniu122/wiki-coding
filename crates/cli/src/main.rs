@@ -26,7 +26,7 @@ use minimax_provider::{
 };
 use minimax_tools::{
     SandboxCapability,
-    internal_shell_host::{INTERNAL_HOST_ARGUMENT, run_internal_shell_host_bootstrap},
+    internal_shell_host::{INTERNAL_HOST_ARGUMENT, run_internal_shell_host},
 };
 use minimax_tui::{
     CommandAvailability, CommandIntent, CrosstermTerminalHooks, EventRenderer, InteractiveShell,
@@ -41,7 +41,7 @@ use minimax_vault::{
 fn main() -> ExitCode {
     let mut arguments = std::env::args_os().collect::<Vec<_>>();
     if is_internal_shell_host_invocation(&arguments) {
-        std::process::exit(run_internal_shell_host_bootstrap());
+        std::process::exit(run_internal_shell_host());
     }
     if arguments.len() == 1 {
         arguments.push("chat".into());

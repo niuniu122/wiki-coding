@@ -1,6 +1,10 @@
 use std::ffi::OsString;
 use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+#[cfg(windows)]
+use std::path::PathBuf;
+#[cfg(windows)]
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use minimax_protocol::MAX_SHELL_COMMAND_BYTES;
@@ -159,12 +163,183 @@ impl HostBootstrap {
     }
 }
 
-pub fn run_internal_shell_host_bootstrap() -> i32 {
+pub fn run_internal_shell_host() -> i32 {
     let result = HostBootstrap::from_current_environment()
         .and_then(HostBootstrap::connect)
-        .and_then(|mut channel| channel.recv_activate());
-    let _ = result;
-    125
+        .and_then(|channel| {
+            run_host_lifecycle(
+                channel,
+                PlatformHostSupervisor::new(),
+                Duration::from_millis(10),
+            )
+        });
+    match result {
+        Ok(RootExit::Code(code)) => code,
+        Ok(RootExit::Signal(signal)) => 128 + i32::from(signal),
+        Err(_) => 125,
+    }
+}
+
+#[cfg(windows)]
+type PlatformHostSupervisor = WindowsProcessSupervisor;
+
+#[cfg(not(windows))]
+struct PlatformHostSupervisor;
+
+#[cfg(not(windows))]
+impl PlatformHostSupervisor {
+    fn new() -> Self {
+        Self
+    }
+}
+
+#[cfg(not(windows))]
+impl HostSupervisor for PlatformHostSupervisor {
+    fn preflight(&mut self) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "internal shell host containment is not implemented on this platform",
+        ))
+    }
+
+    fn spawn(&mut self, _command: &str) -> io::Result<()> {
+        Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "internal shell host containment is not implemented on this platform",
+        ))
+    }
+
+    fn try_root_exit(&mut self) -> io::Result<Option<RootExit>> {
+        Ok(None)
+    }
+
+    fn cleanup(&mut self) -> io::Result<Option<RootExit>> {
+        Ok(Some(RootExit::Code(125)))
+    }
+}
+
+#[cfg(windows)]
+struct WindowsProcessSupervisor {
+    child: Option<Child>,
+    observed_exit: Option<RootExit>,
+}
+
+#[cfg(windows)]
+impl WindowsProcessSupervisor {
+    fn new() -> Self {
+        Self {
+            child: None,
+            observed_exit: None,
+        }
+    }
+}
+
+#[cfg(windows)]
+impl HostSupervisor for WindowsProcessSupervisor {
+    fn preflight(&mut self) -> io::Result<()> {
+        Ok(())
+    }
+
+    fn spawn(&mut self, command: &str) -> io::Result<()> {
+        if self.child.is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "shell root process already exists",
+            ));
+        }
+        let shell = resolve_windows_process_shell(command)?;
+        let mut process = Command::new(shell.program);
+        process.args(shell.args);
+        for key in [
+            HOST_ADDRESS_ENV,
+            HOST_TOKEN_ENV,
+            HOST_VERSION_ENV,
+            HOST_TIMEOUT_ENV,
+        ] {
+            process.env_remove(key);
+        }
+        process
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
+        self.child = Some(process.spawn()?);
+        Ok(())
+    }
+
+    fn try_root_exit(&mut self) -> io::Result<Option<RootExit>> {
+        if let Some(exit) = self.observed_exit {
+            return Ok(Some(exit));
+        }
+        let Some(child) = self.child.as_mut() else {
+            return Ok(None);
+        };
+        let Some(status) = child.try_wait()? else {
+            return Ok(None);
+        };
+        let exit = root_exit_from_status(status);
+        self.observed_exit = Some(exit);
+        Ok(Some(exit))
+    }
+
+    fn cleanup(&mut self) -> io::Result<Option<RootExit>> {
+        if let Some(exit) = self.observed_exit {
+            return Ok(Some(exit));
+        }
+        let Some(child) = self.child.as_mut() else {
+            return Ok(Some(RootExit::Code(125)));
+        };
+        let status = match child.try_wait()? {
+            Some(status) => status,
+            None => {
+                child.kill()?;
+                child.wait()?
+            }
+        };
+        let exit = root_exit_from_status(status);
+        self.observed_exit = Some(exit);
+        Ok(Some(exit))
+    }
+}
+
+#[cfg(windows)]
+fn resolve_windows_process_shell(command: &str) -> io::Result<ResolvedProcessShell> {
+    let pwsh = std::env::var_os("PATH")
+        .into_iter()
+        .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+        .map(|directory| directory.join("pwsh.exe"))
+        .find(|candidate| candidate.is_file());
+    let powershell = std::env::var_os("SystemRoot")
+        .map(PathBuf::from)
+        .map(|root| {
+            root.join("System32")
+                .join("WindowsPowerShell")
+                .join("v1.0")
+                .join("powershell.exe")
+        })
+        .filter(|candidate| candidate.is_file());
+    let program = pwsh.or(powershell).ok_or_else(|| {
+        io::Error::new(io::ErrorKind::NotFound, "PowerShell executable not found")
+    })?;
+    Ok(ResolvedProcessShell {
+        program,
+        args: vec![
+            "-NoLogo".to_owned(),
+            "-NoProfile".to_owned(),
+            "-Command".to_owned(),
+            command.to_owned(),
+        ],
+    })
+}
+
+#[cfg(windows)]
+struct ResolvedProcessShell {
+    program: PathBuf,
+    args: Vec<String>,
+}
+
+#[cfg(windows)]
+fn root_exit_from_status(status: ExitStatus) -> RootExit {
+    RootExit::Code(status.code().unwrap_or(125))
 }
 
 pub trait HostSupervisor {
