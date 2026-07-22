@@ -500,6 +500,9 @@ fn validate_yaml_mapping_level(
         } else {
             trimmed
         };
+        if matches!(mapping.as_bytes().first(), Some(b'\'' | b'"')) {
+            return violation(message);
+        }
         let Ok(Some(key)) = yaml_mapping_key(mapping) else {
             return violation(message);
         };
@@ -550,6 +553,9 @@ fn validate_yaml_step_mappings(
             8 => trimmed,
             _ => continue,
         };
+        if matches!(mapping.as_bytes().first(), Some(b'\'' | b'"')) {
+            return violation(message);
+        }
         let Ok(Some(key)) = yaml_mapping_key(mapping) else {
             return violation(message);
         };
@@ -684,6 +690,15 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
             (indent == 2 && matches!(yaml_mapping_key(line), Ok(Some(_)))).then_some(index)
         })
         .collect::<Vec<_>>();
+    for job_start in &job_headers {
+        let Some((_, value)) = lines[*job_start].trim_start().split_once(':') else {
+            return violation("CI jobs mapping keys must be unambiguous");
+        };
+        let value = value.trim_start();
+        if !value.is_empty() && !value.starts_with('#') {
+            return violation("CI jobs must use block mappings");
+        }
+    }
     for (position, job_start) in job_headers.iter().enumerate() {
         let job_end = job_headers.get(position + 1).copied().unwrap_or(jobs_end);
         validate_yaml_mapping_level(
@@ -697,9 +712,14 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
         if lines[*job_start + 1..job_end].iter().any(|line| {
             let trimmed = line.trim_start();
             line.len().saturating_sub(trimmed.len()) == 4
-                && matches!(yaml_mapping_key(line), Ok(Some("permissions" | "secrets")))
+                && matches!(
+                    yaml_mapping_key(line),
+                    Ok(Some("continue-on-error" | "permissions" | "secrets"))
+                )
         }) {
-            return violation("CI jobs must not override permissions or inherit secrets");
+            return violation(
+                "CI jobs must not override permissions or inherit secrets; jobs must not continue on error",
+            );
         }
     }
     let native_job = job_headers
@@ -931,16 +951,17 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
     if normalized.contains("continue-on-error:") {
         return violation("CI authority and package gates must fail closed");
     }
-    if [
-        "secrets.",
-        "authorization: bearer",
-        "github_token",
-        "gh_token",
-        "minimax_api_key",
-        "openai_api_key",
-    ]
-    .iter()
-    .any(|token| lowercase.contains(token))
+    if contains_github_secret_context(&lowercase)
+        || [
+            "secrets.",
+            "authorization: bearer",
+            "github_token",
+            "gh_token",
+            "minimax_api_key",
+            "openai_api_key",
+        ]
+        .iter()
+        .any(|token| lowercase.contains(token))
     {
         return violation("CI must not inject credentials into authority or package gates");
     }
@@ -1066,6 +1087,38 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
         }
     }
     Ok(())
+}
+
+fn contains_github_secret_context(source: &str) -> bool {
+    let mut remaining = source;
+    while let Some(start) = remaining.find("${{") {
+        let expression = &remaining[start + 3..];
+        let Some(end) = expression.find("}}") else {
+            return contains_ascii_identifier(expression, b"secrets");
+        };
+        if contains_ascii_identifier(&expression[..end], b"secrets") {
+            return true;
+        }
+        remaining = &expression[end + 2..];
+    }
+    false
+}
+
+fn contains_ascii_identifier(source: &str, identifier: &[u8]) -> bool {
+    let bytes = source.as_bytes();
+    bytes
+        .windows(identifier.len())
+        .enumerate()
+        .any(|(index, candidate)| {
+            candidate == identifier
+                && index
+                    .checked_sub(1)
+                    .and_then(|before| bytes.get(before))
+                    .is_none_or(|byte| !byte.is_ascii_alphanumeric() && *byte != b'_')
+                && bytes
+                    .get(index + identifier.len())
+                    .is_none_or(|byte| !byte.is_ascii_alphanumeric() && *byte != b'_')
+        })
 }
 
 pub fn validate_npm_release_workflow_text(source: &str) -> Result<(), SourceAuthorityError> {

@@ -891,7 +891,11 @@ fn ci_keeps_rust_authority_ahead_of_packaging_and_fails_closed() {
         );
         assert_ci_rejected(
             &disguised_native_pty_control,
-            "CI must run native PTY Shell integration on every hosted platform",
+            if forbidden_key.trim_start().starts_with(['\'', '"']) {
+                "CI steps mapping keys must be unambiguous"
+            } else {
+                "CI must run native PTY Shell integration on every hosted platform"
+            },
         );
     }
 
@@ -1242,6 +1246,58 @@ fn ci_rejects_permissions_and_secrets_on_every_job() {
         &inherited_secrets,
         "CI jobs must not override permissions or inherit secrets",
     );
+}
+
+#[test]
+fn ci_rejects_flow_style_jobs() {
+    let source = fs::read_to_string(repository_root().join(CI_WORKFLOW))
+        .expect("CI workflow should be readable");
+    let flow_job = format!(
+        "{source}\n  privileged: {{runs-on: ubuntu-latest, permissions: write-all, steps: []}}\n"
+    );
+
+    assert_ci_rejected(&flow_job, "CI jobs must use block mappings");
+}
+
+#[test]
+fn ci_rejects_quoted_and_escaped_job_control_keys() {
+    let source = fs::read_to_string(repository_root().join(CI_WORKFLOW))
+        .expect("CI workflow should be readable");
+    for key in [
+        "\"continue-on-error\"",
+        "\"permissions\"",
+        "\"secrets\"",
+        "\"continue-on-\\u0065rror\"",
+        "\"p\\u0065rmissions\"",
+        "\"s\\u0065crets\"",
+    ] {
+        let mutation = format!(
+            "{source}\n  privileged:\n    runs-on: ubuntu-latest\n    {key}: inherit\n    steps:\n      - run: echo forged\n"
+        );
+        assert_ci_rejected(&mutation, "job mapping keys must be unambiguous");
+    }
+}
+
+#[test]
+fn ci_rejects_bracketed_and_whitespace_secret_expressions() {
+    let source = fs::read_to_string(repository_root().join(CI_WORKFLOW))
+        .expect("CI workflow should be readable");
+    for expression in [
+        "${{ secrets['TOKEN'] }}",
+        "${{ secrets [ 'TOKEN' ] }}",
+        "${{ SECRETS[\"TOKEN\"] }}",
+    ] {
+        let mutation = source.replace(
+            "      CARGO_TARGET_DIR: target/phase14-ci/cargo\n",
+            &format!(
+                "      CARGO_TARGET_DIR: target/phase14-ci/cargo\n      FORGED_TOKEN: {expression}\n"
+            ),
+        );
+        assert_ci_rejected(
+            &mutation,
+            "CI must not inject credentials into authority or package gates",
+        );
+    }
 }
 
 #[test]
