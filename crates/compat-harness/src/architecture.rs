@@ -377,13 +377,16 @@ fn graph_from_metadata(metadata: CargoMetadata) -> ArchitectureGraph {
 }
 
 fn dependency_allowed(package: &str, dependency: &str) -> bool {
+    if dependency == WINDOWS_CONPTY {
+        return package == "minimax-tools";
+    }
     match package {
         PROTOCOL => false,
         CORE => dependency == PROTOCOL,
         "minimax-provider" | RETRIEVAL | "minimax-vault" | "minimax-tui" => {
             matches!(dependency, CORE | PROTOCOL)
         }
-        "minimax-tools" => matches!(dependency, CORE | PROTOCOL | WINDOWS_CONPTY),
+        "minimax-tools" => matches!(dependency, CORE | PROTOCOL),
         WINDOWS_CONPTY => false,
         CLI => dependency != COMPAT_HARNESS,
         COMPAT_HARNESS => dependency != CLI && dependency != COMPAT_HARNESS,

@@ -955,6 +955,37 @@ fn architecture_keeps_the_windows_conpty_boundary_leaf_only_and_tools_owned() {
 }
 
 #[test]
+fn architecture_rejects_cli_dependency_on_the_windows_conpty_boundary() {
+    let graph = synthetic_graph(&[
+        ("minimax-cli", &["minimax-windows-conpty"]),
+        ("minimax-windows-conpty", &[]),
+    ]);
+
+    assert_eq!(
+        validate_architecture(&graph),
+        Err(ArchitectureError::Violation(
+            "forbidden local dependency: minimax-cli -> minimax-windows-conpty".to_owned()
+        ))
+    );
+}
+
+#[test]
+fn architecture_rejects_compat_harness_dependency_on_the_windows_conpty_boundary() {
+    let graph = synthetic_graph(&[
+        ("minimax-compat-harness", &["minimax-windows-conpty"]),
+        ("minimax-windows-conpty", &[]),
+    ]);
+
+    assert_eq!(
+        validate_architecture(&graph),
+        Err(ArchitectureError::Violation(
+            "forbidden local dependency: minimax-compat-harness -> minimax-windows-conpty"
+                .to_owned()
+        ))
+    );
+}
+
+#[test]
 fn architecture_rejects_migration_network_database_credentials_and_downloads() {
     for source in [
         "use reqwest::Client;",
