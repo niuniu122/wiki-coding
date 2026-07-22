@@ -153,6 +153,8 @@ impl HostBootstrap {
             stream,
             state: HostState::WaitingActivation,
             deadline: Some(self.deadline),
+            #[cfg(test)]
+            fail_next_send: None,
         })
     }
 }
@@ -183,24 +185,49 @@ pub fn run_host_lifecycle(
     channel.send_contained()?;
     let command = channel.recv_command()?;
     supervisor.spawn(&command)?;
-    channel.send_ready()?;
-
-    let mut control_stream = channel.stream.try_clone()?;
-    let (control_tx, control_rx) = std::sync::mpsc::sync_channel(4);
-    let _control_reader = std::thread::spawn(move || {
-        loop {
-            let control = read_host_control(&mut control_stream);
-            let terminal = !matches!(control, Ok(HostControl::Stop));
-            if control_tx.send(control).is_err() || terminal {
-                break;
-            }
-        }
-    });
     let mut root_exit = None;
     let mut cleaning = false;
     let mut failure_reported = false;
     let mut parent_connected = true;
     let mut terminal_error = None;
+    let control_rx = match channel.stream.try_clone() {
+        Ok(mut control_stream) => match channel.send_ready() {
+            Ok(()) => {
+                let (control_tx, control_rx) = std::sync::mpsc::sync_channel(4);
+                match std::thread::Builder::new()
+                    .name("minimax-shell-host-control".to_owned())
+                    .spawn(move || {
+                        loop {
+                            let control = read_host_control(&mut control_stream);
+                            let terminal = !matches!(control, Ok(HostControl::Stop));
+                            if control_tx.send(control).is_err() || terminal {
+                                break;
+                            }
+                        }
+                    }) {
+                    Ok(_) => Some(control_rx),
+                    Err(error) => {
+                        terminal_error = Some(error.into());
+                        parent_connected = false;
+                        cleaning = true;
+                        None
+                    }
+                }
+            }
+            Err(error) => {
+                terminal_error = Some(error);
+                parent_connected = false;
+                cleaning = true;
+                None
+            }
+        },
+        Err(error) => {
+            terminal_error = Some(error.into());
+            parent_connected = false;
+            cleaning = true;
+            None
+        }
+    };
 
     loop {
         if !cleaning {
@@ -211,18 +238,20 @@ pub fn run_host_lifecycle(
                 }
                 Ok(None) => {}
                 Err(error) => {
-                    terminal_error = Some(error);
+                    terminal_error = Some(error.into());
                     cleaning = true;
                 }
             }
         }
 
-        while let Ok(control) = control_rx.try_recv() {
-            match control {
-                Ok(HostControl::Stop) => cleaning = true,
-                Ok(HostControl::ParentEof) | Err(_) => {
-                    cleaning = true;
-                    parent_connected = false;
+        if let Some(control_rx) = &control_rx {
+            while let Ok(control) = control_rx.try_recv() {
+                match control {
+                    Ok(HostControl::Stop) => cleaning = true,
+                    Ok(HostControl::ParentEof) | Err(_) => {
+                        cleaning = true;
+                        parent_connected = false;
+                    }
                 }
             }
         }
@@ -236,7 +265,7 @@ pub fn run_host_lifecycle(
                     }
                     let _ = channel.stream.shutdown(std::net::Shutdown::Both);
                     return match terminal_error {
-                        Some(error) => Err(error.into()),
+                        Some(error) => Err(error),
                         None => Ok(exit),
                     };
                 }
@@ -253,14 +282,18 @@ pub fn run_host_lifecycle(
             }
         }
 
-        match control_rx.recv_timeout(retry_interval) {
-            Ok(Ok(HostControl::Stop)) => cleaning = true,
-            Ok(Ok(HostControl::ParentEof) | Err(_))
-            | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                cleaning = true;
-                parent_connected = false;
+        if let Some(control_rx) = &control_rx {
+            match control_rx.recv_timeout(retry_interval) {
+                Ok(Ok(HostControl::Stop)) => cleaning = true,
+                Ok(Ok(HostControl::ParentEof) | Err(_))
+                | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                    cleaning = true;
+                    parent_connected = false;
+                }
+                Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
             }
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+        } else {
+            std::thread::sleep(retry_interval);
         }
     }
 }
@@ -484,6 +517,8 @@ pub struct HostChannel {
     stream: TcpStream,
     state: HostState,
     deadline: Option<Instant>,
+    #[cfg(test)]
+    fail_next_send: Option<FrameKind>,
 }
 
 impl HostChannel {
@@ -518,6 +553,13 @@ impl HostChannel {
 
     pub fn send_ready(&mut self) -> Result<(), HostProtocolError> {
         self.require_state(HostState::WaitingReady)?;
+        #[cfg(test)]
+        if self.fail_next_send.take() == Some(FrameKind::Ready) {
+            return Err(HostProtocolError::Io(io::Error::new(
+                io::ErrorKind::BrokenPipe,
+                "scripted READY failure",
+            )));
+        }
         write_frame(&mut self.stream, FrameKind::Ready, &[], self.deadline)?;
         self.state = HostState::Running;
         self.deadline = None;
@@ -998,6 +1040,7 @@ mod tests {
             stream: host,
             state: HostState::WaitingCommand,
             deadline: Some(Instant::now() + Duration::from_secs(1)),
+            fail_next_send: None,
         };
 
         assert!(matches!(
@@ -1281,6 +1324,65 @@ mod tests {
         );
     }
 
+    #[test]
+    fn lifecycle_cleans_spawned_shell_when_parent_disconnects_before_ready() {
+        let state = Arc::new(Mutex::new(ScriptedState {
+            root_polls: VecDeque::from([None]),
+            cleanup: VecDeque::from([CleanupStep::Done(RootExit::Code(0))]),
+            ..ScriptedState::default()
+        }));
+        let (spawn_release_tx, spawn_release_rx) = mpsc::sync_channel(1);
+        let (listener, bootstrap) = HostListener::bind_for_test(Duration::from_secs(2), [0x75; 32])
+            .expect("pre-ready disconnect listener");
+        let host_state = Arc::clone(&state);
+        let host = thread::spawn(move || {
+            let mut channel = bootstrap.connect().expect("host connects");
+            channel.fail_next_send = Some(FrameKind::Ready);
+            run_host_lifecycle(
+                channel,
+                BlockingSpawnSupervisor {
+                    inner: ScriptedSupervisor { state: host_state },
+                    release: spawn_release_rx,
+                },
+                Duration::from_millis(2),
+            )
+        });
+
+        let mut parent = listener.accept().expect("accept host");
+        parent.send_activate().expect("activate host");
+        assert_eq!(
+            parent.recv_event().expect("contained"),
+            HostEvent::Contained
+        );
+        parent
+            .send_command("spawn-then-disconnect")
+            .expect("command");
+        spawn_release_tx.send(()).expect("release successful spawn");
+
+        assert!(matches!(
+            parent.recv_event(),
+            Err(HostProtocolError::PeerClosed)
+        ));
+
+        let error = host
+            .join()
+            .expect("host thread")
+            .expect_err("READY failure remains an internal host failure");
+        assert!(matches!(
+            error,
+            HostProtocolError::Io(error) if error.kind() == io::ErrorKind::BrokenPipe
+        ));
+        let state = state.lock().expect("scripted state");
+        assert_eq!(
+            state
+                .events
+                .iter()
+                .filter(|event| **event == "cleanup")
+                .count(),
+            1
+        );
+    }
+
     trait ScriptedCleanupResult {
         fn into_result(self) -> io::Result<Option<RootExit>>;
     }
@@ -1311,6 +1413,32 @@ mod tests {
 
     struct ScriptedSupervisor {
         state: Arc<Mutex<ScriptedState>>,
+    }
+
+    struct BlockingSpawnSupervisor {
+        inner: ScriptedSupervisor,
+        release: mpsc::Receiver<()>,
+    }
+
+    impl HostSupervisor for BlockingSpawnSupervisor {
+        fn preflight(&mut self) -> io::Result<()> {
+            self.inner.preflight()
+        }
+
+        fn spawn(&mut self, command: &str) -> io::Result<()> {
+            self.inner.spawn(command)?;
+            self.release
+                .recv()
+                .map_err(|_| io::Error::other("spawn release dropped"))
+        }
+
+        fn try_root_exit(&mut self) -> io::Result<Option<RootExit>> {
+            self.inner.try_root_exit()
+        }
+
+        fn cleanup(&mut self) -> io::Result<Option<RootExit>> {
+            self.inner.cleanup()
+        }
     }
 
     impl HostSupervisor for ScriptedSupervisor {
