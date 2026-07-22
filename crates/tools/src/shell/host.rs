@@ -1,0 +1,849 @@
+use std::io::{self, Read, Write};
+use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
+use std::time::{Duration, Instant};
+
+use minimax_protocol::MAX_SHELL_COMMAND_BYTES;
+
+const INTERNAL_HOST_ARGUMENT: &str = "--minimax-internal-shell-host";
+const HOST_ADDRESS_ENV: &str = "MINIMAX_SHELL_HOST_ADDRESS";
+const HOST_TOKEN_ENV: &str = "MINIMAX_SHELL_HOST_TOKEN";
+const HOST_VERSION_ENV: &str = "MINIMAX_SHELL_HOST_VERSION";
+const HOST_TIMEOUT_ENV: &str = "MINIMAX_SHELL_HOST_TIMEOUT_MS";
+const PROTOCOL_MAGIC: [u8; 8] = *b"MMXHOST1";
+const PROTOCOL_VERSION: u16 = 1;
+const HEADER_BYTES: usize = 15;
+const AUTH_TOKEN_BYTES: usize = 32;
+const AUTH_ATTEMPT_TIMEOUT: Duration = Duration::from_millis(250);
+const ACCEPT_POLL_INTERVAL: Duration = Duration::from_millis(5);
+
+#[derive(Debug)]
+pub enum HostProtocolError {
+    Io(io::Error),
+    DeadlineExceeded,
+    InvalidFrame,
+    InvalidState,
+    AuthenticationFailed,
+    PeerClosed,
+}
+
+impl std::fmt::Display for HostProtocolError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(match self {
+            Self::Io(_) => "shell host I/O failed",
+            Self::DeadlineExceeded => "shell host protocol deadline exceeded",
+            Self::InvalidFrame => "invalid shell host protocol frame",
+            Self::InvalidState => "invalid shell host protocol state",
+            Self::AuthenticationFailed => "shell host authentication failed",
+            Self::PeerClosed => "shell host control channel closed",
+        })
+    }
+}
+
+impl std::error::Error for HostProtocolError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Io(error) => Some(error),
+            _ => None,
+        }
+    }
+}
+
+impl From<HostProtocolError> for io::Error {
+    fn from(error: HostProtocolError) -> Self {
+        match error {
+            HostProtocolError::Io(error) => error,
+            HostProtocolError::DeadlineExceeded => {
+                Self::new(io::ErrorKind::TimedOut, HostProtocolError::DeadlineExceeded)
+            }
+            HostProtocolError::AuthenticationFailed => Self::new(
+                io::ErrorKind::PermissionDenied,
+                HostProtocolError::AuthenticationFailed,
+            ),
+            HostProtocolError::PeerClosed => {
+                Self::new(io::ErrorKind::BrokenPipe, HostProtocolError::PeerClosed)
+            }
+            HostProtocolError::InvalidFrame => {
+                Self::new(io::ErrorKind::InvalidData, HostProtocolError::InvalidFrame)
+            }
+            HostProtocolError::InvalidState => {
+                Self::new(io::ErrorKind::InvalidData, HostProtocolError::InvalidState)
+            }
+        }
+    }
+}
+
+impl From<io::Error> for HostProtocolError {
+    fn from(error: io::Error) -> Self {
+        Self::Io(error)
+    }
+}
+
+#[derive(Clone)]
+pub struct HostBootstrap {
+    address: SocketAddr,
+    token: [u8; AUTH_TOKEN_BYTES],
+    deadline: Instant,
+    timeout: Duration,
+}
+
+impl HostBootstrap {
+    pub fn arguments(&self) -> [&'static str; 1] {
+        [INTERNAL_HOST_ARGUMENT]
+    }
+
+    pub fn environment(&self) -> Vec<(&'static str, String)> {
+        vec![
+            (HOST_ADDRESS_ENV, self.address.to_string()),
+            (HOST_TOKEN_ENV, encode_hex(&self.token)),
+            (HOST_VERSION_ENV, PROTOCOL_VERSION.to_string()),
+            (HOST_TIMEOUT_ENV, self.timeout.as_millis().to_string()),
+        ]
+    }
+
+    pub fn address(&self) -> SocketAddr {
+        self.address
+    }
+
+    pub fn connect(self) -> Result<HostChannel, HostProtocolError> {
+        let mut stream = TcpStream::connect_timeout(&self.address, remaining(self.deadline)?)?;
+        write_frame(
+            &mut stream,
+            FrameKind::Authenticate,
+            &self.token,
+            Some(self.deadline),
+        )?;
+        Ok(HostChannel {
+            stream,
+            state: HostState::WaitingActivation,
+            deadline: Some(self.deadline),
+        })
+    }
+}
+
+pub struct HostListener {
+    listener: TcpListener,
+    token: [u8; AUTH_TOKEN_BYTES],
+    deadline: Instant,
+}
+
+impl HostListener {
+    pub fn bind(timeout: Duration) -> Result<(Self, HostBootstrap), HostProtocolError> {
+        let mut token = [0_u8; AUTH_TOKEN_BYTES];
+        getrandom::fill(&mut token).map_err(|error| {
+            HostProtocolError::Io(io::Error::other(format!(
+                "shell host token generation failed: {error}"
+            )))
+        })?;
+        Self::bind_with_token(timeout, token)
+    }
+
+    #[cfg(test)]
+    fn bind_for_test(
+        timeout: Duration,
+        token: [u8; AUTH_TOKEN_BYTES],
+    ) -> Result<(Self, HostBootstrap), HostProtocolError> {
+        Self::bind_with_token(timeout, token)
+    }
+
+    fn bind_with_token(
+        timeout: Duration,
+        token: [u8; AUTH_TOKEN_BYTES],
+    ) -> Result<(Self, HostBootstrap), HostProtocolError> {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+        listener.set_nonblocking(true)?;
+        let address = listener.local_addr()?;
+        let deadline = Instant::now() + timeout;
+        Ok((
+            Self {
+                listener,
+                token,
+                deadline,
+            },
+            HostBootstrap {
+                address,
+                token,
+                deadline,
+                timeout,
+            },
+        ))
+    }
+
+    pub fn accept(self) -> Result<ParentChannel, HostProtocolError> {
+        loop {
+            let total_remaining = remaining(self.deadline)?;
+            match self.listener.accept() {
+                Ok((mut stream, peer)) => {
+                    stream.set_nonblocking(false)?;
+                    if !peer.ip().is_loopback() {
+                        continue;
+                    }
+                    let candidate_deadline =
+                        self.deadline.min(Instant::now() + AUTH_ATTEMPT_TIMEOUT);
+                    let authenticated = matches!(
+                        read_frame(&mut stream, Some(candidate_deadline)),
+                        Ok(Frame {
+                            kind: FrameKind::Authenticate,
+                            payload,
+                        }) if payload.as_slice() == self.token
+                    );
+                    if authenticated {
+                        return Ok(ParentChannel {
+                            stream,
+                            state: ParentState::Connected,
+                            deadline: Some(self.deadline),
+                        });
+                    }
+                }
+                Err(error)
+                    if matches!(
+                        error.kind(),
+                        io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
+                    ) =>
+                {
+                    std::thread::sleep(total_remaining.min(ACCEPT_POLL_INTERVAL));
+                }
+                Err(error) => return Err(error.into()),
+            }
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum RootExit {
+    Code(i32),
+    Signal(u8),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HostControl {
+    Stop,
+    ParentEof,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum HostEvent {
+    Contained,
+    Ready,
+    CleanupFailed,
+    Done(RootExit),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ParentState {
+    Connected,
+    WaitingContained,
+    Contained,
+    WaitingReady,
+    Running,
+    Cleaning,
+    Done,
+}
+
+pub struct ParentChannel {
+    stream: TcpStream,
+    state: ParentState,
+    deadline: Option<Instant>,
+}
+
+impl ParentChannel {
+    pub fn send_activate(&mut self) -> Result<(), HostProtocolError> {
+        self.require_state(ParentState::Connected)?;
+        write_frame(&mut self.stream, FrameKind::Activate, &[], self.deadline)?;
+        self.state = ParentState::WaitingContained;
+        Ok(())
+    }
+
+    pub fn send_command(&mut self, command: &str) -> Result<(), HostProtocolError> {
+        self.require_state(ParentState::Contained)?;
+        write_frame(
+            &mut self.stream,
+            FrameKind::Command,
+            command.as_bytes(),
+            self.deadline,
+        )?;
+        self.state = ParentState::WaitingReady;
+        Ok(())
+    }
+
+    pub fn send_stop(&mut self) -> Result<(), HostProtocolError> {
+        if !matches!(self.state, ParentState::Running | ParentState::Cleaning) {
+            return Err(HostProtocolError::InvalidState);
+        }
+        write_frame(&mut self.stream, FrameKind::Stop, &[], self.deadline)?;
+        self.state = ParentState::Cleaning;
+        Ok(())
+    }
+
+    pub fn recv_event(&mut self) -> Result<HostEvent, HostProtocolError> {
+        let frame = read_frame(&mut self.stream, self.deadline)?;
+        let event = match (self.state, frame.kind) {
+            (ParentState::WaitingContained, FrameKind::Contained) if frame.payload.is_empty() => {
+                self.state = ParentState::Contained;
+                HostEvent::Contained
+            }
+            (ParentState::WaitingReady, FrameKind::Ready) if frame.payload.is_empty() => {
+                self.state = ParentState::Running;
+                self.deadline = None;
+                HostEvent::Ready
+            }
+            (ParentState::Running | ParentState::Cleaning, FrameKind::CleanupFailed)
+                if frame.payload.is_empty() =>
+            {
+                self.state = ParentState::Cleaning;
+                HostEvent::CleanupFailed
+            }
+            (ParentState::Running | ParentState::Cleaning, FrameKind::Done) => {
+                let exit = decode_root_exit(&frame.payload)?;
+                self.state = ParentState::Done;
+                HostEvent::Done(exit)
+            }
+            _ => return Err(HostProtocolError::InvalidState),
+        };
+        Ok(event)
+    }
+
+    fn require_state(&self, expected: ParentState) -> Result<(), HostProtocolError> {
+        if self.state == expected {
+            Ok(())
+        } else {
+            Err(HostProtocolError::InvalidState)
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum HostState {
+    WaitingActivation,
+    PreparingContainment,
+    WaitingCommand,
+    WaitingReady,
+    Running,
+    Cleaning,
+    Done,
+}
+
+pub struct HostChannel {
+    stream: TcpStream,
+    state: HostState,
+    deadline: Option<Instant>,
+}
+
+impl HostChannel {
+    pub fn recv_activate(&mut self) -> Result<(), HostProtocolError> {
+        self.require_state(HostState::WaitingActivation)?;
+        let frame = read_frame(&mut self.stream, self.deadline)?;
+        if frame.kind != FrameKind::Activate || !frame.payload.is_empty() {
+            return Err(HostProtocolError::InvalidFrame);
+        }
+        self.state = HostState::PreparingContainment;
+        Ok(())
+    }
+
+    pub fn send_contained(&mut self) -> Result<(), HostProtocolError> {
+        self.require_state(HostState::PreparingContainment)?;
+        write_frame(&mut self.stream, FrameKind::Contained, &[], self.deadline)?;
+        self.state = HostState::WaitingCommand;
+        Ok(())
+    }
+
+    pub fn recv_command(&mut self) -> Result<String, HostProtocolError> {
+        self.require_state(HostState::WaitingCommand)?;
+        let frame = read_frame(&mut self.stream, self.deadline)?;
+        if frame.kind != FrameKind::Command || frame.payload.is_empty() {
+            return Err(HostProtocolError::InvalidFrame);
+        }
+        let command =
+            String::from_utf8(frame.payload).map_err(|_| HostProtocolError::InvalidFrame)?;
+        self.state = HostState::WaitingReady;
+        Ok(command)
+    }
+
+    pub fn send_ready(&mut self) -> Result<(), HostProtocolError> {
+        self.require_state(HostState::WaitingReady)?;
+        write_frame(&mut self.stream, FrameKind::Ready, &[], self.deadline)?;
+        self.state = HostState::Running;
+        self.deadline = None;
+        Ok(())
+    }
+
+    pub fn recv_control(&mut self) -> Result<HostControl, HostProtocolError> {
+        if !matches!(self.state, HostState::Running | HostState::Cleaning) {
+            return Err(HostProtocolError::InvalidState);
+        }
+        let frame = match read_frame(&mut self.stream, self.deadline) {
+            Ok(frame) => frame,
+            Err(HostProtocolError::PeerClosed) => {
+                self.state = HostState::Cleaning;
+                return Ok(HostControl::ParentEof);
+            }
+            Err(error) => return Err(error),
+        };
+        if frame.kind != FrameKind::Stop || !frame.payload.is_empty() {
+            return Err(HostProtocolError::InvalidFrame);
+        }
+        self.state = HostState::Cleaning;
+        Ok(HostControl::Stop)
+    }
+
+    pub fn send_cleanup_failed(&mut self) -> Result<(), HostProtocolError> {
+        if !matches!(self.state, HostState::Running | HostState::Cleaning) {
+            return Err(HostProtocolError::InvalidState);
+        }
+        write_frame(
+            &mut self.stream,
+            FrameKind::CleanupFailed,
+            &[],
+            self.deadline,
+        )?;
+        self.state = HostState::Cleaning;
+        Ok(())
+    }
+
+    pub fn send_done(&mut self, exit: RootExit) -> Result<(), HostProtocolError> {
+        if !matches!(self.state, HostState::Running | HostState::Cleaning) {
+            return Err(HostProtocolError::InvalidState);
+        }
+        let payload = encode_root_exit(exit);
+        write_frame(&mut self.stream, FrameKind::Done, &payload, self.deadline)?;
+        self.state = HostState::Done;
+        Ok(())
+    }
+
+    fn require_state(&self, expected: HostState) -> Result<(), HostProtocolError> {
+        if self.state == expected {
+            Ok(())
+        } else {
+            Err(HostProtocolError::InvalidState)
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[repr(u8)]
+enum FrameKind {
+    Authenticate = 1,
+    Activate = 2,
+    Contained = 3,
+    Command = 4,
+    Ready = 5,
+    Stop = 6,
+    CleanupFailed = 7,
+    Done = 8,
+}
+
+impl TryFrom<u8> for FrameKind {
+    type Error = HostProtocolError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            1 => Ok(Self::Authenticate),
+            2 => Ok(Self::Activate),
+            3 => Ok(Self::Contained),
+            4 => Ok(Self::Command),
+            5 => Ok(Self::Ready),
+            6 => Ok(Self::Stop),
+            7 => Ok(Self::CleanupFailed),
+            8 => Ok(Self::Done),
+            _ => Err(HostProtocolError::InvalidFrame),
+        }
+    }
+}
+
+struct Frame {
+    kind: FrameKind,
+    payload: Vec<u8>,
+}
+
+fn write_frame(
+    stream: &mut TcpStream,
+    kind: FrameKind,
+    payload: &[u8],
+    deadline: Option<Instant>,
+) -> Result<(), HostProtocolError> {
+    validate_payload_length(kind, payload.len())?;
+    let payload_len = u32::try_from(payload.len()).map_err(|_| HostProtocolError::InvalidFrame)?;
+    set_write_deadline(stream, deadline)?;
+    let mut header = [0_u8; HEADER_BYTES];
+    header[..8].copy_from_slice(&PROTOCOL_MAGIC);
+    header[8..10].copy_from_slice(&PROTOCOL_VERSION.to_be_bytes());
+    header[10] = kind as u8;
+    header[11..15].copy_from_slice(&payload_len.to_be_bytes());
+    stream.write_all(&header)?;
+    stream.write_all(payload)?;
+    stream.flush()?;
+    Ok(())
+}
+
+fn read_frame(
+    stream: &mut TcpStream,
+    deadline: Option<Instant>,
+) -> Result<Frame, HostProtocolError> {
+    set_read_deadline(stream, deadline)?;
+    let mut header = [0_u8; HEADER_BYTES];
+    read_header(stream, &mut header)?;
+    if header[..8] != PROTOCOL_MAGIC || header[8..10] != PROTOCOL_VERSION.to_be_bytes() {
+        return Err(HostProtocolError::InvalidFrame);
+    }
+    let kind = FrameKind::try_from(header[10])?;
+    let payload_len = u32::from_be_bytes(
+        header[11..15]
+            .try_into()
+            .map_err(|_| HostProtocolError::InvalidFrame)?,
+    ) as usize;
+    validate_payload_length(kind, payload_len)?;
+    let mut payload = vec![0_u8; payload_len];
+    read_payload(stream, &mut payload)?;
+    Ok(Frame { kind, payload })
+}
+
+fn validate_payload_length(kind: FrameKind, payload_len: usize) -> Result<(), HostProtocolError> {
+    let valid = match kind {
+        FrameKind::Authenticate => payload_len == AUTH_TOKEN_BYTES,
+        FrameKind::Command => (1..=MAX_SHELL_COMMAND_BYTES).contains(&payload_len),
+        FrameKind::Done => payload_len == 5,
+        FrameKind::Activate
+        | FrameKind::Contained
+        | FrameKind::Ready
+        | FrameKind::Stop
+        | FrameKind::CleanupFailed => payload_len == 0,
+    };
+    if valid {
+        Ok(())
+    } else {
+        Err(HostProtocolError::InvalidFrame)
+    }
+}
+
+fn read_header(
+    stream: &mut TcpStream,
+    header: &mut [u8; HEADER_BYTES],
+) -> Result<(), HostProtocolError> {
+    let mut read = 0;
+    while read < header.len() {
+        match stream.read(&mut header[read..]) {
+            Ok(0) if read == 0 => return Err(HostProtocolError::PeerClosed),
+            Ok(0) => return Err(HostProtocolError::InvalidFrame),
+            Ok(bytes) => read += bytes,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(map_read_error(error)),
+        }
+    }
+    Ok(())
+}
+
+fn read_payload(stream: &mut TcpStream, payload: &mut [u8]) -> Result<(), HostProtocolError> {
+    let mut read = 0;
+    while read < payload.len() {
+        match stream.read(&mut payload[read..]) {
+            Ok(0) => return Err(HostProtocolError::InvalidFrame),
+            Ok(bytes) => read += bytes,
+            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
+            Err(error) => return Err(map_read_error(error)),
+        }
+    }
+    Ok(())
+}
+
+fn set_read_deadline(
+    stream: &TcpStream,
+    deadline: Option<Instant>,
+) -> Result<(), HostProtocolError> {
+    stream.set_read_timeout(deadline.map(remaining).transpose()?)?;
+    Ok(())
+}
+
+fn set_write_deadline(
+    stream: &TcpStream,
+    deadline: Option<Instant>,
+) -> Result<(), HostProtocolError> {
+    stream.set_write_timeout(deadline.map(remaining).transpose()?)?;
+    Ok(())
+}
+
+fn remaining(deadline: Instant) -> Result<Duration, HostProtocolError> {
+    deadline
+        .checked_duration_since(Instant::now())
+        .filter(|remaining| !remaining.is_zero())
+        .ok_or(HostProtocolError::DeadlineExceeded)
+}
+
+fn map_read_error(error: io::Error) -> HostProtocolError {
+    if matches!(
+        error.kind(),
+        io::ErrorKind::TimedOut | io::ErrorKind::WouldBlock
+    ) {
+        HostProtocolError::DeadlineExceeded
+    } else {
+        HostProtocolError::Io(error)
+    }
+}
+
+fn encode_root_exit(exit: RootExit) -> [u8; 5] {
+    match exit {
+        RootExit::Code(code) => {
+            let mut payload = [0_u8; 5];
+            payload[1..].copy_from_slice(&code.to_be_bytes());
+            payload
+        }
+        RootExit::Signal(signal) => [1, signal, 0, 0, 0],
+    }
+}
+
+fn decode_root_exit(payload: &[u8]) -> Result<RootExit, HostProtocolError> {
+    match payload {
+        [0, code @ ..] if code.len() == 4 => Ok(RootExit::Code(i32::from_be_bytes(
+            code.try_into()
+                .map_err(|_| HostProtocolError::InvalidFrame)?,
+        ))),
+        [1, signal, 0, 0, 0] => Ok(RootExit::Signal(*signal)),
+        _ => Err(HostProtocolError::InvalidFrame),
+    }
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
+        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+    }
+    encoded
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{self, Write as _};
+    use std::net::{Shutdown, TcpListener, TcpStream};
+    use std::sync::mpsc;
+    use std::thread;
+    use std::time::{Duration, Instant};
+
+    use minimax_protocol::MAX_SHELL_COMMAND_BYTES;
+
+    use super::{
+        FrameKind, HostChannel, HostControl, HostEvent, HostListener, HostProtocolError, HostState,
+        PROTOCOL_MAGIC, PROTOCOL_VERSION, RootExit, read_frame, write_frame,
+    };
+
+    #[test]
+    fn bootstrap_contains_only_fixed_ipc_metadata_and_never_the_command() {
+        let command = "Write-Output preassignment-secret-marker";
+        let (listener, bootstrap) = HostListener::bind_for_test(Duration::from_secs(1), [0x5a; 32])
+            .expect("bind loopback host listener");
+
+        assert_eq!(bootstrap.arguments(), ["--minimax-internal-shell-host"]);
+        assert_eq!(bootstrap.environment().len(), 4);
+        assert!(
+            bootstrap
+                .environment()
+                .iter()
+                .all(|(key, value)| !key.contains(command) && !value.contains(command))
+        );
+        assert!(bootstrap.address().ip().is_loopback());
+
+        drop(listener);
+    }
+
+    #[test]
+    fn cleanup_failure_is_nonterminal_and_stop_can_be_retried_until_done() {
+        let (listener, bootstrap) = HostListener::bind_for_test(Duration::from_secs(2), [0x37; 32])
+            .expect("bind loopback host listener");
+        let host = thread::spawn(move || {
+            let mut channel = bootstrap
+                .connect()
+                .expect("host connects and authenticates");
+            channel.recv_activate().expect("activation");
+            channel.send_contained().expect("contained");
+            assert_eq!(channel.recv_command().expect("command"), "exit-with-seven");
+            channel.send_ready().expect("ready");
+            assert_eq!(
+                channel.recv_control().expect("first stop"),
+                HostControl::Stop
+            );
+            channel
+                .send_cleanup_failed()
+                .expect("cleanup failure remains reportable");
+            assert_eq!(
+                channel.recv_control().expect("retry stop"),
+                HostControl::Stop
+            );
+            channel
+                .send_done(RootExit::Code(7))
+                .expect("done only after fixed-point cleanup");
+        });
+
+        let mut channel = listener.accept().expect("authenticated host");
+        channel.send_activate().expect("activate");
+        assert_eq!(
+            channel.recv_event().expect("contained"),
+            HostEvent::Contained
+        );
+        channel.send_command("exit-with-seven").expect("command");
+        assert_eq!(channel.recv_event().expect("ready"), HostEvent::Ready);
+        channel.send_stop().expect("first stop");
+        assert_eq!(
+            channel.recv_event().expect("cleanup failed"),
+            HostEvent::CleanupFailed
+        );
+        channel.send_stop().expect("retry stop");
+        assert_eq!(
+            channel.recv_event().expect("done"),
+            HostEvent::Done(RootExit::Code(7))
+        );
+
+        host.join().expect("host thread");
+    }
+
+    #[test]
+    fn wrong_authentication_is_discarded_before_a_valid_host_is_accepted() {
+        let (listener, bootstrap) = HostListener::bind_for_test(Duration::from_secs(2), [0x42; 32])
+            .expect("bind loopback host listener");
+        let mut impostor = TcpStream::connect(bootstrap.address()).expect("connect impostor");
+        write_frame(&mut impostor, FrameKind::Authenticate, &[0x24; 32], None)
+            .expect("write wrong authentication");
+        drop(impostor);
+
+        let host = thread::spawn(move || bootstrap.connect().expect("valid host connects"));
+        let parent = listener
+            .accept()
+            .expect("listener skips impostor and accepts valid host");
+
+        drop(parent);
+        drop(host.join().expect("host thread"));
+    }
+
+    #[test]
+    fn listener_uses_one_real_clock_deadline_when_no_host_connects() {
+        let (listener, bootstrap) =
+            HostListener::bind_for_test(Duration::from_millis(60), [0x19; 32])
+                .expect("bind loopback host listener");
+        let started = Instant::now();
+        let (result_tx, result_rx) = mpsc::sync_channel(1);
+        let accept = thread::spawn(move || {
+            result_tx
+                .send(listener.accept())
+                .expect("publish accept result");
+        });
+
+        let result = match result_rx.recv_timeout(Duration::from_millis(250)) {
+            Ok(result) => result,
+            Err(_) => {
+                let wake = TcpStream::connect(bootstrap.address()).expect("wake stuck listener");
+                wake.shutdown(Shutdown::Both)
+                    .expect("close wake connection");
+                accept.join().expect("stuck accept thread");
+                panic!("listener ignored its total deadline");
+            }
+        };
+        accept.join().expect("accept thread");
+        let error = match result {
+            Ok(_) => panic!("listener must time out"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(error, HostProtocolError::DeadlineExceeded));
+        assert!(started.elapsed() >= Duration::from_millis(40));
+        assert!(started.elapsed() < Duration::from_millis(500));
+    }
+
+    #[test]
+    fn oversized_frame_is_rejected_from_its_header_before_payload_read() {
+        let (mut sender, mut receiver) = loopback_pair();
+        sender
+            .write_all(&raw_header(
+                FrameKind::Command,
+                u32::try_from(MAX_SHELL_COMMAND_BYTES + 1).expect("bounded length"),
+            ))
+            .expect("write oversized header");
+
+        let error = match read_frame(&mut receiver, Some(Instant::now() + Duration::from_secs(1))) {
+            Ok(_) => panic!("oversized frame must fail from header alone"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(error, HostProtocolError::InvalidFrame));
+    }
+
+    #[test]
+    fn short_header_and_short_payload_fail_closed() {
+        let (mut header_sender, mut header_receiver) = loopback_pair();
+        header_sender
+            .write_all(&PROTOCOL_MAGIC[..4])
+            .expect("write short header");
+        header_sender
+            .shutdown(Shutdown::Write)
+            .expect("close short header sender");
+        assert!(matches!(
+            read_frame(
+                &mut header_receiver,
+                Some(Instant::now() + Duration::from_secs(1))
+            ),
+            Err(HostProtocolError::InvalidFrame)
+        ));
+
+        let (mut payload_sender, mut payload_receiver) = loopback_pair();
+        payload_sender
+            .write_all(&raw_header(FrameKind::Command, 3))
+            .expect("write payload header");
+        payload_sender.write_all(b"x").expect("write short payload");
+        payload_sender
+            .shutdown(Shutdown::Write)
+            .expect("close short payload sender");
+        assert!(matches!(
+            read_frame(
+                &mut payload_receiver,
+                Some(Instant::now() + Duration::from_secs(1))
+            ),
+            Err(HostProtocolError::InvalidFrame)
+        ));
+    }
+
+    #[test]
+    fn invalid_utf8_command_is_rejected_before_shell_start() {
+        let (mut parent, host) = loopback_pair();
+        write_frame(&mut parent, FrameKind::Command, &[0xff], None)
+            .expect("write invalid UTF-8 command frame");
+        let mut channel = HostChannel {
+            stream: host,
+            state: HostState::WaitingCommand,
+            deadline: Some(Instant::now() + Duration::from_secs(1)),
+        };
+
+        assert!(matches!(
+            channel.recv_command(),
+            Err(HostProtocolError::InvalidFrame)
+        ));
+    }
+
+    #[test]
+    fn protocol_errors_map_to_stable_secret_free_io_errors() {
+        let error = io::Error::from(HostProtocolError::AuthenticationFailed);
+
+        assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(error.to_string(), "shell host authentication failed");
+    }
+
+    fn loopback_pair() -> (TcpStream, TcpStream) {
+        let listener =
+            TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, 0)).expect("bind loopback pair");
+        let address = listener.local_addr().expect("loopback address");
+        let (sender_tx, sender_rx) = mpsc::sync_channel(1);
+        let connector = thread::spawn(move || {
+            sender_tx
+                .send(TcpStream::connect(address).expect("connect loopback pair"))
+                .expect("publish sender");
+        });
+        let (receiver, _) = listener.accept().expect("accept loopback pair");
+        connector.join().expect("connector thread");
+        (sender_rx.recv().expect("receive sender"), receiver)
+    }
+
+    fn raw_header(kind: FrameKind, payload_len: u32) -> [u8; 15] {
+        let mut header = [0_u8; 15];
+        header[..8].copy_from_slice(&PROTOCOL_MAGIC);
+        header[8..10].copy_from_slice(&PROTOCOL_VERSION.to_be_bytes());
+        header[10] = kind as u8;
+        header[11..15].copy_from_slice(&payload_len.to_be_bytes());
+        header
+    }
+}

@@ -1,5 +1,6 @@
 mod backend;
 mod buffer;
+pub(crate) mod host;
 mod manager;
 mod native;
 

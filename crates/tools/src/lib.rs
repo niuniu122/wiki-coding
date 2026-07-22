@@ -19,6 +19,15 @@ mod shell_command;
 mod shell_session;
 mod write;
 
+/// Unstable process-private protocol shared by the CLI shell host and native backend.
+#[doc(hidden)]
+pub mod internal_shell_host {
+    pub use crate::shell::host::{
+        HostBootstrap, HostChannel, HostControl, HostEvent, HostListener, HostProtocolError,
+        ParentChannel, RootExit,
+    };
+}
+
 pub use error::{ToolDenial, ToolDenialCode};
 pub use git::{GitDiffTool, GitStatusTool};
 pub use minimax_core::CancellationPort as CancellationSignal;
