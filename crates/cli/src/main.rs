@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::ffi::{OsStr, OsString};
 use std::io::{self, IsTerminal as _, Write as _};
 use std::path::{Path, PathBuf};
 use std::process::ExitCode;
@@ -23,7 +24,10 @@ use minimax_protocol::{
 use minimax_provider::{
     CredentialMode, CredentialResolver, HttpProviderClient, OsKeyringBackend, ResolvedConfig,
 };
-use minimax_tools::SandboxCapability;
+use minimax_tools::{
+    SandboxCapability,
+    internal_shell_host::{INTERNAL_HOST_ARGUMENT, run_internal_shell_host_bootstrap},
+};
 use minimax_tui::{
     CommandAvailability, CommandIntent, CrosstermTerminalHooks, EventRenderer, InteractiveShell,
     ParsedInput, StdioApprovalInput, parse_input,
@@ -34,12 +38,26 @@ use minimax_vault::{
     rebuild_compiled_wiki, repair_vault, undo_gc_plan,
 };
 
-#[tokio::main]
-async fn main() -> ExitCode {
+fn main() -> ExitCode {
     let mut arguments = std::env::args_os().collect::<Vec<_>>();
+    if is_internal_shell_host_invocation(&arguments) {
+        std::process::exit(run_internal_shell_host_bootstrap());
+    }
     if arguments.len() == 1 {
         arguments.push("chat".into());
     }
+    tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+        .expect("build CLI Tokio runtime")
+        .block_on(execute_main(arguments))
+}
+
+fn is_internal_shell_host_invocation(arguments: &[OsString]) -> bool {
+    arguments.len() == 2 && arguments[1] == OsStr::new(INTERNAL_HOST_ARGUMENT)
+}
+
+async fn execute_main(arguments: Vec<OsString>) -> ExitCode {
     let exit = match Cli::try_parse_from(arguments) {
         Ok(cli) => execute(cli).await,
         Err(error) => {

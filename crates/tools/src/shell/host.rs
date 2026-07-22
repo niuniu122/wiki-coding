@@ -1,10 +1,11 @@
+use std::ffi::OsString;
 use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::time::{Duration, Instant};
 
 use minimax_protocol::MAX_SHELL_COMMAND_BYTES;
 
-const INTERNAL_HOST_ARGUMENT: &str = "--minimax-internal-shell-host";
+pub const INTERNAL_HOST_ARGUMENT: &str = "--minimax-internal-shell-host";
 const HOST_ADDRESS_ENV: &str = "MINIMAX_SHELL_HOST_ADDRESS";
 const HOST_TOKEN_ENV: &str = "MINIMAX_SHELL_HOST_TOKEN";
 const HOST_VERSION_ENV: &str = "MINIMAX_SHELL_HOST_VERSION";
@@ -24,6 +25,7 @@ pub enum HostProtocolError {
     InvalidState,
     AuthenticationFailed,
     PeerClosed,
+    InvalidBootstrap,
 }
 
 impl std::fmt::Display for HostProtocolError {
@@ -35,6 +37,7 @@ impl std::fmt::Display for HostProtocolError {
             Self::InvalidState => "invalid shell host protocol state",
             Self::AuthenticationFailed => "shell host authentication failed",
             Self::PeerClosed => "shell host control channel closed",
+            Self::InvalidBootstrap => "invalid shell host bootstrap",
         })
     }
 }
@@ -68,6 +71,10 @@ impl From<HostProtocolError> for io::Error {
             HostProtocolError::InvalidState => {
                 Self::new(io::ErrorKind::InvalidData, HostProtocolError::InvalidState)
             }
+            HostProtocolError::InvalidBootstrap => Self::new(
+                io::ErrorKind::InvalidInput,
+                HostProtocolError::InvalidBootstrap,
+            ),
         }
     }
 }
@@ -87,6 +94,36 @@ pub struct HostBootstrap {
 }
 
 impl HostBootstrap {
+    pub fn from_current_environment() -> Result<Self, HostProtocolError> {
+        Self::from_environment(|key| std::env::var_os(key))
+    }
+
+    fn from_environment(get: impl Fn(&str) -> Option<OsString>) -> Result<Self, HostProtocolError> {
+        let address = required_utf8(&get, HOST_ADDRESS_ENV)?
+            .parse::<SocketAddr>()
+            .map_err(|_| HostProtocolError::InvalidBootstrap)?;
+        if !matches!(address, SocketAddr::V4(address) if address.ip().is_loopback()) {
+            return Err(HostProtocolError::InvalidBootstrap);
+        }
+        let token = decode_token(&required_utf8(&get, HOST_TOKEN_ENV)?)?;
+        if required_utf8(&get, HOST_VERSION_ENV)? != PROTOCOL_VERSION.to_string() {
+            return Err(HostProtocolError::InvalidBootstrap);
+        }
+        let timeout_ms = required_utf8(&get, HOST_TIMEOUT_ENV)?
+            .parse::<u64>()
+            .map_err(|_| HostProtocolError::InvalidBootstrap)?;
+        if !(1..=300_000).contains(&timeout_ms) {
+            return Err(HostProtocolError::InvalidBootstrap);
+        }
+        let timeout = Duration::from_millis(timeout_ms);
+        Ok(Self {
+            address,
+            token,
+            deadline: Instant::now() + timeout,
+            timeout,
+        })
+    }
+
     pub fn arguments(&self) -> [&'static str; 1] {
         [INTERNAL_HOST_ARGUMENT]
     }
@@ -118,6 +155,14 @@ impl HostBootstrap {
             deadline: Some(self.deadline),
         })
     }
+}
+
+pub fn run_internal_shell_host_bootstrap() -> i32 {
+    let result = HostBootstrap::from_current_environment()
+        .and_then(HostBootstrap::connect)
+        .and_then(|mut channel| channel.recv_activate());
+    let _ = result;
+    125
 }
 
 pub struct HostListener {
@@ -610,8 +655,39 @@ fn encode_hex(bytes: &[u8]) -> String {
     encoded
 }
 
+fn required_utf8(
+    get: &impl Fn(&str) -> Option<OsString>,
+    key: &str,
+) -> Result<String, HostProtocolError> {
+    get(key)
+        .and_then(|value| value.into_string().ok())
+        .filter(|value| !value.is_empty())
+        .ok_or(HostProtocolError::InvalidBootstrap)
+}
+
+fn decode_token(encoded: &str) -> Result<[u8; AUTH_TOKEN_BYTES], HostProtocolError> {
+    if encoded.len() != AUTH_TOKEN_BYTES * 2 || !encoded.is_ascii() {
+        return Err(HostProtocolError::InvalidBootstrap);
+    }
+    let mut token = [0_u8; AUTH_TOKEN_BYTES];
+    for (index, pair) in encoded.as_bytes().chunks_exact(2).enumerate() {
+        token[index] = (decode_hex_digit(pair[0])? << 4) | decode_hex_digit(pair[1])?;
+    }
+    Ok(token)
+}
+
+fn decode_hex_digit(digit: u8) -> Result<u8, HostProtocolError> {
+    match digit {
+        b'0'..=b'9' => Ok(digit - b'0'),
+        b'a'..=b'f' => Ok(digit - b'a' + 10),
+        _ => Err(HostProtocolError::InvalidBootstrap),
+    }
+}
+
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
+    use std::ffi::OsString;
     use std::io::{self, Write as _};
     use std::net::{Shutdown, TcpListener, TcpStream};
     use std::sync::mpsc;
@@ -621,8 +697,10 @@ mod tests {
     use minimax_protocol::MAX_SHELL_COMMAND_BYTES;
 
     use super::{
-        FrameKind, HostChannel, HostControl, HostEvent, HostListener, HostProtocolError, HostState,
-        PROTOCOL_MAGIC, PROTOCOL_VERSION, RootExit, read_frame, write_frame,
+        AUTH_TOKEN_BYTES, FrameKind, HOST_ADDRESS_ENV, HOST_TIMEOUT_ENV, HOST_TOKEN_ENV,
+        HOST_VERSION_ENV, HostBootstrap, HostChannel, HostControl, HostEvent, HostListener,
+        HostProtocolError, HostState, PROTOCOL_MAGIC, PROTOCOL_VERSION, RootExit, read_frame,
+        write_frame,
     };
 
     #[test]
@@ -821,6 +899,85 @@ mod tests {
 
         assert_eq!(error.kind(), io::ErrorKind::PermissionDenied);
         assert_eq!(error.to_string(), "shell host authentication failed");
+    }
+
+    #[test]
+    fn bootstrap_environment_rejects_invalid_values_without_echoing_them() {
+        let cases = [
+            ("missing address", HOST_ADDRESS_ENV, None),
+            (
+                "non-loopback address",
+                HOST_ADDRESS_ENV,
+                Some("192.0.2.7:4567"),
+            ),
+            ("IPv6 loopback", HOST_ADDRESS_ENV, Some("[::1]:4567")),
+            ("short token", HOST_TOKEN_ENV, Some("aa")),
+            (
+                "uppercase token",
+                HOST_TOKEN_ENV,
+                Some("AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
+            ),
+            (
+                "nonhex token",
+                HOST_TOKEN_ENV,
+                Some("gggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggggg"),
+            ),
+            ("wrong version", HOST_VERSION_ENV, Some("2")),
+            ("zero timeout", HOST_TIMEOUT_ENV, Some("0")),
+            ("oversized timeout", HOST_TIMEOUT_ENV, Some("300001")),
+        ];
+
+        for (name, key, value) in cases {
+            let mut environment = valid_bootstrap_environment();
+            match value {
+                Some(value) => {
+                    environment.insert(key, value.into());
+                }
+                None => {
+                    environment.remove(key);
+                }
+            }
+
+            let error = match HostBootstrap::from_environment(|requested| {
+                environment.get(requested).cloned()
+            }) {
+                Ok(_) => panic!("{name}"),
+                Err(error) => error,
+            };
+
+            assert!(matches!(error, HostProtocolError::InvalidBootstrap));
+            if let Some(value) = value {
+                assert!(!error.to_string().contains(value), "{name}");
+            }
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn bootstrap_environment_rejects_non_utf8_without_echoing_it() {
+        use std::os::windows::ffi::OsStringExt as _;
+
+        let mut environment = valid_bootstrap_environment();
+        environment.insert(HOST_TOKEN_ENV, OsString::from_wide(&[0xd800]));
+
+        let error = match HostBootstrap::from_environment(|requested| {
+            environment.get(requested).cloned()
+        }) {
+            Ok(_) => panic!("non-UTF-8 bootstrap value must fail"),
+            Err(error) => error,
+        };
+
+        assert!(matches!(error, HostProtocolError::InvalidBootstrap));
+        assert_eq!(error.to_string(), "invalid shell host bootstrap");
+    }
+
+    fn valid_bootstrap_environment() -> BTreeMap<&'static str, OsString> {
+        BTreeMap::from([
+            (HOST_ADDRESS_ENV, "127.0.0.1:4567".into()),
+            (HOST_TOKEN_ENV, "5a".repeat(AUTH_TOKEN_BYTES).into()),
+            (HOST_VERSION_ENV, PROTOCOL_VERSION.to_string().into()),
+            (HOST_TIMEOUT_ENV, "30000".into()),
+        ])
     }
 
     fn loopback_pair() -> (TcpStream, TcpStream) {

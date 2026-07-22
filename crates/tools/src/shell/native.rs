@@ -17,6 +17,21 @@ use super::{
 };
 
 const PROCESS_NONCE_BYTES: usize = 8;
+
+#[allow(dead_code)]
+fn build_host_command(
+    trusted_host: &Path,
+    bootstrap: &super::host::HostBootstrap,
+    cwd: &Path,
+) -> CommandBuilder {
+    let mut command = CommandBuilder::new(trusted_host);
+    command.args(bootstrap.arguments());
+    for (key, value) in bootstrap.environment() {
+        command.env(key, value);
+    }
+    command.cwd(cwd);
+    command
+}
 #[cfg(windows)]
 const WINDOWS_GATE_COMMAND_ENV: &str = "MINIMAX_SHELL_GATED_COMMAND";
 #[cfg(windows)]
@@ -698,7 +713,7 @@ mod tests {
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::{
-        NativePtyBackend, ProcessShellSessionIds, acquire_handles_then_spawn,
+        NativePtyBackend, ProcessShellSessionIds, acquire_handles_then_spawn, build_host_command,
         is_executable_with_access_check, process_id_or_cleanup, resolve_linux_shell,
         resolve_windows_shell,
     };
@@ -707,7 +722,51 @@ mod tests {
         WINDOWS_GATE_COMMAND_ENV, WINDOWS_GATE_PATH_ENV, WINDOWS_GATE_TIMEOUT_ENV,
         WINDOWS_GATE_TOKEN_ENV, WINDOWS_GATE_WRAPPER, WindowsStartupGate, resolve_native_shell,
     };
+    use crate::shell::host::HostListener;
     use crate::shell::{PtyBackend, ShellManagerError, ShellSessionIdSource};
+
+    #[test]
+    fn native_launches_only_the_trusted_host_with_fixed_bootstrap_metadata() {
+        let fixture = tempfile::tempdir().expect("host launch fixture");
+        let trusted_host = fixture.path().join("trusted-minimax-host.exe");
+        let cwd = fixture.path().join("working-directory");
+        let user_command = "preassignment-secret-command-marker";
+        let (listener, bootstrap) =
+            HostListener::bind(std::time::Duration::from_secs(1)).expect("host bootstrap");
+
+        let command = build_host_command(&trusted_host, &bootstrap, &cwd);
+
+        assert_eq!(
+            command.get_argv(),
+            &vec![
+                trusted_host.into_os_string(),
+                "--minimax-internal-shell-host".into(),
+            ]
+        );
+        assert_eq!(command.get_cwd(), Some(&cwd.into_os_string()));
+        let extra_environment = command.iter_extra_env_as_str().collect::<Vec<_>>();
+        assert_eq!(extra_environment.len(), 4);
+        assert_eq!(
+            extra_environment
+                .iter()
+                .map(|(key, _)| *key)
+                .collect::<HashSet<_>>(),
+            HashSet::from([
+                "MINIMAX_SHELL_HOST_ADDRESS",
+                "MINIMAX_SHELL_HOST_TOKEN",
+                "MINIMAX_SHELL_HOST_VERSION",
+                "MINIMAX_SHELL_HOST_TIMEOUT_MS",
+            ])
+        );
+        assert!(command.get_argv().iter().all(|value| value != user_command));
+        assert!(
+            command
+                .iter_full_env_as_str()
+                .all(|(key, value)| !key.contains(user_command) && !value.contains(user_command))
+        );
+
+        drop(listener);
+    }
 
     #[test]
     fn native_backend_requires_startup_cursor_handshake_only_on_windows() {
