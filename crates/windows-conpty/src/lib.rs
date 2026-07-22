@@ -12,17 +12,20 @@ pub use windows::{ConPtyChild, ConPtyControl, ConPtyReader, ConPtyWriter, Spawne
 use windows::{
     OUTPUT_QUEUE_CAPACITY_BYTES, create_test_pipe, spawn_test_child,
     test_output_drain as start_output_drain,
+    test_output_drain_paused_after_completion as start_output_drain_paused_after_completion,
+    test_output_drain_paused_before_queue_wait as start_output_drain_paused_before_queue_wait,
     test_output_drain_paused_between_reads as start_output_drain_paused_between_reads,
 };
 
 #[cfg(all(test, windows))]
 mod tests {
-    use std::io::{Read, Write};
+    use std::io::{self, Read, Write};
     use std::process::Command;
     use std::time::{Duration, Instant};
 
     use super::{
         OUTPUT_QUEUE_CAPACITY_BYTES, create_test_pipe, spawn_test_child, start_output_drain,
+        start_output_drain_paused_after_completion, start_output_drain_paused_before_queue_wait,
         start_output_drain_paused_between_reads,
     };
 
@@ -70,6 +73,77 @@ mod tests {
             .read_to_end(&mut buffered)
             .expect("buffered output remains readable");
         assert_eq!(buffered.len(), OUTPUT_QUEUE_CAPACITY_BYTES);
+    }
+
+    #[test]
+    fn cancellation_cannot_be_lost_between_queue_predicate_and_wait() {
+        let (read_end, mut writer) = create_test_pipe().expect("test pipe");
+        let (_output, drain, queue_wait) =
+            start_output_drain_paused_before_queue_wait(read_end).expect("hooked output drain");
+        let writer_thread = std::thread::spawn(move || {
+            let payload = vec![b'w'; OUTPUT_QUEUE_CAPACITY_BYTES * 4];
+            let _ = writer.write_all(&payload);
+        });
+        queue_wait.wait_until_paused(Duration::from_secs(1));
+
+        let started = Instant::now();
+        let deadline = started + Duration::from_millis(500);
+        let closer = std::thread::spawn(move || {
+            let mut drain = drain;
+            drain.close_before(deadline)
+        });
+        queue_wait.wait_until_cancellation_requested(Duration::from_secs(1));
+        queue_wait.release();
+        closer
+            .join()
+            .expect("lost-wake closer")
+            .expect("queue cancellation wake is observed");
+        assert!(Instant::now() <= deadline);
+        writer_thread.join().expect("lost-wake writer");
+    }
+
+    #[test]
+    fn completion_signal_does_not_allow_join_past_the_absolute_deadline() {
+        let (read_end, writer) = create_test_pipe().expect("test pipe");
+        let (_output, drain, after_completion) =
+            start_output_drain_paused_after_completion(read_end).expect("hooked output drain");
+        drop(writer);
+        after_completion.wait_until_paused(Duration::from_secs(1));
+
+        let started = Instant::now();
+        let deadline = started + Duration::from_millis(100);
+        let (result_tx, result_rx) = std::sync::mpsc::channel();
+        let closer = std::thread::spawn(move || {
+            let mut drain = drain;
+            let result = drain.close_before(deadline);
+            result_tx
+                .send((drain, result, Instant::now()))
+                .expect("return retained drain");
+        });
+
+        let first = result_rx.recv_timeout(Duration::from_millis(200));
+        let (mut drain, result, returned_at) = match first {
+            Ok(value) => value,
+            Err(error) => {
+                after_completion.release();
+                let _ = result_rx.recv_timeout(Duration::from_secs(1));
+                closer.join().expect("unblock old unbounded join");
+                panic!("close did not return by deadline: {error}");
+            }
+        };
+        assert_eq!(
+            result
+                .expect_err("live worker must retain ownership")
+                .kind(),
+            io::ErrorKind::TimedOut
+        );
+        assert!(returned_at <= deadline + Duration::from_millis(10));
+
+        after_completion.release();
+        drain
+            .close_before(Instant::now() + Duration::from_secs(1))
+            .expect("retry joins terminated worker");
+        closer.join().expect("deadline closer");
     }
 
     #[test]

@@ -32,6 +32,7 @@ use windows_sys::Win32::System::Threading::{
 const PSEUDOCONSOLE_RESIZE_QUIRK: u32 = 0x2;
 const PSEUDOCONSOLE_WIN32_INPUT_MODE: u32 = 0x4;
 const CANCEL_JOIN_RESERVE: Duration = Duration::from_millis(50);
+const THREAD_RETURN_RESERVE: Duration = Duration::from_millis(25);
 const OUTPUT_READ_CHUNK_BYTES: usize = 16 * 1_024;
 pub(crate) const OUTPUT_QUEUE_CAPACITY_BYTES: usize = 64 * 1_024;
 
@@ -157,6 +158,7 @@ struct OutputQueueState {
     error: Option<io::Error>,
     closed: bool,
     receiver_alive: bool,
+    cancellation_requested: bool,
 }
 
 struct OutputQueue {
@@ -182,19 +184,23 @@ impl OutputQueue {
                 error: None,
                 closed: false,
                 receiver_alive: true,
+                cancellation_requested: false,
             }),
             readable: Condvar::new(),
             writable: Condvar::new(),
         }
     }
 
-    fn reserve_read(&self, cancelling: &AtomicBool) -> QueueReservation {
+    fn reserve_read(&self, pause_before_wait: Option<&BetweenReadsPause>) -> QueueReservation {
         let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
         while state.receiver_alive
-            && !cancelling.load(Ordering::Acquire)
+            && !state.cancellation_requested
             && state.queued_bytes + state.reserved_bytes + OUTPUT_READ_CHUNK_BYTES
                 > OUTPUT_QUEUE_CAPACITY_BYTES
         {
+            if let Some(pause) = pause_before_wait {
+                pause.pause();
+            }
             state = self
                 .writable
                 .wait(state)
@@ -204,7 +210,7 @@ impl OutputQueue {
             QueueReservation::Discard
         } else if state.queued_bytes + state.reserved_bytes + OUTPUT_READ_CHUNK_BYTES
             > OUTPUT_QUEUE_CAPACITY_BYTES
-            && cancelling.load(Ordering::Acquire)
+            && state.cancellation_requested
         {
             QueueReservation::Cancelled
         } else {
@@ -241,7 +247,9 @@ impl OutputQueue {
         self.writable.notify_all();
     }
 
-    fn wake_producer(&self) {
+    fn request_cancellation(&self) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.cancellation_requested = true;
         self.writable.notify_all();
     }
 
@@ -842,7 +850,7 @@ impl OutputDrain {
             .unwrap_or_else(Instant::now);
         if !self.completion.wait_until(cancel_at) {
             self.protocol.request_cancellation();
-            self.queue.wake_producer();
+            self.queue.request_cancellation();
             while !self.completion.wait_until(Instant::now()) && Instant::now() < deadline {
                 if self.protocol.phase() == ReaderPhase::Reading
                     && let Some(handle) = self.handle.as_ref()
@@ -863,12 +871,46 @@ impl OutputDrain {
                 "ConPTY output drain exceeded cleanup deadline",
             ));
         }
+        let thread_deadline = deadline
+            .checked_sub(THREAD_RETURN_RESERVE)
+            .unwrap_or_else(Instant::now);
+        if let Some(handle) = self.handle.as_ref()
+            && !wait_for_thread_termination(handle, thread_deadline)?
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "ConPTY output thread remained live after completion signal",
+            ));
+        }
         if let Some(handle) = self.handle.take() {
             handle
                 .join()
                 .map_err(|_| io::Error::other("ConPTY output drain panicked"))?;
         }
         Ok(())
+    }
+}
+
+fn wait_for_thread_termination(
+    handle: &thread::JoinHandle<()>,
+    deadline: Instant,
+) -> io::Result<bool> {
+    loop {
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let wait_ms =
+            u32::try_from(remaining.as_millis().min(u128::from(u32::MAX))).unwrap_or(u32::MAX);
+        // SAFETY: JoinHandle owns the thread handle for the duration of this wait.
+        match unsafe { WaitForSingleObject(handle.as_raw_handle(), wait_ms) } {
+            WAIT_OBJECT_0 => return Ok(true),
+            WAIT_FAILED => return Err(io::Error::last_os_error()),
+            WAIT_TIMEOUT if Instant::now() >= deadline => return Ok(false),
+            WAIT_TIMEOUT => thread::yield_now(),
+            result => {
+                return Err(io::Error::other(format!(
+                    "unexpected Windows thread wait result: {result}"
+                )));
+            }
+        }
     }
 }
 
@@ -881,12 +923,14 @@ impl Drop for OutputDrain {
 }
 
 fn start_output_drain(read_end: OwnedHandle) -> io::Result<(ConPtyReader, OutputDrain)> {
-    start_output_drain_inner(read_end, None)
+    start_output_drain_inner(read_end, None, None, None)
 }
 
 fn start_output_drain_inner(
     read_end: OwnedHandle,
     pause_after_first_read: Option<Arc<BetweenReadsPause>>,
+    pause_before_queue_wait: Option<Arc<BetweenReadsPause>>,
+    pause_after_completion: Option<Arc<BetweenReadsPause>>,
 ) -> io::Result<(ConPtyReader, OutputDrain)> {
     let queue = Arc::new(OutputQueue::new());
     let completion = Arc::new(DrainCompletion {
@@ -908,7 +952,7 @@ fn start_output_drain_inner(
                 let reserved = if discard {
                     QueueReservation::Discard
                 } else {
-                    thread_queue.reserve_read(&thread_protocol.cancellation_requested)
+                    thread_queue.reserve_read(pause_before_queue_wait.as_deref())
                 };
                 match reserved {
                     QueueReservation::Cancelled => break,
@@ -964,6 +1008,10 @@ fn start_output_drain_inner(
                 .unwrap_or_else(|error| error.into_inner());
             *complete = true;
             thread_completion.changed.notify_all();
+            drop(complete);
+            if let Some(pause) = pause_after_completion.as_ref() {
+                pause.pause();
+            }
         })?;
     Ok((
         ConPtyReader {
@@ -1002,7 +1050,45 @@ pub(crate) fn test_output_drain_paused_between_reads(
         }),
         changed: Condvar::new(),
     });
-    let (reader, drain) = start_output_drain_inner(read, Some(Arc::clone(&pause)))?;
+    let (reader, drain) = start_output_drain_inner(read, Some(Arc::clone(&pause)), None, None)?;
+    let control = BetweenReadsControl {
+        pause,
+        protocol: Arc::clone(&drain.protocol),
+    };
+    Ok((reader, drain, control))
+}
+
+#[cfg(test)]
+pub(crate) fn test_output_drain_paused_before_queue_wait(
+    read: OwnedHandle,
+) -> io::Result<(ConPtyReader, OutputDrain, BetweenReadsControl)> {
+    let pause = Arc::new(BetweenReadsPause {
+        state: Mutex::new(BetweenReadsPauseState {
+            paused: false,
+            released: false,
+        }),
+        changed: Condvar::new(),
+    });
+    let (reader, drain) = start_output_drain_inner(read, None, Some(Arc::clone(&pause)), None)?;
+    let control = BetweenReadsControl {
+        pause,
+        protocol: Arc::clone(&drain.protocol),
+    };
+    Ok((reader, drain, control))
+}
+
+#[cfg(test)]
+pub(crate) fn test_output_drain_paused_after_completion(
+    read: OwnedHandle,
+) -> io::Result<(ConPtyReader, OutputDrain, BetweenReadsControl)> {
+    let pause = Arc::new(BetweenReadsPause {
+        state: Mutex::new(BetweenReadsPauseState {
+            paused: false,
+            released: false,
+        }),
+        changed: Condvar::new(),
+    });
+    let (reader, drain) = start_output_drain_inner(read, None, None, Some(Arc::clone(&pause)))?;
     let control = BetweenReadsControl {
         pause,
         protocol: Arc::clone(&drain.protocol),
