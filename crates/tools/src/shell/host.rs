@@ -165,6 +165,119 @@ pub fn run_internal_shell_host_bootstrap() -> i32 {
     125
 }
 
+pub trait HostSupervisor {
+    fn preflight(&mut self) -> io::Result<()>;
+    fn spawn(&mut self, command: &str) -> io::Result<()>;
+    fn try_root_exit(&mut self) -> io::Result<Option<RootExit>>;
+    /// Returns the root outcome only after the containment fixed point is empty.
+    fn cleanup(&mut self) -> io::Result<Option<RootExit>>;
+}
+
+pub fn run_host_lifecycle(
+    mut channel: HostChannel,
+    mut supervisor: impl HostSupervisor,
+    retry_interval: Duration,
+) -> Result<RootExit, HostProtocolError> {
+    channel.recv_activate()?;
+    supervisor.preflight()?;
+    channel.send_contained()?;
+    let command = channel.recv_command()?;
+    supervisor.spawn(&command)?;
+    channel.send_ready()?;
+
+    let mut control_stream = channel.stream.try_clone()?;
+    let (control_tx, control_rx) = std::sync::mpsc::sync_channel(4);
+    let _control_reader = std::thread::spawn(move || {
+        loop {
+            let control = read_host_control(&mut control_stream);
+            let terminal = !matches!(control, Ok(HostControl::Stop));
+            if control_tx.send(control).is_err() || terminal {
+                break;
+            }
+        }
+    });
+    let mut root_exit = None;
+    let mut cleaning = false;
+    let mut failure_reported = false;
+    let mut parent_connected = true;
+    let mut terminal_error = None;
+
+    loop {
+        if !cleaning {
+            match supervisor.try_root_exit() {
+                Ok(Some(exit)) => {
+                    root_exit = Some(exit);
+                    cleaning = true;
+                }
+                Ok(None) => {}
+                Err(error) => {
+                    terminal_error = Some(error);
+                    cleaning = true;
+                }
+            }
+        }
+
+        while let Ok(control) = control_rx.try_recv() {
+            match control {
+                Ok(HostControl::Stop) => cleaning = true,
+                Ok(HostControl::ParentEof) | Err(_) => {
+                    cleaning = true;
+                    parent_connected = false;
+                }
+            }
+        }
+
+        if cleaning {
+            match supervisor.cleanup() {
+                Ok(Some(cleanup_exit)) => {
+                    let exit = root_exit.unwrap_or(cleanup_exit);
+                    if parent_connected && terminal_error.is_none() {
+                        let _ = channel.send_done(exit);
+                    }
+                    let _ = channel.stream.shutdown(std::net::Shutdown::Both);
+                    return match terminal_error {
+                        Some(error) => Err(error.into()),
+                        None => Ok(exit),
+                    };
+                }
+                Ok(None) => {}
+                Err(_) => {
+                    if parent_connected && !failure_reported {
+                        if channel.send_cleanup_failed().is_err() {
+                            parent_connected = false;
+                        } else {
+                            failure_reported = true;
+                        }
+                    }
+                }
+            }
+        }
+
+        match control_rx.recv_timeout(retry_interval) {
+            Ok(Ok(HostControl::Stop)) => cleaning = true,
+            Ok(Ok(HostControl::ParentEof) | Err(_))
+            | Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
+                cleaning = true;
+                parent_connected = false;
+            }
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+        }
+    }
+}
+
+fn read_host_control(stream: &mut TcpStream) -> Result<HostControl, HostProtocolError> {
+    let frame = match read_frame(stream, None) {
+        Ok(frame) => frame,
+        Err(HostProtocolError::PeerClosed) => return Ok(HostControl::ParentEof),
+        Err(error) => return Err(error),
+    };
+    if frame.kind == FrameKind::Stop && frame.payload.is_empty() {
+        Ok(HostControl::Stop)
+    } else {
+        Err(HostProtocolError::InvalidFrame)
+    }
+}
+
 pub struct HostListener {
     listener: TcpListener,
     token: [u8; AUTH_TOKEN_BYTES],
@@ -686,11 +799,11 @@ fn decode_hex_digit(digit: u8) -> Result<u8, HostProtocolError> {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, VecDeque};
     use std::ffi::OsString;
     use std::io::{self, Write as _};
     use std::net::{Shutdown, TcpListener, TcpStream};
-    use std::sync::mpsc;
+    use std::sync::{Arc, Mutex, mpsc};
     use std::thread;
     use std::time::{Duration, Instant};
 
@@ -699,8 +812,8 @@ mod tests {
     use super::{
         AUTH_TOKEN_BYTES, FrameKind, HOST_ADDRESS_ENV, HOST_TIMEOUT_ENV, HOST_TOKEN_ENV,
         HOST_VERSION_ENV, HostBootstrap, HostChannel, HostControl, HostEvent, HostListener,
-        HostProtocolError, HostState, PROTOCOL_MAGIC, PROTOCOL_VERSION, RootExit, read_frame,
-        write_frame,
+        HostProtocolError, HostState, HostSupervisor, PROTOCOL_MAGIC, PROTOCOL_VERSION, RootExit,
+        read_frame, run_host_lifecycle, write_frame,
     };
 
     #[test]
@@ -978,6 +1091,260 @@ mod tests {
             (HOST_VERSION_ENV, PROTOCOL_VERSION.to_string().into()),
             (HOST_TIMEOUT_ENV, "30000".into()),
         ])
+    }
+
+    #[test]
+    fn lifecycle_preflights_before_contained_and_preserves_natural_exit_seven() {
+        let state = Arc::new(Mutex::new(ScriptedState {
+            root_polls: VecDeque::from([Some(RootExit::Code(7))]),
+            cleanup: VecDeque::from([CleanupStep::Done(RootExit::Code(7))]),
+            ..ScriptedState::default()
+        }));
+        let (listener, bootstrap) = HostListener::bind_for_test(Duration::from_secs(2), [0x71; 32])
+            .expect("lifecycle listener");
+        let host_state = Arc::clone(&state);
+        let host = thread::spawn(move || {
+            let channel = bootstrap.connect().expect("host connects");
+            run_host_lifecycle(
+                channel,
+                ScriptedSupervisor { state: host_state },
+                Duration::from_millis(2),
+            )
+        });
+
+        let mut parent = listener.accept().expect("accept host");
+        parent.send_activate().expect("activate host");
+        assert_eq!(
+            parent.recv_event().expect("contained"),
+            HostEvent::Contained
+        );
+        parent.send_command("exit 7").expect("deliver command");
+        assert_eq!(parent.recv_event().expect("ready"), HostEvent::Ready);
+        assert_eq!(
+            parent.recv_event().expect("done"),
+            HostEvent::Done(RootExit::Code(7))
+        );
+        assert_eq!(
+            host.join()
+                .expect("host thread")
+                .expect("lifecycle succeeds"),
+            RootExit::Code(7)
+        );
+
+        let state = state.lock().expect("scripted state");
+        assert_eq!(state.events, ["preflight", "spawn", "poll", "cleanup"]);
+        assert_eq!(state.commands, ["exit 7"]);
+    }
+
+    #[test]
+    fn lifecycle_reports_cleanup_failure_once_then_retries_until_fixed_point() {
+        let state = Arc::new(Mutex::new(ScriptedState {
+            root_polls: VecDeque::from([Some(RootExit::Code(7))]),
+            cleanup: VecDeque::from([
+                CleanupStep::Fail,
+                CleanupStep::Pending,
+                CleanupStep::Done(RootExit::Code(7)),
+            ]),
+            ..ScriptedState::default()
+        }));
+        let (listener, bootstrap) = HostListener::bind_for_test(Duration::from_secs(2), [0x72; 32])
+            .expect("retry listener");
+        let host_state = Arc::clone(&state);
+        let host = thread::spawn(move || {
+            let channel = bootstrap.connect().expect("host connects");
+            run_host_lifecycle(
+                channel,
+                ScriptedSupervisor { state: host_state },
+                Duration::from_millis(2),
+            )
+        });
+
+        let mut parent = listener.accept().expect("accept host");
+        parent.send_activate().expect("activate host");
+        assert_eq!(
+            parent.recv_event().expect("contained"),
+            HostEvent::Contained
+        );
+        parent.send_command("exit 7").expect("deliver command");
+        assert_eq!(parent.recv_event().expect("ready"), HostEvent::Ready);
+        assert_eq!(
+            parent.recv_event().expect("one cleanup failure"),
+            HostEvent::CleanupFailed
+        );
+        parent.send_stop().expect("retry stop remains accepted");
+        assert_eq!(
+            parent.recv_event().expect("eventual done"),
+            HostEvent::Done(RootExit::Code(7))
+        );
+        assert_eq!(
+            host.join()
+                .expect("host thread")
+                .expect("lifecycle succeeds"),
+            RootExit::Code(7)
+        );
+
+        let state = state.lock().expect("scripted state");
+        assert_eq!(
+            state
+                .events
+                .iter()
+                .filter(|event| **event == "cleanup")
+                .count(),
+            3
+        );
+    }
+
+    #[test]
+    fn lifecycle_keeps_normal_cleanup_pending_silent_until_done() {
+        let state = Arc::new(Mutex::new(ScriptedState {
+            root_polls: VecDeque::from([Some(RootExit::Code(0))]),
+            cleanup: VecDeque::from([CleanupStep::Pending, CleanupStep::Done(RootExit::Code(0))]),
+            ..ScriptedState::default()
+        }));
+        let (listener, bootstrap) = HostListener::bind_for_test(Duration::from_secs(2), [0x74; 32])
+            .expect("pending listener");
+        let host_state = Arc::clone(&state);
+        let host = thread::spawn(move || {
+            let channel = bootstrap.connect().expect("host connects");
+            run_host_lifecycle(
+                channel,
+                ScriptedSupervisor { state: host_state },
+                Duration::from_millis(2),
+            )
+        });
+
+        let mut parent = listener.accept().expect("accept host");
+        parent.send_activate().expect("activate host");
+        assert_eq!(
+            parent.recv_event().expect("contained"),
+            HostEvent::Contained
+        );
+        parent.send_command("exit 0").expect("deliver command");
+        assert_eq!(parent.recv_event().expect("ready"), HostEvent::Ready);
+        assert_eq!(
+            parent.recv_event().expect("pending remains silent"),
+            HostEvent::Done(RootExit::Code(0))
+        );
+        assert_eq!(
+            host.join()
+                .expect("host thread")
+                .expect("lifecycle succeeds"),
+            RootExit::Code(0)
+        );
+    }
+
+    #[test]
+    fn lifecycle_treats_parent_eof_as_stop_and_cleans_before_exit() {
+        let state = Arc::new(Mutex::new(ScriptedState {
+            root_polls: VecDeque::from([None]),
+            cleanup: VecDeque::from([CleanupStep::Done(RootExit::Code(0))]),
+            ..ScriptedState::default()
+        }));
+        let (listener, bootstrap) =
+            HostListener::bind_for_test(Duration::from_secs(2), [0x73; 32]).expect("EOF listener");
+        let host_state = Arc::clone(&state);
+        let host = thread::spawn(move || {
+            let channel = bootstrap.connect().expect("host connects");
+            run_host_lifecycle(
+                channel,
+                ScriptedSupervisor { state: host_state },
+                Duration::from_millis(2),
+            )
+        });
+
+        let mut parent = listener.accept().expect("accept host");
+        parent.send_activate().expect("activate host");
+        assert_eq!(
+            parent.recv_event().expect("contained"),
+            HostEvent::Contained
+        );
+        parent
+            .send_command("long-running")
+            .expect("deliver command");
+        assert_eq!(parent.recv_event().expect("ready"), HostEvent::Ready);
+        drop(parent);
+
+        assert_eq!(
+            host.join()
+                .expect("host thread")
+                .expect("lifecycle succeeds"),
+            RootExit::Code(0)
+        );
+        let state = state.lock().expect("scripted state");
+        assert_eq!(
+            state
+                .events
+                .iter()
+                .filter(|event| **event == "cleanup")
+                .count(),
+            1
+        );
+    }
+
+    trait ScriptedCleanupResult {
+        fn into_result(self) -> io::Result<Option<RootExit>>;
+    }
+
+    enum CleanupStep {
+        Fail,
+        Pending,
+        Done(RootExit),
+    }
+
+    impl ScriptedCleanupResult for CleanupStep {
+        fn into_result(self) -> io::Result<Option<RootExit>> {
+            match self {
+                Self::Fail => Err(io::Error::other("scripted cleanup failure")),
+                Self::Pending => Ok(None),
+                Self::Done(exit) => Ok(Some(exit)),
+            }
+        }
+    }
+
+    #[derive(Default)]
+    struct ScriptedState {
+        events: Vec<&'static str>,
+        commands: Vec<String>,
+        root_polls: VecDeque<Option<RootExit>>,
+        cleanup: VecDeque<CleanupStep>,
+    }
+
+    struct ScriptedSupervisor {
+        state: Arc<Mutex<ScriptedState>>,
+    }
+
+    impl HostSupervisor for ScriptedSupervisor {
+        fn preflight(&mut self) -> io::Result<()> {
+            self.state
+                .lock()
+                .expect("scripted state")
+                .events
+                .push("preflight");
+            Ok(())
+        }
+
+        fn spawn(&mut self, command: &str) -> io::Result<()> {
+            let mut state = self.state.lock().expect("scripted state");
+            state.events.push("spawn");
+            state.commands.push(command.to_owned());
+            Ok(())
+        }
+
+        fn try_root_exit(&mut self) -> io::Result<Option<RootExit>> {
+            let mut state = self.state.lock().expect("scripted state");
+            state.events.push("poll");
+            Ok(state.root_polls.pop_front().flatten())
+        }
+
+        fn cleanup(&mut self) -> io::Result<Option<RootExit>> {
+            let mut state = self.state.lock().expect("scripted state");
+            state.events.push("cleanup");
+            state
+                .cleanup
+                .pop_front()
+                .unwrap_or(CleanupStep::Pending)
+                .into_result()
+        }
     }
 
     fn loopback_pair() -> (TcpStream, TcpStream) {

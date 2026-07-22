@@ -24,7 +24,8 @@ mod write;
 pub mod internal_shell_host {
     pub use crate::shell::host::{
         HostBootstrap, HostChannel, HostControl, HostEvent, HostListener, HostProtocolError,
-        INTERNAL_HOST_ARGUMENT, ParentChannel, RootExit, run_internal_shell_host_bootstrap,
+        HostSupervisor, INTERNAL_HOST_ARGUMENT, ParentChannel, RootExit, run_host_lifecycle,
+        run_internal_shell_host_bootstrap,
     };
 }
 
