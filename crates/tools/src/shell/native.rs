@@ -1,9 +1,9 @@
+use std::ffi::OsString;
 use std::io;
-#[cfg(windows)]
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
-#[cfg(target_os = "linux")]
+#[cfg(any(windows, target_os = "linux"))]
 use std::time::Duration;
 
 use minimax_protocol::ShellSessionId;
@@ -17,6 +17,8 @@ use super::{
 };
 
 const PROCESS_NONCE_BYTES: usize = 8;
+#[cfg(windows)]
+const HOST_STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[allow(dead_code)]
 fn build_host_command(
@@ -24,63 +26,112 @@ fn build_host_command(
     bootstrap: &super::host::HostBootstrap,
     cwd: &Path,
 ) -> CommandBuilder {
+    build_host_command_with_environment(trusted_host, bootstrap, cwd, std::env::vars_os())
+}
+
+fn build_host_command_with_environment(
+    trusted_host: &Path,
+    bootstrap: &super::host::HostBootstrap,
+    cwd: &Path,
+    environment: impl IntoIterator<Item = (OsString, OsString)>,
+) -> CommandBuilder {
     let mut command = CommandBuilder::new(trusted_host);
     command.args(bootstrap.arguments());
+    for (key, value) in environment {
+        command.env(key, value);
+    }
     for (key, value) in bootstrap.environment() {
         command.env(key, value);
     }
     command.cwd(cwd);
     command
 }
-#[cfg(windows)]
-const WINDOWS_GATE_COMMAND_ENV: &str = "MINIMAX_SHELL_GATED_COMMAND";
-#[cfg(windows)]
-const WINDOWS_GATE_PATH_ENV: &str = "MINIMAX_SHELL_GATE_PATH";
-#[cfg(windows)]
-const WINDOWS_GATE_TOKEN_ENV: &str = "MINIMAX_SHELL_GATE_TOKEN";
-#[cfg(windows)]
-const WINDOWS_GATE_TIMEOUT_ENV: &str = "MINIMAX_SHELL_GATE_TIMEOUT_MS";
-#[cfg(windows)]
-const WINDOWS_GATE_TIMEOUT_MS: &str = "30000";
-#[cfg(windows)]
-const WINDOWS_GATE_WRAPPER: &str = r#"
-$__minimax_shell_gate_71f5650d_path = [Environment]::GetEnvironmentVariable('MINIMAX_SHELL_GATE_PATH', 'Process')
-$__minimax_shell_gate_71f5650d_token = [Environment]::GetEnvironmentVariable('MINIMAX_SHELL_GATE_TOKEN', 'Process')
-$__minimax_shell_gate_71f5650d_timeout_text = [Environment]::GetEnvironmentVariable('MINIMAX_SHELL_GATE_TIMEOUT_MS', 'Process')
-$__minimax_shell_gate_71f5650d_timeout_ms = 0
-if ([String]::IsNullOrEmpty($__minimax_shell_gate_71f5650d_path) -or [String]::IsNullOrEmpty($__minimax_shell_gate_71f5650d_token)) { exit 125 }
-if (-not [Int32]::TryParse($__minimax_shell_gate_71f5650d_timeout_text, [ref]$__minimax_shell_gate_71f5650d_timeout_ms) -or $__minimax_shell_gate_71f5650d_timeout_ms -lt 1 -or $__minimax_shell_gate_71f5650d_timeout_ms -gt 300000) { exit 125 }
-$__minimax_shell_gate_71f5650d_wait = [Diagnostics.Stopwatch]::StartNew()
-while (-not [IO.File]::Exists($__minimax_shell_gate_71f5650d_path)) {
-    if ($__minimax_shell_gate_71f5650d_wait.ElapsedMilliseconds -ge $__minimax_shell_gate_71f5650d_timeout_ms) { exit 125 }
-    [Threading.Thread]::Sleep(10)
+#[derive(Clone, Debug)]
+enum HostExecutable {
+    CurrentExecutable,
+    Fixed(PathBuf),
 }
-try { $__minimax_shell_gate_71f5650d_observed = [IO.File]::ReadAllText($__minimax_shell_gate_71f5650d_path) } catch { exit 125 }
-if ($__minimax_shell_gate_71f5650d_observed -cne $__minimax_shell_gate_71f5650d_token) { exit 125 }
-$__minimax_shell_gate_71f5650d_command = [Environment]::GetEnvironmentVariable('MINIMAX_SHELL_GATED_COMMAND', 'Process')
-[Environment]::SetEnvironmentVariable('MINIMAX_SHELL_GATED_COMMAND', $null, 'Process')
-[Environment]::SetEnvironmentVariable('MINIMAX_SHELL_GATE_PATH', $null, 'Process')
-[Environment]::SetEnvironmentVariable('MINIMAX_SHELL_GATE_TOKEN', $null, 'Process')
-[Environment]::SetEnvironmentVariable('MINIMAX_SHELL_GATE_TIMEOUT_MS', $null, 'Process')
-try { [IO.File]::Delete($__minimax_shell_gate_71f5650d_path) } catch { exit 125 }
-if ($null -eq $__minimax_shell_gate_71f5650d_command) { exit 125 }
-$__minimax_shell_gate_71f5650d_script_9c8e36a2 = [ScriptBlock]::Create($__minimax_shell_gate_71f5650d_command)
-Remove-Variable -Name '__minimax_shell_gate_71f5650d_path','__minimax_shell_gate_71f5650d_token','__minimax_shell_gate_71f5650d_timeout_text','__minimax_shell_gate_71f5650d_timeout_ms','__minimax_shell_gate_71f5650d_wait','__minimax_shell_gate_71f5650d_observed','__minimax_shell_gate_71f5650d_command' -ErrorAction SilentlyContinue
-& $__minimax_shell_gate_71f5650d_script_9c8e36a2
-"#;
 
-#[derive(Clone, Copy, Debug, Default)]
-pub struct NativePtyBackend;
+#[derive(Clone)]
+pub struct NativePtyBackend {
+    host_executable: HostExecutable,
+    startup_observer: Option<Arc<dyn Fn(&'static str) + Send + Sync>>,
+}
 
-impl PtyBackend for NativePtyBackend {
-    fn requires_cursor_handshake(&self) -> bool {
-        cfg!(windows)
+impl std::fmt::Debug for NativePtyBackend {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("NativePtyBackend")
+            .field("host_executable", &self.host_executable)
+            .field("startup_observer", &self.startup_observer.is_some())
+            .finish()
+    }
+}
+
+impl Default for NativePtyBackend {
+    fn default() -> Self {
+        Self {
+            host_executable: HostExecutable::CurrentExecutable,
+            startup_observer: None,
+        }
+    }
+}
+
+impl NativePtyBackend {
+    /// Overrides the trusted internal-host executable for integration tests.
+    #[doc(hidden)]
+    pub fn with_host_executable(path: PathBuf) -> io::Result<Self> {
+        if !path.is_absolute() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "trusted shell host path must be absolute",
+            ));
+        }
+        Ok(Self {
+            host_executable: HostExecutable::Fixed(path),
+            startup_observer: None,
+        })
     }
 
-    fn spawn(&self, request: &ShellSpawnRequest) -> io::Result<SpawnedPty> {
-        let resolved = resolve_native_shell(&request.command)?;
-        #[cfg(windows)]
-        let mut windows_startup = WindowsStartupGate::new()?;
+    /// Installs a secret-free Windows startup observer for integration tests.
+    #[doc(hidden)]
+    #[must_use]
+    pub fn with_startup_observer(
+        mut self,
+        observer: Arc<dyn Fn(&'static str) + Send + Sync>,
+    ) -> Self {
+        self.startup_observer = Some(observer);
+        self
+    }
+
+    fn observe_startup(&self, stage: &'static str) {
+        if let Some(observer) = &self.startup_observer {
+            observer(stage);
+        }
+    }
+
+    #[cfg(windows)]
+    fn resolve_host_executable(&self) -> io::Result<PathBuf> {
+        let path = match &self.host_executable {
+            HostExecutable::CurrentExecutable => std::env::current_exe()?,
+            HostExecutable::Fixed(path) => path.clone(),
+        };
+        if !path.is_absolute() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "trusted shell host path must be absolute",
+            ));
+        }
+        Ok(path)
+    }
+
+    #[cfg(windows)]
+    fn spawn_windows(&self, request: &ShellSpawnRequest) -> io::Result<SpawnedPty> {
+        let trusted_host = self.resolve_host_executable()?;
+        let (listener, bootstrap) =
+            super::host::HostListener::bind(HOST_STARTUP_TIMEOUT).map_err(io::Error::from)?;
+        self.observe_startup("listener_bound");
+        let mut job = WindowsJobBoundary::new()?;
         let pair = portable_pty::native_pty_system()
             .openpty(PtySize {
                 rows: request.rows,
@@ -89,177 +140,224 @@ impl PtyBackend for NativePtyBackend {
                 pixel_height: 0,
             })
             .map_err(pty_error)?;
-        let mut command = CommandBuilder::new(&resolved.program);
-        #[cfg(windows)]
-        windows_startup.prepare_command(&mut command, &request.command);
-        #[cfg(not(windows))]
-        command.args(&resolved.args);
-        command.cwd(&request.cwd);
-        let (mut child, reader, writer) = acquire_handles_then_spawn(
+        let command = build_host_command(&trusted_host, &bootstrap, &request.cwd);
+        let (mut child, reader, mut writer) = acquire_handles_then_spawn(
             || pair.master.try_clone_reader().map_err(pty_error),
             || pair.master.take_writer().map_err(pty_error),
             || pair.slave.spawn_command(command).map_err(pty_error),
         )?;
         drop(pair.slave);
+        self.observe_startup("host_spawned");
 
         let process_id = process_id_or_cleanup(child.as_mut())?;
-        #[cfg(target_os = "linux")]
-        let process_group = match pair
-            .master
-            .process_group_leader()
-            .and_then(rustix::process::Pid::from_raw)
-        {
-            Some(process_group)
-                if u32::try_from(process_group.as_raw_pid()).ok() == Some(process_id) =>
-            {
-                process_group
-            }
-            Some(process_group) => {
-                let cleanup = kill_and_wait_child(child.as_mut());
+        let protocol = assign_job_before_host_protocol(
+            child.as_mut(),
+            |child| {
+                self.observe_startup("assign_begin");
+                job.assign(child)?;
+                self.observe_startup("assigned");
+                Ok(())
+            },
+            |child| {
+                // portable-pty creates ConPTY with INHERIT_CURSOR. The attached
+                // host cannot reach main() until its cursor query is answered,
+                // so complete that fixed console handshake only after the Job
+                // boundary exists and before the authenticated host protocol.
+                writer.write_all(b"\x1b[1;1R")?;
+                writer.flush()?;
+                start_windows_host_protocol(listener, &request.command, self, child)
+            },
+        );
+        let parent_channel = match protocol {
+            Ok(parent_channel) => parent_channel,
+            Err(error) => {
+                self.observe_startup("error_cleanup");
+                drop(job.take());
+                drop(reader);
+                drop(writer);
+                drop(pair.master);
+                let cleanup = kill_and_poll_child(child.as_mut());
                 return Err(io::Error::other(format!(
-                    "PTY process-group leader {} did not match child {process_id}; {cleanup}",
-                    process_group.as_raw_pid()
-                )));
-            }
-            None => {
-                let cleanup = kill_and_wait_child(child.as_mut());
-                return Err(io::Error::other(format!(
-                    "PTY did not expose a Linux process-group leader; {cleanup}"
+                    "Windows trusted-host startup failed: {error}; host cleanup: {cleanup}"
                 )));
             }
         };
-        #[cfg(windows)]
-        if let Err(error) = windows_startup.assign_and_release(child.as_ref()) {
-            let cleanup = kill_and_wait_child(child.as_mut());
-            return Err(io::Error::other(format!(
-                "Windows Job startup gate failed: {error}; gated child cleanup: {cleanup}"
-            )));
-        }
 
         Ok(SpawnedPty {
-            child: Box::new(NativePtyChild {
-                child,
-                process_id,
-                #[cfg(target_os = "linux")]
-                observed_exit: None,
-                #[cfg(target_os = "linux")]
-                reaped: false,
-            }),
+            child: Box::new(NativePtyChild { child, process_id }),
             reader,
             writer,
             guard: Box::new(NativePtyGuard {
                 master: Some(pair.master),
-                #[cfg(windows)]
-                job: windows_startup.job.take(),
-                #[cfg(windows)]
-                gate_dir: windows_startup.gate_dir.take(),
-                #[cfg(not(any(windows, target_os = "linux")))]
-                process_id,
-                #[cfg(target_os = "linux")]
-                process_group,
-                #[cfg(target_os = "linux")]
-                destructive_complete: false,
+                job: job.take(),
+                parent_channel: Some(parent_channel),
                 armed: true,
             }),
         })
     }
 }
 
-#[cfg(windows)]
-struct WindowsStartupGate {
-    job: Option<Job>,
-    gate_dir: Option<tempfile::TempDir>,
-    gate_path: PathBuf,
-    gate_token: String,
+impl PtyBackend for NativePtyBackend {
+    fn requires_cursor_handshake(&self) -> bool {
+        false
+    }
+
+    fn spawn(&self, request: &ShellSpawnRequest) -> io::Result<SpawnedPty> {
+        #[cfg(windows)]
+        return self.spawn_windows(request);
+
+        #[cfg(not(windows))]
+        {
+            let resolved = resolve_native_shell(&request.command)?;
+            let pair = portable_pty::native_pty_system()
+                .openpty(PtySize {
+                    rows: request.rows,
+                    cols: request.cols,
+                    pixel_width: 0,
+                    pixel_height: 0,
+                })
+                .map_err(pty_error)?;
+            let mut command = CommandBuilder::new(&resolved.program);
+            command.args(&resolved.args);
+            command.cwd(&request.cwd);
+            let (mut child, reader, writer) = acquire_handles_then_spawn(
+                || pair.master.try_clone_reader().map_err(pty_error),
+                || pair.master.take_writer().map_err(pty_error),
+                || pair.slave.spawn_command(command).map_err(pty_error),
+            )?;
+            drop(pair.slave);
+
+            let process_id = process_id_or_cleanup(child.as_mut())?;
+            #[cfg(target_os = "linux")]
+            let process_group = match pair
+                .master
+                .process_group_leader()
+                .and_then(rustix::process::Pid::from_raw)
+            {
+                Some(process_group)
+                    if u32::try_from(process_group.as_raw_pid()).ok() == Some(process_id) =>
+                {
+                    process_group
+                }
+                Some(process_group) => {
+                    let cleanup = kill_and_wait_child(child.as_mut());
+                    return Err(io::Error::other(format!(
+                        "PTY process-group leader {} did not match child {process_id}; {cleanup}",
+                        process_group.as_raw_pid()
+                    )));
+                }
+                None => {
+                    let cleanup = kill_and_wait_child(child.as_mut());
+                    return Err(io::Error::other(format!(
+                        "PTY did not expose a Linux process-group leader; {cleanup}"
+                    )));
+                }
+            };
+            Ok(SpawnedPty {
+                child: Box::new(NativePtyChild {
+                    child,
+                    process_id,
+                    #[cfg(target_os = "linux")]
+                    observed_exit: None,
+                    #[cfg(target_os = "linux")]
+                    reaped: false,
+                }),
+                reader,
+                writer,
+                guard: Box::new(NativePtyGuard {
+                    master: Some(pair.master),
+                    #[cfg(not(any(windows, target_os = "linux")))]
+                    process_id,
+                    #[cfg(target_os = "linux")]
+                    process_group,
+                    #[cfg(target_os = "linux")]
+                    destructive_complete: false,
+                    armed: true,
+                }),
+            })
+        }
+    }
 }
 
 #[cfg(windows)]
-impl WindowsStartupGate {
+struct WindowsJobBoundary {
+    job: Option<Job>,
+}
+
+#[cfg(windows)]
+impl WindowsJobBoundary {
     fn new() -> io::Result<Self> {
         let mut limits = ExtendedLimitInfo::new();
         limits.limit_kill_on_job_close();
         let job = Job::create_with_limit_info(&limits)
             .map_err(|error| io::Error::other(format!("create Windows Job: {error}")))?;
-        let gate_dir = tempfile::Builder::new()
-            .prefix("minimax-shell-gate-")
-            .tempdir()?;
-        let gate_path = gate_dir.path().join("ready");
-        let mut token = [0_u8; 16];
-        getrandom::fill(&mut token).map_err(|error| {
-            io::Error::other(format!("generate Windows startup gate token: {error}"))
-        })?;
-        let gate_token = encode_lower_hex(&token);
-        Ok(Self {
-            job: Some(job),
-            gate_dir: Some(gate_dir),
-            gate_path,
-            gate_token,
-        })
+        Ok(Self { job: Some(job) })
     }
 
-    fn prepare_command(&self, command: &mut CommandBuilder, user_command: &str) {
-        command.args(["-NoLogo", "-NoProfile", "-Command", WINDOWS_GATE_WRAPPER]);
-        command.env(WINDOWS_GATE_COMMAND_ENV, user_command);
-        command.env(WINDOWS_GATE_PATH_ENV, &self.gate_path);
-        command.env(WINDOWS_GATE_TOKEN_ENV, &self.gate_token);
-        command.env(WINDOWS_GATE_TIMEOUT_ENV, WINDOWS_GATE_TIMEOUT_MS);
-    }
-
-    fn assign_and_release(
-        &self,
-        child: &(dyn portable_pty::Child + Send + Sync),
-    ) -> io::Result<()> {
+    fn assign(&self, child: &(dyn portable_pty::Child + Send + Sync)) -> io::Result<()> {
         let process_handle = child
             .as_raw_handle()
             .ok_or_else(|| io::Error::other("PTY child did not expose a raw process handle"))?;
-        self.assign_and_release_with(process_handle as isize, |job, handle| {
-            job.assign_process(handle).map_err(|error| {
-                io::Error::other(format!("assign PTY child to Windows Job: {error}"))
-            })
-        })
-    }
-
-    fn assign_and_release_with(
-        &self,
-        process_handle: isize,
-        assign: impl FnOnce(&Job, isize) -> io::Result<()>,
-    ) -> io::Result<()> {
-        assign(
-            self.job
-                .as_ref()
-                .ok_or_else(|| io::Error::other("Windows Job is missing before assignment"))?,
-            process_handle,
-        )?;
-        self.release()
-    }
-
-    fn release(&self) -> io::Result<()> {
-        let pending_path = self
-            .gate_dir
+        self.job
             .as_ref()
-            .ok_or_else(|| io::Error::other("Windows startup gate directory is missing"))?
-            .path()
-            .join("ready.pending");
-        let mut pending = std::fs::OpenOptions::new()
-            .write(true)
-            .create_new(true)
-            .open(&pending_path)?;
-        pending.write_all(self.gate_token.as_bytes())?;
-        pending.sync_all()?;
-        drop(pending);
-        std::fs::rename(pending_path, &self.gate_path)
+            .ok_or_else(|| io::Error::other("Windows Job is missing before assignment"))?
+            .assign_process(process_handle as isize)
+            .map_err(|error| {
+                io::Error::other(format!("assign trusted host to Windows Job: {error}"))
+            })
+    }
+
+    fn take(&mut self) -> Option<Job> {
+        self.job.take()
     }
 }
 
+fn assign_job_before_host_protocol<T, Child: ?Sized>(
+    child: &mut Child,
+    assign: impl FnOnce(&Child) -> io::Result<()>,
+    start_protocol: impl FnOnce(&mut Child) -> io::Result<T>,
+) -> io::Result<T> {
+    assign(child)?;
+    start_protocol(child)
+}
+
 #[cfg(windows)]
-fn encode_lower_hex(bytes: &[u8]) -> String {
-    const HEX: &[u8; 16] = b"0123456789abcdef";
-    let mut encoded = String::with_capacity(bytes.len() * 2);
-    for byte in bytes {
-        encoded.push(char::from(HEX[usize::from(byte >> 4)]));
-        encoded.push(char::from(HEX[usize::from(byte & 0x0f)]));
+fn start_windows_host_protocol(
+    listener: super::host::HostListener,
+    command: &str,
+    backend: &NativePtyBackend,
+    child: &mut (dyn portable_pty::Child + Send + Sync),
+) -> io::Result<super::host::ParentChannel> {
+    let mut parent = listener
+        .accept_with_probe(|| {
+            child.try_wait().map(|status| {
+                status.map(|status| {
+                    backend.observe_startup("host_exited_before_auth");
+                    status.exit_code()
+                })
+            })
+        })
+        .map_err(io::Error::from)?;
+    backend.observe_startup("authenticated");
+    parent.send_activate().map_err(io::Error::from)?;
+    backend.observe_startup("activated");
+    if parent.recv_event().map_err(io::Error::from)? != super::host::HostEvent::Contained {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "internal shell host did not confirm containment",
+        ));
     }
-    encoded
+    backend.observe_startup("contained");
+    parent.send_command(command).map_err(io::Error::from)?;
+    backend.observe_startup("command_sent");
+    if parent.recv_event().map_err(io::Error::from)? != super::host::HostEvent::Ready {
+        return Err(io::Error::new(
+            io::ErrorKind::InvalidData,
+            "internal shell host did not become ready",
+        ));
+    }
+    backend.observe_startup("ready");
+    Ok(parent)
 }
 
 struct NativePtyChild {
@@ -358,7 +456,7 @@ struct NativePtyGuard {
     #[cfg(windows)]
     job: Option<Job>,
     #[cfg(windows)]
-    gate_dir: Option<tempfile::TempDir>,
+    parent_channel: Option<super::host::ParentChannel>,
     #[cfg(not(any(windows, target_os = "linux")))]
     process_id: u32,
     #[cfg(target_os = "linux")]
@@ -375,6 +473,7 @@ impl super::backend::PtyGuard for NativePtyGuard {
             // This Job is unique and non-inherited. Windows' KILL_ON_JOB_CLOSE contract
             // terminates every associated process when this final Job handle closes.
             drop(self.job.take());
+            drop(self.parent_channel.take());
             self.armed = false;
             Ok(())
         });
@@ -405,10 +504,16 @@ impl super::backend::PtyGuard for NativePtyGuard {
         });
 
         #[cfg(windows)]
-        return Box::pin(async {
+        return Box::pin(async move {
             // Closing the final KILL_ON_JOB_CLOSE handle is the Windows containment
             // confirmation boundary; there is no reusable process-group ID to probe.
-            Ok(())
+            if self.job.is_some() {
+                Err(io::Error::other(
+                    "Windows Job confirmation preceded closing the Job handle",
+                ))
+            } else {
+                Ok(())
+            }
         });
 
         #[cfg(not(any(windows, target_os = "linux")))]
@@ -430,6 +535,7 @@ impl Drop for NativePtyGuard {
             #[cfg(windows)]
             {
                 drop(self.job.take());
+                drop(self.parent_channel.take());
             }
             #[cfg(target_os = "linux")]
             if !self.destructive_complete {
@@ -439,8 +545,6 @@ impl Drop for NativePtyGuard {
             #[cfg(not(any(windows, target_os = "linux")))]
             let _ = self.process_id;
         }
-        #[cfg(windows)]
-        drop(self.gate_dir.take());
     }
 }
 
@@ -552,13 +656,14 @@ impl ShellSessionIdSource for ProcessShellSessionIds {
     }
 }
 
+#[cfg(any(not(windows), test))]
 #[derive(Debug, Eq, PartialEq)]
 struct ResolvedShell {
     program: PathBuf,
     args: Vec<String>,
 }
 
-#[cfg(any(windows, test))]
+#[cfg(test)]
 fn resolve_windows_shell(
     command: &str,
     pwsh_candidates: &[PathBuf],
@@ -610,27 +715,6 @@ fn resolve_linux_shell(
 #[cfg(any(target_os = "linux", test))]
 fn is_posix_absolute(path: &Path) -> bool {
     path.as_os_str().as_encoded_bytes().first() == Some(&b'/')
-}
-
-#[cfg(windows)]
-fn resolve_native_shell(command: &str) -> io::Result<ResolvedShell> {
-    let pwsh_candidates = std::env::var_os("PATH")
-        .map(|path| {
-            std::env::split_paths(&path)
-                .map(|directory| directory.join("pwsh.exe"))
-                .collect::<Vec<_>>()
-        })
-        .unwrap_or_default();
-    let powershell = std::env::var_os("SystemRoot")
-        .map(PathBuf::from)
-        .map(|root| {
-            root.join("System32")
-                .join("WindowsPowerShell")
-                .join("v1.0")
-                .join("powershell.exe")
-        })
-        .unwrap_or_default();
-    resolve_windows_shell(command, &pwsh_candidates, &powershell, Path::is_file)
 }
 
 #[cfg(target_os = "linux")]
@@ -704,23 +788,41 @@ fn kill_and_wait_child(child: &mut (dyn portable_pty::Child + Send + Sync)) -> S
     }
 }
 
+#[cfg(windows)]
+fn kill_and_poll_child(child: &mut (dyn portable_pty::Child + Send + Sync)) -> String {
+    let kill = match child.kill() {
+        Ok(()) => "direct kill completed".to_owned(),
+        Err(error) => format!("direct kill failed: {error}"),
+    };
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                return format!("{kill}; poll observed exit_code={}", status.exit_code());
+            }
+            Err(error) => return format!("{kill}; poll failed: {error}"),
+            Ok(None) if std::time::Instant::now() >= deadline => {
+                return format!("{kill}; poll timed out after 1000ms");
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(5)),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+    use std::ffi::{OsStr, OsString};
     use std::io::{self, Cursor};
     use std::path::{Path, PathBuf};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};
 
     use super::{
-        NativePtyBackend, ProcessShellSessionIds, acquire_handles_then_spawn, build_host_command,
+        NativePtyBackend, ProcessShellSessionIds, acquire_handles_then_spawn,
+        assign_job_before_host_protocol, build_host_command_with_environment,
         is_executable_with_access_check, process_id_or_cleanup, resolve_linux_shell,
         resolve_windows_shell,
-    };
-    #[cfg(windows)]
-    use super::{
-        WINDOWS_GATE_COMMAND_ENV, WINDOWS_GATE_PATH_ENV, WINDOWS_GATE_TIMEOUT_ENV,
-        WINDOWS_GATE_TOKEN_ENV, WINDOWS_GATE_WRAPPER, WindowsStartupGate, resolve_native_shell,
     };
     use crate::shell::host::HostListener;
     use crate::shell::{PtyBackend, ShellManagerError, ShellSessionIdSource};
@@ -734,7 +836,26 @@ mod tests {
         let (listener, bootstrap) =
             HostListener::bind(std::time::Duration::from_secs(1)).expect("host bootstrap");
 
-        let command = build_host_command(&trusted_host, &bootstrap, &cwd);
+        let process_path = fixture.path().join("cargo-runtime-dlls");
+        let command = build_host_command_with_environment(
+            &trusted_host,
+            &bootstrap,
+            &cwd,
+            [
+                (
+                    OsString::from("PATH"),
+                    process_path.clone().into_os_string(),
+                ),
+                (
+                    OsString::from("MINIMAX_SHELL_HOST_TOKEN"),
+                    OsString::from("stale-process-token"),
+                ),
+                (
+                    OsString::from("MINIMAX_TEST_PROCESS_ENV"),
+                    OsString::from("preserved"),
+                ),
+            ],
+        );
 
         assert_eq!(
             command.get_argv(),
@@ -744,10 +865,12 @@ mod tests {
             ]
         );
         assert_eq!(command.get_cwd(), Some(&cwd.into_os_string()));
+        let bootstrap_environment = bootstrap.environment();
+        assert_eq!(bootstrap_environment.len(), 4);
         let extra_environment = command.iter_extra_env_as_str().collect::<Vec<_>>();
-        assert_eq!(extra_environment.len(), 4);
+        assert!(extra_environment.len() >= bootstrap_environment.len() + 2);
         assert_eq!(
-            extra_environment
+            bootstrap_environment
                 .iter()
                 .map(|(key, _)| *key)
                 .collect::<HashSet<_>>(),
@@ -757,6 +880,14 @@ mod tests {
                 "MINIMAX_SHELL_HOST_VERSION",
                 "MINIMAX_SHELL_HOST_TIMEOUT_MS",
             ])
+        );
+        for (key, value) in bootstrap_environment {
+            assert_eq!(command.get_env(key), Some(OsStr::new(&value)));
+        }
+        assert_eq!(command.get_env("PATH"), Some(process_path.as_os_str()));
+        assert_eq!(
+            command.get_env("MINIMAX_TEST_PROCESS_ENV"),
+            Some(OsStr::new("preserved"))
         );
         assert!(command.get_argv().iter().all(|value| value != user_command));
         assert!(
@@ -769,8 +900,16 @@ mod tests {
     }
 
     #[test]
-    fn native_backend_requires_startup_cursor_handshake_only_on_windows() {
-        assert_eq!(NativePtyBackend.requires_cursor_handshake(), cfg!(windows));
+    fn native_backend_completes_its_own_startup_cursor_handshake() {
+        assert!(!NativePtyBackend::default().requires_cursor_handshake());
+    }
+
+    #[test]
+    fn native_backend_rejects_a_relative_trusted_host_override() {
+        let error = NativePtyBackend::with_host_executable(PathBuf::from("relative-host.exe"))
+            .expect_err("trusted host override must be absolute");
+
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
     }
 
     #[test]
@@ -872,62 +1011,25 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn windows_startup_gate_wrapper_times_out_without_a_marker() {
-        use std::os::windows::process::CommandExt as _;
-        use std::process::{Command, Stdio};
-        use std::time::{Duration, Instant};
+    fn windows_assignment_failure_never_starts_the_trusted_host_protocol() {
+        let activations = AtomicUsize::new(0);
+        let mut child = ();
 
-        let fixture = tempfile::tempdir().expect("gate timeout fixture");
-        let gate_path = fixture.path().join("never-ready");
-        let side_effect = fixture.path().join("must-not-run.txt");
-        let escaped_side_effect = side_effect.to_string_lossy().replace('\'', "''");
-        let user_command =
-            format!("[IO.File]::WriteAllText('{escaped_side_effect}', 'unexpected execution')");
-        let shell = resolve_native_shell("unused").expect("native PowerShell resolves");
-        let mut child = Command::new(shell.program)
-            .args(["-NoLogo", "-NoProfile", "-Command", WINDOWS_GATE_WRAPPER])
-            .env(WINDOWS_GATE_COMMAND_ENV, user_command)
-            .env(WINDOWS_GATE_PATH_ENV, &gate_path)
-            .env(WINDOWS_GATE_TOKEN_ENV, "never-released")
-            .env(WINDOWS_GATE_TIMEOUT_ENV, "200")
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .creation_flags(0x0800_0000)
-            .spawn()
-            .expect("gated PowerShell starts");
-        let deadline = Instant::now() + Duration::from_secs(4);
-        let status = loop {
-            if let Some(status) = child.try_wait().expect("gated PowerShell status") {
-                break status;
-            }
-            if Instant::now() >= deadline {
-                let _ = child.kill();
-                let _ = child.wait();
-                panic!("startup gate did not self-terminate without a marker");
-            }
-            std::thread::sleep(Duration::from_millis(10));
-        };
-
-        assert_eq!(status.code(), Some(125));
-        assert!(!side_effect.exists(), "gated user command must not execute");
-    }
-
-    #[cfg(windows)]
-    #[test]
-    fn windows_assignment_failure_keeps_the_user_command_gate_closed() {
-        let gate = WindowsStartupGate::new().expect("Windows startup gate");
-
-        let error = gate
-            .assign_and_release_with(0, |_job, _handle| {
-                Err(io::Error::other("scripted assignment failure"))
-            })
-            .expect_err("assignment must fail");
+        let result: io::Result<()> = assign_job_before_host_protocol(
+            &mut child,
+            |_| Err(io::Error::other("scripted assignment failure")),
+            |_| {
+                activations.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            },
+        );
+        let error = result.expect_err("assignment must fail");
 
         assert!(error.to_string().contains("scripted assignment failure"));
-        assert!(
-            !gate.gate_path.exists(),
-            "the marker must remain absent, so the user command cannot run"
+        assert_eq!(
+            activations.load(Ordering::SeqCst),
+            0,
+            "host protocol activation and command delivery must remain unreachable"
         );
     }
 

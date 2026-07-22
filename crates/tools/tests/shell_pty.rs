@@ -7,9 +7,9 @@ use minimax_protocol::{
     ToolInvocation,
 };
 use minimax_tools::{
-    NativePtyBackend, NeverCancelled, ProcessShellSessionIds, ShellCommandRequest,
-    ShellCommandTool, ShellManagerError, ShellPollRequest, ShellSessionManager, ShellWriteRequest,
-    SystemShellClock, WorkspaceRoot,
+    NativePtyBackend, NeverCancelled, ProcessShellSessionIds, PtyBackend, ShellCommandRequest,
+    ShellCommandTool, ShellManagerError, ShellPollRequest, ShellSessionManager, ShellSpawnRequest,
+    ShellWriteRequest, SystemShellClock, WorkspaceRoot,
 };
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(15);
@@ -48,11 +48,85 @@ fn command_fixture(kind: FixtureKind) -> &'static str {
 }
 
 fn native_manager() -> ShellSessionManager {
+    #[cfg(windows)]
+    let backend = NativePtyBackend::with_host_executable(PathBuf::from(env!(
+        "CARGO_BIN_EXE_minimax-shell-test-host"
+    )))
+    .expect("absolute trusted test host");
+    #[cfg(not(windows))]
+    let backend = NativePtyBackend::default();
     ShellSessionManager::new(
-        Arc::new(NativePtyBackend),
+        Arc::new(backend),
         Arc::new(ProcessShellSessionIds::new().expect("process shell session IDs")),
         Arc::new(SystemShellClock),
     )
+}
+
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn windows_trusted_host_reports_the_required_startup_order_online() {
+    let (stage_tx, stage_rx) = std::sync::mpsc::channel();
+    let backend = NativePtyBackend::with_host_executable(PathBuf::from(env!(
+        "CARGO_BIN_EXE_minimax-shell-test-host"
+    )))
+    .expect("absolute trusted test host")
+    .with_startup_observer(Arc::new(move |stage| {
+        let _ = stage_tx.send(stage);
+    }));
+    let request = ShellSpawnRequest {
+        command: "Start-Sleep -Seconds 120".to_owned(),
+        cwd: repository_root(),
+        cols: 120,
+        rows: 30,
+    };
+    let mut spawn = Some(std::thread::spawn(move || backend.spawn(&request)));
+    let mut last_stage = "none";
+    for expected in [
+        "listener_bound",
+        "host_spawned",
+        "assign_begin",
+        "assigned",
+        "authenticated",
+        "activated",
+        "contained",
+        "command_sent",
+        "ready",
+    ] {
+        let observed = stage_rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap_or_else(|error| {
+                panic!("timed out waiting for startup stage {expected} after {last_stage}: {error}")
+            });
+        if observed != expected {
+            let spawn_detail = match spawn.take().expect("spawn handle").join() {
+                Ok(Ok(_)) => "spawn unexpectedly succeeded".to_owned(),
+                Ok(Err(error)) => format!("spawn failed: {error}"),
+                Err(_) => "spawn thread panicked".to_owned(),
+            };
+            panic!(
+                "unexpected startup stage {observed} after {last_stage}; expected {expected}; {spawn_detail}"
+            );
+        }
+        last_stage = observed;
+    }
+
+    let mut spawned = spawn
+        .take()
+        .expect("spawn handle")
+        .join()
+        .expect("trusted-host spawn thread")
+        .expect("trusted-host startup");
+    spawned
+        .guard
+        .terminate()
+        .await
+        .expect("close trusted-host Job");
+    spawned
+        .guard
+        .confirm()
+        .await
+        .expect("confirm trusted-host Job closure");
+    spawned.guard.close_io();
 }
 
 fn command_request(
@@ -218,12 +292,12 @@ async fn nonzero_command_preserves_exit_seven_and_output() {
 
 #[cfg(windows)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn windows_startup_gate_preserves_native_nonterminating_error_semantics() {
+async fn windows_trusted_host_preserves_native_nonterminating_error_semantics() {
     let fixture = tempfile::tempdir().expect("error preference fixture");
     let direct_marker = fixture.path().join("direct.txt");
-    let gated_marker = fixture.path().join("gated.txt");
+    let hosted_marker = fixture.path().join("hosted.txt");
     let direct_command = windows_nonterminating_error_command(&direct_marker);
-    let gated_command = windows_nonterminating_error_command(&gated_marker);
+    let hosted_command = windows_nonterminating_error_command(&hosted_marker);
     let direct_status = std::process::Command::new(windows_shell_program())
         .args(["-NoLogo", "-NoProfile", "-Command", &direct_command])
         .stdout(std::process::Stdio::null())
@@ -240,7 +314,7 @@ async fn windows_startup_gate_preserves_native_nonterminating_error_semantics() 
     manager.enable().await;
     let first = start_command(
         &manager,
-        gated_command,
+        hosted_command,
         &repository_root(),
         Duration::from_secs(5),
     )
@@ -252,56 +326,56 @@ async fn windows_startup_gate_preserves_native_nonterminating_error_semantics() 
     let cleanup = cleanup(&manager).await;
 
     cleanup.expect("cleanup succeeds");
-    let (receipt, _) = settled.expect("gated nonterminating error command settles");
+    let (receipt, _) = settled.expect("hosted nonterminating error command settles");
     assert_eq!(receipt.state, ShellSessionState::Exited);
     assert_eq!(receipt.exit_code, direct_status.code());
     assert_eq!(
-        std::fs::read_to_string(&gated_marker).expect("gated command continues after error"),
+        std::fs::read_to_string(&hosted_marker).expect("hosted command continues after error"),
         "continued"
     );
 }
 
 #[cfg(windows)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn windows_startup_gate_metadata_is_removed_before_the_user_command_runs() {
+async fn windows_trusted_host_bootstrap_metadata_is_removed_before_the_user_command_runs() {
     let manager = native_manager();
     manager.enable().await;
     let root = repository_root();
-    let command = "'MINIMAX_SHELL_GATED_COMMAND','MINIMAX_SHELL_GATE_PATH','MINIMAX_SHELL_GATE_TOKEN','MINIMAX_SHELL_GATE_TIMEOUT_MS' | ForEach-Object { Write-Output \"$_=$([String]::IsNullOrEmpty([Environment]::GetEnvironmentVariable($_, 'Process')))\" }";
+    let command = "'MINIMAX_SHELL_HOST_ADDRESS','MINIMAX_SHELL_HOST_TOKEN','MINIMAX_SHELL_HOST_VERSION','MINIMAX_SHELL_HOST_TIMEOUT_MS' | ForEach-Object { Write-Output \"$_=$([String]::IsNullOrEmpty([Environment]::GetEnvironmentVariable($_, 'Process')))\" }";
 
     let first = start_command(&manager, command, &root, Duration::from_secs(5)).await;
     let cleanup = cleanup(&manager).await;
 
     cleanup.expect("cleanup succeeds");
-    let receipt = first.expect("gate metadata probe launches");
+    let receipt = first.expect("trusted-host metadata probe launches");
     assert_eq!(receipt.state, ShellSessionState::Exited, "{receipt:?}");
     assert_eq!(receipt.exit_code, Some(0), "{receipt:?}");
     assert!(
-        receipt.output.contains("MINIMAX_SHELL_GATED_COMMAND=True"),
+        receipt.output.contains("MINIMAX_SHELL_HOST_ADDRESS=True"),
         "{receipt:?}"
     );
     assert!(
-        receipt.output.contains("MINIMAX_SHELL_GATE_PATH=True"),
+        receipt.output.contains("MINIMAX_SHELL_HOST_TOKEN=True"),
         "{receipt:?}"
     );
     assert!(
-        receipt.output.contains("MINIMAX_SHELL_GATE_TOKEN=True"),
+        receipt.output.contains("MINIMAX_SHELL_HOST_VERSION=True"),
         "{receipt:?}"
     );
     assert!(
         receipt
             .output
-            .contains("MINIMAX_SHELL_GATE_TIMEOUT_MS=True"),
+            .contains("MINIMAX_SHELL_HOST_TIMEOUT_MS=True"),
         "{receipt:?}"
     );
 }
 
 #[cfg(windows)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-async fn windows_startup_gate_does_not_inject_common_local_variables() {
+async fn windows_trusted_host_does_not_inject_bootstrap_as_powershell_variables() {
     let manager = native_manager();
     manager.enable().await;
-    let command = "'gatePath','gateToken','gateWait','observedToken','userCommand' | ForEach-Object { Write-Output \"$_=$($null -eq (Get-Variable -Name $_ -ValueOnly -ErrorAction SilentlyContinue))\" }";
+    let command = "'hostAddress','hostToken','hostVersion','hostTimeout' | ForEach-Object { Write-Output \"$_=$($null -eq (Get-Variable -Name $_ -ValueOnly -ErrorAction SilentlyContinue))\" }";
 
     let first = start_command(
         &manager,
@@ -313,16 +387,10 @@ async fn windows_startup_gate_does_not_inject_common_local_variables() {
     let cleanup = cleanup(&manager).await;
 
     cleanup.expect("cleanup succeeds");
-    let receipt = first.expect("gate variable probe launches");
+    let receipt = first.expect("trusted-host variable probe launches");
     assert_eq!(receipt.state, ShellSessionState::Exited, "{receipt:?}");
     assert_eq!(receipt.exit_code, Some(0), "{receipt:?}");
-    for variable in [
-        "gatePath",
-        "gateToken",
-        "gateWait",
-        "observedToken",
-        "userCommand",
-    ] {
+    for variable in ["hostAddress", "hostToken", "hostVersion", "hostTimeout"] {
         assert!(
             receipt.output.contains(&format!("{variable}=True")),
             "{receipt:?}"

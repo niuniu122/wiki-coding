@@ -535,6 +535,13 @@ impl HostListener {
     }
 
     pub fn accept(self) -> Result<ParentChannel, HostProtocolError> {
+        self.accept_with_probe(|| Ok(None))
+    }
+
+    pub(crate) fn accept_with_probe(
+        self,
+        mut probe: impl FnMut() -> io::Result<Option<u32>>,
+    ) -> Result<ParentChannel, HostProtocolError> {
         loop {
             let total_remaining = remaining(self.deadline)?;
             match self.listener.accept() {
@@ -560,14 +567,15 @@ impl HostListener {
                         });
                     }
                 }
-                Err(error)
-                    if matches!(
-                        error.kind(),
-                        io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
-                    ) =>
-                {
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    if let Some(exit_code) = probe()? {
+                        return Err(HostProtocolError::Io(io::Error::other(format!(
+                            "shell host exited before authentication with exit_code={exit_code}"
+                        ))));
+                    }
                     std::thread::sleep(total_remaining.min(ACCEPT_POLL_INTERVAL));
                 }
+                Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
                 Err(error) => return Err(error.into()),
             }
         }

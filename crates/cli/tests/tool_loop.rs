@@ -2094,8 +2094,14 @@ async fn runtime_driver_drop_terminates_native_shell_parent_and_child() {
         requests: Arc::new(Mutex::new(Vec::new())),
         journal_path: journal_path(project.path()),
     };
+    #[cfg(windows)]
+    let backend =
+        NativePtyBackend::with_host_executable(PathBuf::from(env!("CARGO_BIN_EXE_minimax-cli")))
+            .expect("absolute trusted CLI host");
+    #[cfg(not(windows))]
+    let backend = NativePtyBackend::default();
     let shell_manager = ShellSessionManager::new(
-        Arc::new(NativePtyBackend),
+        Arc::new(backend),
         Arc::new(ProcessShellSessionIds::new().expect("process shell session IDs")),
         Arc::new(SystemShellClock),
     );

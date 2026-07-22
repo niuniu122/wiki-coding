@@ -32,7 +32,7 @@ impl BuiltinToolPort {
         let ids = ProcessShellSessionIds::new()
             .map_err(|_| ToolDenial::failed(ToolDenialCode::ShellLaunchFailed))?;
         let shell_manager = ShellSessionManager::new(
-            Arc::new(NativePtyBackend),
+            Arc::new(NativePtyBackend::default()),
             Arc::new(ids),
             Arc::new(SystemShellClock),
         );
