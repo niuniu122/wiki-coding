@@ -309,6 +309,23 @@ async fn nonzero_command_preserves_exit_seven_and_output() {
 
 #[cfg(windows)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn authenticated_terminal_host_preserves_literal_exit_259() {
+    let manager = native_manager();
+    manager.enable().await;
+    let root = repository_root();
+    let first = start_command(&manager, "exit 259", &root, true, Duration::from_secs(5))
+        .await
+        .expect("exit-259 command starts through authenticated host");
+    let (terminal, output) = settle_session(&manager, first)
+        .await
+        .expect("exit-259 command settles");
+    cleanup(&manager).await.expect("cleanup");
+
+    assert_eq!(terminal.exit_code, Some(259), "{output:?}");
+}
+
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn windows_trusted_host_preserves_native_nonterminating_error_semantics() {
     let fixture = tempfile::tempdir().expect("error preference fixture");
     let direct_marker = fixture.path().join("direct.txt");

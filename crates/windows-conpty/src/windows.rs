@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::ffi::{OsStr, c_void};
 use std::fs::File;
 use std::io::{self, Read, Write};
@@ -9,12 +9,14 @@ use std::path::Path;
 use std::process::Command;
 use std::ptr;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Condvar, Mutex, mpsc};
+use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use win32job::{ExtendedLimitInfo, Job};
-use windows_sys::Win32::Foundation::{HANDLE, INVALID_HANDLE_VALUE, STILL_ACTIVE};
+use windows_sys::Win32::Foundation::{
+    HANDLE, INVALID_HANDLE_VALUE, WAIT_FAILED, WAIT_OBJECT_0, WAIT_TIMEOUT,
+};
 use windows_sys::Win32::System::Console::{
     COORD, ClosePseudoConsole, CreatePseudoConsole, HPCON, PSEUDOCONSOLE_INHERIT_CURSOR,
 };
@@ -30,6 +32,8 @@ use windows_sys::Win32::System::Threading::{
 const PSEUDOCONSOLE_RESIZE_QUIRK: u32 = 0x2;
 const PSEUDOCONSOLE_WIN32_INPUT_MODE: u32 = 0x4;
 const CANCEL_JOIN_RESERVE: Duration = Duration::from_millis(50);
+const OUTPUT_READ_CHUNK_BYTES: usize = 16 * 1_024;
+pub(crate) const OUTPUT_QUEUE_CAPACITY_BYTES: usize = 64 * 1_024;
 
 // The ConPTY and process-attribute ownership pattern is derived from WezTerm
 // and the OpenAI Codex PTY utility (MIT license).
@@ -91,12 +95,24 @@ impl ConPtyChild {
     }
 
     pub fn try_wait(&mut self) -> io::Result<Option<i32>> {
+        // SAFETY: the process handle is owned for this zero-time status probe.
+        match unsafe { WaitForSingleObject(raw_handle(&self.process), 0) } {
+            WAIT_TIMEOUT => return Ok(None),
+            WAIT_OBJECT_0 => {}
+            WAIT_FAILED => return Err(io::Error::last_os_error()),
+            result => {
+                return Err(io::Error::other(format!(
+                    "unexpected Windows process wait result: {result}"
+                )));
+            }
+        }
         let mut code = 0_u32;
-        // SAFETY: the process handle is owned and code is writable.
+        // SAFETY: the zero-time wait proved the owned process is signaled, and
+        // code is writable. Exit code 259 is therefore a literal terminal code.
         if unsafe { GetExitCodeProcess(raw_handle(&self.process), &mut code) } == 0 {
             return Err(io::Error::last_os_error());
         }
-        Ok((code != STILL_ACTIVE as u32).then_some(code as i32))
+        Ok(Some(code as i32))
     }
 
     pub fn kill(&mut self) -> io::Result<()> {
@@ -134,13 +150,130 @@ impl Write for ConPtyWriter {
     }
 }
 
-enum DrainMessage {
-    Bytes(Vec<u8>),
-    Error(io::Error),
+struct OutputQueueState {
+    chunks: VecDeque<Vec<u8>>,
+    queued_bytes: usize,
+    reserved_bytes: usize,
+    error: Option<io::Error>,
+    closed: bool,
+    receiver_alive: bool,
+}
+
+struct OutputQueue {
+    state: Mutex<OutputQueueState>,
+    readable: Condvar,
+    writable: Condvar,
+}
+
+#[derive(Clone, Copy)]
+enum QueueReservation {
+    Reserved,
+    Discard,
+    Cancelled,
+}
+
+impl OutputQueue {
+    fn new() -> Self {
+        Self {
+            state: Mutex::new(OutputQueueState {
+                chunks: VecDeque::new(),
+                queued_bytes: 0,
+                reserved_bytes: 0,
+                error: None,
+                closed: false,
+                receiver_alive: true,
+            }),
+            readable: Condvar::new(),
+            writable: Condvar::new(),
+        }
+    }
+
+    fn reserve_read(&self, cancelling: &AtomicBool) -> QueueReservation {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        while state.receiver_alive
+            && !cancelling.load(Ordering::Acquire)
+            && state.queued_bytes + state.reserved_bytes + OUTPUT_READ_CHUNK_BYTES
+                > OUTPUT_QUEUE_CAPACITY_BYTES
+        {
+            state = self
+                .writable
+                .wait(state)
+                .unwrap_or_else(|error| error.into_inner());
+        }
+        if !state.receiver_alive {
+            QueueReservation::Discard
+        } else if state.queued_bytes + state.reserved_bytes + OUTPUT_READ_CHUNK_BYTES
+            > OUTPUT_QUEUE_CAPACITY_BYTES
+            && cancelling.load(Ordering::Acquire)
+        {
+            QueueReservation::Cancelled
+        } else {
+            state.reserved_bytes += OUTPUT_READ_CHUNK_BYTES;
+            self.readable.notify_all();
+            QueueReservation::Reserved
+        }
+    }
+
+    fn commit_read(&self, bytes: Vec<u8>) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.reserved_bytes = state.reserved_bytes.saturating_sub(OUTPUT_READ_CHUNK_BYTES);
+        if state.receiver_alive {
+            state.queued_bytes += bytes.len();
+            state.chunks.push_back(bytes);
+            self.readable.notify_one();
+        }
+        self.writable.notify_all();
+    }
+
+    fn release_reservation(&self) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.reserved_bytes = state.reserved_bytes.saturating_sub(OUTPUT_READ_CHUNK_BYTES);
+        self.writable.notify_all();
+    }
+
+    fn finish(&self, error: Option<io::Error>) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        if error.is_some() {
+            state.error = error;
+        }
+        state.closed = true;
+        self.readable.notify_all();
+        self.writable.notify_all();
+    }
+
+    fn wake_producer(&self) {
+        self.writable.notify_all();
+    }
+
+    #[cfg(test)]
+    fn wait_for_full(&self, deadline: Instant) -> bool {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        while state.queued_bytes + state.reserved_bytes < OUTPUT_QUEUE_CAPACITY_BYTES {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            let (next, timeout) = self
+                .readable
+                .wait_timeout(state, remaining)
+                .unwrap_or_else(|error| error.into_inner());
+            state = next;
+            if timeout.timed_out() {
+                break;
+            }
+        }
+        state.queued_bytes + state.reserved_bytes == OUTPUT_QUEUE_CAPACITY_BYTES
+    }
+
+    #[cfg(test)]
+    fn queued_bytes(&self) -> usize {
+        let state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.queued_bytes + state.reserved_bytes
+    }
 }
 
 pub struct ConPtyReader {
-    receiver: mpsc::Receiver<DrainMessage>,
+    queue: Arc<OutputQueue>,
     pending: Vec<u8>,
     offset: usize,
 }
@@ -161,12 +294,44 @@ impl Read for ConPtyReader {
                 }
                 return Ok(count);
             }
-            match self.receiver.recv() {
-                Ok(DrainMessage::Bytes(bytes)) => self.pending = bytes,
-                Ok(DrainMessage::Error(error)) => return Err(error),
-                Err(_) => return Ok(0),
+            let mut state = self
+                .queue
+                .state
+                .lock()
+                .unwrap_or_else(|error| error.into_inner());
+            while state.chunks.is_empty() && !state.closed {
+                state = self
+                    .queue
+                    .readable
+                    .wait(state)
+                    .unwrap_or_else(|error| error.into_inner());
+            }
+            if let Some(bytes) = state.chunks.pop_front() {
+                state.queued_bytes = state.queued_bytes.saturating_sub(bytes.len());
+                self.queue.writable.notify_all();
+                drop(state);
+                self.pending = bytes;
+            } else if let Some(error) = state.error.take() {
+                return Err(error);
+            } else {
+                return Ok(0);
             }
         }
+    }
+}
+
+impl Drop for ConPtyReader {
+    fn drop(&mut self) {
+        let mut state = self
+            .queue
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        state.receiver_alive = false;
+        state.chunks.clear();
+        state.queued_bytes = 0;
+        self.queue.writable.notify_all();
+        self.queue.readable.notify_all();
     }
 }
 
@@ -208,11 +373,11 @@ impl ConPtyControl {
         drop(self.pseudo.take());
         drop(self.input_server.take());
         drop(self.output_server.take());
-        if let Some(mut drain) = self.drain.take() {
-            if let Err(error) = drain.close_before(deadline) {
-                self.drain = Some(drain);
-                return Err(error);
-            }
+        if let Some(mut drain) = self.drain.take()
+            && let Err(error) = drain.close_before(deadline)
+        {
+            self.drain = Some(drain);
+            return Err(error);
         }
         Ok(())
     }
@@ -513,10 +678,146 @@ impl DrainCompletion {
     }
 }
 
+#[derive(Clone, Copy, Eq, PartialEq)]
+enum ReaderPhase {
+    BetweenReads,
+    Reading,
+    Complete,
+}
+
+struct ReaderProtocol {
+    phase: Mutex<ReaderPhase>,
+    changed: Condvar,
+    cancellation_requested: AtomicBool,
+}
+
+impl ReaderProtocol {
+    fn new() -> Self {
+        Self {
+            phase: Mutex::new(ReaderPhase::BetweenReads),
+            changed: Condvar::new(),
+            cancellation_requested: AtomicBool::new(false),
+        }
+    }
+
+    fn set_phase(&self, phase: ReaderPhase) {
+        *self.phase.lock().unwrap_or_else(|error| error.into_inner()) = phase;
+        self.changed.notify_all();
+    }
+
+    fn phase(&self) -> ReaderPhase {
+        *self.phase.lock().unwrap_or_else(|error| error.into_inner())
+    }
+
+    fn request_cancellation(&self) {
+        self.cancellation_requested.store(true, Ordering::Release);
+        self.changed.notify_all();
+    }
+
+    fn wait_for_change(&self, duration: Duration) {
+        let phase = self.phase.lock().unwrap_or_else(|error| error.into_inner());
+        let _ = self
+            .changed
+            .wait_timeout(phase, duration)
+            .unwrap_or_else(|error| error.into_inner());
+    }
+
+    #[cfg(test)]
+    fn wait_for_cancellation(&self, deadline: Instant) -> bool {
+        let mut phase = self.phase.lock().unwrap_or_else(|error| error.into_inner());
+        while !self.cancellation_requested.load(Ordering::Acquire) {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            if remaining.is_zero() {
+                break;
+            }
+            let (next, timeout) = self
+                .changed
+                .wait_timeout(phase, remaining)
+                .unwrap_or_else(|error| error.into_inner());
+            phase = next;
+            if timeout.timed_out() {
+                break;
+            }
+        }
+        self.cancellation_requested.load(Ordering::Acquire)
+    }
+}
+
+struct BetweenReadsPauseState {
+    paused: bool,
+    released: bool,
+}
+
+struct BetweenReadsPause {
+    state: Mutex<BetweenReadsPauseState>,
+    changed: Condvar,
+}
+
+impl BetweenReadsPause {
+    fn pause(&self) {
+        let mut state = self.state.lock().unwrap_or_else(|error| error.into_inner());
+        state.paused = true;
+        self.changed.notify_all();
+        while !state.released {
+            state = self
+                .changed
+                .wait(state)
+                .unwrap_or_else(|error| error.into_inner());
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) struct BetweenReadsControl {
+    pause: Arc<BetweenReadsPause>,
+    protocol: Arc<ReaderProtocol>,
+}
+
+#[cfg(test)]
+impl BetweenReadsControl {
+    pub(crate) fn wait_until_paused(&self, duration: Duration) {
+        let deadline = Instant::now() + duration;
+        let mut state = self
+            .pause
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        while !state.paused {
+            let remaining = deadline.saturating_duration_since(Instant::now());
+            assert!(!remaining.is_zero(), "reader did not pause between reads");
+            let (next, _) = self
+                .pause
+                .changed
+                .wait_timeout(state, remaining)
+                .unwrap_or_else(|error| error.into_inner());
+            state = next;
+        }
+    }
+
+    pub(crate) fn wait_until_cancellation_requested(&self, duration: Duration) {
+        assert!(
+            self.protocol
+                .wait_for_cancellation(Instant::now() + duration),
+            "closer did not request between-read cancellation"
+        );
+    }
+
+    pub(crate) fn release(&self) {
+        let mut state = self
+            .pause
+            .state
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        state.released = true;
+        self.pause.changed.notify_all();
+    }
+}
+
 pub(crate) struct OutputDrain {
     handle: Option<thread::JoinHandle<()>>,
     completion: Arc<DrainCompletion>,
-    cancelling: Arc<AtomicBool>,
+    protocol: Arc<ReaderProtocol>,
+    queue: Arc<OutputQueue>,
 }
 
 impl OutputDrain {
@@ -525,15 +826,35 @@ impl OutputDrain {
         self.completion.wait_until(Instant::now() + duration)
     }
 
+    #[cfg(test)]
+    pub(crate) fn wait_for_queue_full(&self, duration: Duration) -> bool {
+        self.queue.wait_for_full(Instant::now() + duration)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn queued_bytes(&self) -> usize {
+        self.queue.queued_bytes()
+    }
+
     pub(crate) fn close_before(&mut self, deadline: Instant) -> io::Result<()> {
         let cancel_at = deadline
             .checked_sub(CANCEL_JOIN_RESERVE)
             .unwrap_or_else(Instant::now);
         if !self.completion.wait_until(cancel_at) {
-            self.cancelling.store(true, Ordering::Release);
-            if let Some(handle) = self.handle.as_ref() {
-                // SAFETY: JoinHandle owns the target thread through cancellation/join.
-                unsafe { CancelSynchronousIo(handle.as_raw_handle()) };
+            self.protocol.request_cancellation();
+            self.queue.wake_producer();
+            while !self.completion.wait_until(Instant::now()) && Instant::now() < deadline {
+                if self.protocol.phase() == ReaderPhase::Reading
+                    && let Some(handle) = self.handle.as_ref()
+                {
+                    // SAFETY: JoinHandle owns the target thread through cancellation/join.
+                    // Repeating this call closes the race where cancellation was first
+                    // requested between two synchronous reads.
+                    unsafe { CancelSynchronousIo(handle.as_raw_handle()) };
+                }
+                let remaining = deadline.saturating_duration_since(Instant::now());
+                self.protocol
+                    .wait_for_change(remaining.min(Duration::from_millis(2)));
             }
         }
         if !self.completion.wait_until(deadline) {
@@ -560,37 +881,83 @@ impl Drop for OutputDrain {
 }
 
 fn start_output_drain(read_end: OwnedHandle) -> io::Result<(ConPtyReader, OutputDrain)> {
-    let (sender, receiver) = mpsc::channel();
+    start_output_drain_inner(read_end, None)
+}
+
+fn start_output_drain_inner(
+    read_end: OwnedHandle,
+    pause_after_first_read: Option<Arc<BetweenReadsPause>>,
+) -> io::Result<(ConPtyReader, OutputDrain)> {
+    let queue = Arc::new(OutputQueue::new());
     let completion = Arc::new(DrainCompletion {
         complete: Mutex::new(false),
         changed: Condvar::new(),
     });
-    let cancelling = Arc::new(AtomicBool::new(false));
+    let protocol = Arc::new(ReaderProtocol::new());
     let thread_completion = Arc::clone(&completion);
-    let thread_cancelling = Arc::clone(&cancelling);
+    let thread_protocol = Arc::clone(&protocol);
+    let thread_queue = Arc::clone(&queue);
     let handle = thread::Builder::new()
         .name("minimax-conpty-output".to_owned())
         .spawn(move || {
             let mut read = File::from(read_end);
-            let mut buffer = vec![0_u8; 16 * 1_024];
+            let mut buffer = vec![0_u8; OUTPUT_READ_CHUNK_BYTES];
+            let mut discard = false;
+            let mut first_read = true;
             loop {
-                match read.read(&mut buffer) {
-                    Ok(0) => break,
+                let reserved = if discard {
+                    QueueReservation::Discard
+                } else {
+                    thread_queue.reserve_read(&thread_protocol.cancellation_requested)
+                };
+                match reserved {
+                    QueueReservation::Cancelled => break,
+                    QueueReservation::Discard => discard = true,
+                    QueueReservation::Reserved => {}
+                }
+                thread_protocol.set_phase(ReaderPhase::Reading);
+                let result = read.read(&mut buffer);
+                thread_protocol.set_phase(ReaderPhase::BetweenReads);
+                match result {
+                    Ok(0) => {
+                        if matches!(reserved, QueueReservation::Reserved) {
+                            thread_queue.release_reservation();
+                        }
+                        break;
+                    }
                     Ok(count) => {
-                        let _ = sender.send(DrainMessage::Bytes(buffer[..count].to_vec()));
+                        if matches!(reserved, QueueReservation::Reserved) {
+                            thread_queue.commit_read(buffer[..count].to_vec());
+                        }
+                        if first_read {
+                            first_read = false;
+                            if let Some(pause) = pause_after_first_read.as_ref() {
+                                pause.pause();
+                            }
+                        }
                     }
                     Err(error)
                         if error.kind() == io::ErrorKind::BrokenPipe
-                            || thread_cancelling.load(Ordering::Acquire) =>
+                            || thread_protocol
+                                .cancellation_requested
+                                .load(Ordering::Acquire) =>
                     {
+                        if matches!(reserved, QueueReservation::Reserved) {
+                            thread_queue.release_reservation();
+                        }
                         break;
                     }
                     Err(error) => {
-                        let _ = sender.send(DrainMessage::Error(error));
+                        if matches!(reserved, QueueReservation::Reserved) {
+                            thread_queue.release_reservation();
+                        }
+                        thread_queue.finish(Some(error));
                         break;
                     }
                 }
             }
+            thread_queue.finish(None);
+            thread_protocol.set_phase(ReaderPhase::Complete);
             let mut complete = thread_completion
                 .complete
                 .lock()
@@ -600,14 +967,15 @@ fn start_output_drain(read_end: OwnedHandle) -> io::Result<(ConPtyReader, Output
         })?;
     Ok((
         ConPtyReader {
-            receiver,
+            queue: Arc::clone(&queue),
             pending: Vec::new(),
             offset: 0,
         },
         OutputDrain {
             handle: Some(handle),
             completion,
-            cancelling,
+            protocol,
+            queue,
         },
     ))
 }
@@ -621,4 +989,37 @@ pub(crate) fn create_test_pipe() -> io::Result<(OwnedHandle, File)> {
 #[cfg(test)]
 pub(crate) fn test_output_drain(read: OwnedHandle) -> io::Result<(ConPtyReader, OutputDrain)> {
     start_output_drain(read)
+}
+
+#[cfg(test)]
+pub(crate) fn test_output_drain_paused_between_reads(
+    read: OwnedHandle,
+) -> io::Result<(ConPtyReader, OutputDrain, BetweenReadsControl)> {
+    let pause = Arc::new(BetweenReadsPause {
+        state: Mutex::new(BetweenReadsPauseState {
+            paused: false,
+            released: false,
+        }),
+        changed: Condvar::new(),
+    });
+    let (reader, drain) = start_output_drain_inner(read, Some(Arc::clone(&pause)))?;
+    let control = BetweenReadsControl {
+        pause,
+        protocol: Arc::clone(&drain.protocol),
+    };
+    Ok((reader, drain, control))
+}
+
+#[cfg(test)]
+pub(crate) fn spawn_test_child(command: &mut Command) -> io::Result<ConPtyChild> {
+    use std::os::windows::io::AsHandle;
+
+    let child = command.spawn()?;
+    let process_id = child.id();
+    let process = child.as_handle().try_clone_to_owned()?;
+    drop(child);
+    Ok(ConPtyChild {
+        process,
+        process_id,
+    })
 }
