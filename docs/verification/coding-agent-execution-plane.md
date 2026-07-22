@@ -1,6 +1,6 @@
 # Coding Agent execution plane verification
 
-Originally verified locally on 2026-07-14 using Windows x64 and Node.js v24.14.1. The full-access Shell contract was verified locally on 2026-07-22 with Rust 1.97 on Windows; CI remains pinned to Node.js 20 on both Ubuntu and Windows and runs the native PTY suite on both platforms.
+Originally verified locally on 2026-07-14 using Windows x64 and Node.js v24.14.1. The repaired full-access Shell contract was verified locally on 2026-07-22 with Rust 1.97 on Windows. CI remains pinned to Node.js 20 and is configured to run the native Shell I/O suite on Ubuntu and Windows; fresh hosted Windows/Linux evidence is still pending.
 
 ## Current outcome
 
@@ -45,19 +45,24 @@ CI runs only dependency installation, type checking, tests, build, and the two d
 The runtime has exactly two permission modes. A new process starts in
 `confirm`, where arbitrary Shell is hidden and rejected. `full-access` exposes
 `shell_command` plus `shell_session` and runs them without per-command
-confirmation. The real PTY suite covers fast and exit-7 commands, incremental
-long output, prompt input, TTY detection, default/relative/outside working
-directories, Unicode and emoji, native pipes and redirects, the 1 MiB unread
-limit, explicit stop, permission downgrade, and normal shutdown. Parent and
-child process IDs are printed by cleanup fixtures and checked for survivors.
+confirmation. Ordinary calls default to lossless pipe capture; `tty: true`
+opts into a fixed 120x30 PTY/ConPTY and terminal wrapping. The real Shell I/O
+suite covers both modes, fast and exit-7 commands, incremental long output,
+prompt input, TTY detection, default/relative/outside working directories,
+Unicode and emoji, native pipes and redirects, the 1 MiB unread limit, explicit
+stop, permission downgrade, and normal shutdown. Parent and child process IDs
+are printed by cleanup fixtures and checked for survivors.
 
-Shell output is a bounded ordinary tool result. It is persisted locally and
-sent to the configured Provider; command text, input, working directory, and
-output are not copied into safe trace metadata. Windows uses ConPTY and
-PowerShell, Linux uses a PTY and a POSIX shell, and macOS is deferred. The Rust
-runtime does not embed Pi or require Node.js, tmux, or an external terminal.
-Normal stop/downgrade/shutdown cleanup is tested, but a forced application kill
-or machine/OS failure cannot guarantee cleanup.
+Both modes retain process-scoped sessions plus bounded stdin, output, polling,
+and cleanup. Shell output is a bounded ordinary tool result. It is persisted
+locally and sent to the configured Provider; command text, input, working
+directory, and output are not copied into safe trace metadata. Windows command
+payloads up to 32 KiB are delivered outside PowerShell argv and acknowledged
+before the Shell host reports readiness. Normal stop/downgrade/shutdown cleanup
+is tested, but a forced application kill or machine/OS failure cannot guarantee
+cleanup. macOS support, terminal resizing, browser control, Pi, a Node Agent
+runtime, tmux, push, release, and an external terminal remain outside this
+change.
 
 ## Security and fallback boundaries
 

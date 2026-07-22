@@ -13,6 +13,7 @@ const PROTOCOL: &str = "minimax-protocol";
 const CLI: &str = "minimax-cli";
 const VAULT: &str = "minimax-vault";
 const RETRIEVAL: &str = "minimax-retrieval";
+const WINDOWS_CONPTY: &str = "minimax-windows-conpty";
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ArchitecturePackage {
@@ -379,9 +380,11 @@ fn dependency_allowed(package: &str, dependency: &str) -> bool {
     match package {
         PROTOCOL => false,
         CORE => dependency == PROTOCOL,
-        "minimax-provider" | "minimax-tools" | RETRIEVAL | "minimax-vault" | "minimax-tui" => {
+        "minimax-provider" | RETRIEVAL | "minimax-vault" | "minimax-tui" => {
             matches!(dependency, CORE | PROTOCOL)
         }
+        "minimax-tools" => matches!(dependency, CORE | PROTOCOL | WINDOWS_CONPTY),
+        WINDOWS_CONPTY => false,
         CLI => dependency != COMPAT_HARNESS,
         COMPAT_HARNESS => dependency != CLI && dependency != COMPAT_HARNESS,
         _ => false,

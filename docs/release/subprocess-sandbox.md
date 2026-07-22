@@ -19,7 +19,11 @@ startup. `full-access` adds `shell_command` and `shell_session` without a
 per-command confirmation prompt. The first starts a command; the second polls
 only new output, writes text or Enter to an interactive prompt, or stops the
 whole process tree. Running sessions belong only to the current MiniMax Codex
-process and cannot be restored after restart.
+process and cannot be restored after restart. Ordinary commands default to
+lossless pipe capture. Setting `tty: true` selects a fixed 120x30 terminal, so
+terminal applications can wrap at 120 columns. Pipe and terminal commands both
+retain process-scoped sessions, bounded stdin and incremental output, and the
+same cleanup behavior.
 
 This is intentionally equivalent to giving the model the user's ordinary host
 terminal rights. A command may read, modify, or delete accessible files, use
@@ -30,12 +34,15 @@ next inference. The original eight tools retain the fixed path, secret,
 timeout, and sandbox rules described below; those restrictions are not applied
 to the arbitrary command text or its selected existing working directory.
 
-Windows uses ConPTY with `pwsh.exe` when available and system
-`powershell.exe` otherwise. Linux uses a PTY with an absolute executable
-`$SHELL`, then `/bin/bash` or `/bin/sh`. There is no `cmd.exe` fallback.
-macOS Shell support is deferred. The runtime is Rust-only: Pi was a design
-reference, and Pi, Node.js, tmux, and an external terminal window are not
-runtime dependencies.
+On Windows the default mode uses redirected pipes and `tty: true` uses ConPTY,
+with `pwsh.exe` when available and system `powershell.exe` otherwise. Command
+payloads up to 32 KiB are delivered outside PowerShell argv and acknowledged
+before the Shell host reports readiness. On Linux the default mode uses pipes
+and `tty: true` uses a PTY with an absolute executable `$SHELL`, then
+`/bin/bash` or `/bin/sh`. There is no `cmd.exe` fallback. The runtime is
+Rust-only. macOS Shell support, terminal resizing, browser control, Pi, a Node
+Agent runtime, tmux, push, release, and an external terminal window remain
+outside this change.
 
 Explicit stop, a switch back to `confirm`, and normal application exit share
 the same bounded process-tree cleanup. An operating-system forced kill, power

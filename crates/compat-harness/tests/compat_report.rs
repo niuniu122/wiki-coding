@@ -929,6 +929,32 @@ fn architecture_real_cargo_metadata_passes() {
 }
 
 #[test]
+fn architecture_allows_tools_to_depend_on_the_isolated_windows_conpty_boundary() {
+    let graph = synthetic_graph(&[
+        ("minimax-tools", &["minimax-windows-conpty"]),
+        ("minimax-windows-conpty", &[]),
+    ]);
+
+    validate_architecture(&graph).expect("tools may own the isolated Windows ConPTY boundary");
+}
+
+#[test]
+fn architecture_keeps_the_windows_conpty_boundary_leaf_only_and_tools_owned() {
+    for (package, dependency) in [
+        ("minimax-windows-conpty", "minimax-protocol"),
+        ("minimax-provider", "minimax-windows-conpty"),
+    ] {
+        let graph = synthetic_graph(&[(package, &[dependency]), (dependency, &[])]);
+        assert_eq!(
+            validate_architecture(&graph),
+            Err(ArchitectureError::Violation(format!(
+                "forbidden local dependency: {package} -> {dependency}"
+            )))
+        );
+    }
+}
+
+#[test]
 fn architecture_rejects_migration_network_database_credentials_and_downloads() {
     for source in [
         "use reqwest::Client;",

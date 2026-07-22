@@ -648,19 +648,19 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
     if !normalized.contains("run: bash scripts/ci-linux-sandbox-canary.sh") {
         return violation("CI must retain the Linux adversarial sandbox canary");
     }
-    let native_pty_name = "- name: Run native PTY Shell integration";
-    let native_pty_command = "cargo test -p minimax-tools --test shell_pty --locked -- --nocapture";
-    let native_pty_headers = lines
+    let native_io_name = "- name: Run native Shell I/O integration";
+    let native_io_command = "cargo test -p minimax-tools --test shell_io --locked -- --nocapture";
+    let native_io_headers = lines
         .iter()
         .enumerate()
         .filter(|(_, line)| {
             let trimmed = line.trim_start();
-            line.len().saturating_sub(trimmed.len()) == 6 && trimmed == native_pty_name
+            line.len().saturating_sub(trimmed.len()) == 6 && trimmed == native_io_name
         })
         .map(|(index, _)| index)
         .collect::<Vec<_>>();
-    let [native_pty_start] = native_pty_headers.as_slice() else {
-        return violation("CI must run native PTY Shell integration on every hosted platform");
+    let [native_io_start] = native_io_headers.as_slice() else {
+        return violation("CI must run native Shell I/O integration on every hosted platform");
     };
     let jobs_headers = lines
         .iter()
@@ -733,10 +733,12 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
         .enumerate()
         .find_map(|(position, start)| {
             let end = job_headers.get(position + 1).copied().unwrap_or(jobs_end);
-            (*start <= *native_pty_start && *native_pty_start < end).then_some((*start, end))
+            (*start <= *native_io_start && *native_io_start < end).then_some((*start, end))
         });
     let Some((native_job_start, native_job_end)) = native_job else {
-        return violation("CI PTY authority step must remain in the authoritative matrix job");
+        return violation(
+            "CI Shell I/O authority step must remain in the authoritative matrix job",
+        );
     };
     let steps_headers = (native_job_start + 1..native_job_end)
         .filter(|index| {
@@ -746,7 +748,9 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
         })
         .collect::<Vec<_>>();
     let [steps_start] = steps_headers.as_slice() else {
-        return violation("CI PTY authority step must remain in the authoritative matrix job");
+        return violation(
+            "CI Shell I/O authority step must remain in the authoritative matrix job",
+        );
     };
     let steps_end = lines
         .iter()
@@ -780,8 +784,10 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
     {
         return violation("CI authority execution shell must not be overridden");
     }
-    if !(*steps_start < *native_pty_start && *native_pty_start < steps_end) {
-        return violation("CI PTY authority step must remain in the authoritative matrix job");
+    if !(*steps_start < *native_io_start && *native_io_start < steps_end) {
+        return violation(
+            "CI Shell I/O authority step must remain in the authoritative matrix job",
+        );
     }
     let native_job_lines = &lines[native_job_start + 1..native_job_end];
     let job_level_keys = native_job_lines
@@ -795,10 +801,10 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
         })
         .collect::<Vec<_>>();
     if job_level_keys.contains(&"if") {
-        return violation("CI PTY authority job must be unconditional");
+        return violation("CI Shell I/O authority job must be unconditional");
     }
     if job_level_keys.contains(&"needs") {
-        return violation("CI PTY authority job must not depend on other jobs");
+        return violation("CI Shell I/O authority job must not depend on other jobs");
     }
     if job_level_keys.contains(&"defaults") {
         return violation("CI authority execution shell must not be overridden");
@@ -812,7 +818,9 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
         .count()
         != 1
     {
-        return violation("CI PTY authority step must remain in the authoritative matrix job");
+        return violation(
+            "CI Shell I/O authority step must remain in the authoritative matrix job",
+        );
     }
     let strategy_headers = (native_job_start + 1..native_job_end)
         .filter(|index| {
@@ -822,7 +830,9 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
         })
         .collect::<Vec<_>>();
     let [strategy_start] = strategy_headers.as_slice() else {
-        return violation("CI PTY authority step must remain in the authoritative matrix job");
+        return violation(
+            "CI Shell I/O authority step must remain in the authoritative matrix job",
+        );
     };
     let strategy_end = lines
         .iter()
@@ -850,7 +860,9 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
         })
         .collect::<Vec<_>>();
     let [matrix_start] = matrix_headers.as_slice() else {
-        return violation("CI PTY authority step must remain in the authoritative matrix job");
+        return violation(
+            "CI Shell I/O authority step must remain in the authoritative matrix job",
+        );
     };
     let matrix_end = lines
         .iter()
@@ -994,44 +1006,46 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
             "CI check:rust must be an unconditional step in the authoritative matrix job",
         );
     };
-    if *check_rust_line >= *native_pty_start {
-        return violation("CI PTY authority step must follow check:rust in the same matrix job");
+    if *check_rust_line >= *native_io_start {
+        return violation(
+            "CI Shell I/O authority step must follow check:rust in the same matrix job",
+        );
     }
-    let native_pty_indent = lines[*native_pty_start]
+    let native_io_indent = lines[*native_io_start]
         .len()
-        .saturating_sub(lines[*native_pty_start].trim_start().len());
-    let native_pty_end = lines
+        .saturating_sub(lines[*native_io_start].trim_start().len());
+    let native_io_end = lines
         .iter()
         .enumerate()
-        .skip(*native_pty_start + 1)
+        .skip(*native_io_start + 1)
         .find(|(_, line)| {
             let trimmed = line.trim_start();
-            !trimmed.is_empty() && line.len().saturating_sub(trimmed.len()) <= native_pty_indent
+            !trimmed.is_empty() && line.len().saturating_sub(trimmed.len()) <= native_io_indent
         })
         .map_or(steps_end, |(index, _)| index)
         .min(steps_end);
-    let native_pty_step = &lines[*native_pty_start..native_pty_end];
-    let native_pty_run = format!("run: {native_pty_command}");
-    let native_pty_run_lines = lines
+    let native_io_step = &lines[*native_io_start..native_io_end];
+    let native_io_run = format!("run: {native_io_command}");
+    let native_io_run_lines = lines
         .iter()
         .enumerate()
         .filter(|(_, line)| {
             let trimmed = line.trim_start();
-            line.len().saturating_sub(trimmed.len()) == 8 && trimmed == native_pty_run
+            line.len().saturating_sub(trimmed.len()) == 8 && trimmed == native_io_run
         })
         .map(|(index, _)| index)
         .collect::<Vec<_>>();
-    let [native_pty_run_index] = native_pty_run_lines.as_slice() else {
-        return violation("CI must run native PTY Shell integration on every hosted platform");
+    let [native_io_run_index] = native_io_run_lines.as_slice() else {
+        return violation("CI must run native Shell I/O integration on every hosted platform");
     };
-    let native_pty_mapping_indent = lines[*native_pty_run_index]
+    let native_io_mapping_indent = lines[*native_io_run_index]
         .len()
-        .saturating_sub(lines[*native_pty_run_index].trim_start().len());
-    let valid_native_pty_step = (*native_pty_start..native_pty_end).contains(native_pty_run_index)
-        && native_pty_step.iter().all(|line| {
+        .saturating_sub(lines[*native_io_run_index].trim_start().len());
+    let valid_native_io_step = (*native_io_start..native_io_end).contains(native_io_run_index)
+        && native_io_step.iter().all(|line| {
             let trimmed = line.trim_start();
             let indent = line.len().saturating_sub(trimmed.len());
-            if indent != native_pty_mapping_indent {
+            if indent != native_io_mapping_indent {
                 return true;
             }
             !matches!(
@@ -1039,8 +1053,8 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
                 Err(()) | Ok(Some("if" | "continue-on-error"))
             )
         });
-    if !valid_native_pty_step {
-        return violation("CI must run native PTY Shell integration on every hosted platform");
+    if !valid_native_io_step {
+        return violation("CI must run native Shell I/O integration on every hosted platform");
     }
     if lines[*steps_start + 1..steps_end].iter().any(|line| {
         let trimmed = line.trim_start();
@@ -1205,13 +1219,13 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
     }
     let test_gate = command_lines[1].max(command_lines[2]);
     let contract_gate = command_lines[5].max(command_lines[6]);
-    let native_pty_line = run_commands
+    let native_io_line = run_commands
         .iter()
-        .find(|(_, command)| *command == native_pty_command)
+        .find(|(_, command)| *command == native_io_command)
         .map(|(line, _)| *line)
-        .expect("the exact native PTY command was required above");
-    let ordered = command_lines[0] < native_pty_line
-        && native_pty_line < test_gate
+        .expect("the exact native Shell I/O command was required above");
+    let ordered = command_lines[0] < native_io_line
+        && native_io_line < test_gate
         && test_gate < command_lines[3]
         && command_lines[3] < command_lines[4]
         && command_lines[4] < contract_gate

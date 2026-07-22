@@ -37,8 +37,8 @@ jobs:
         run: bash scripts/ci-linux-sandbox-canary.sh
       - run: npm ci
       - run: npm run check:rust
-      - name: Run native PTY Shell integration
-        run: cargo test -p minimax-tools --test shell_pty --locked -- --nocapture
+      - name: Run native Shell I/O integration
+        run: cargo test -p minimax-tools --test shell_io --locked -- --nocapture
       - name: Run strict-precondition Rust tests
         if: github.event_name != 'workflow_dispatch'
         run: npm run test:rust:strict-precondition

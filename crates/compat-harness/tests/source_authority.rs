@@ -851,29 +851,38 @@ fn ci_keeps_rust_authority_ahead_of_packaging_and_fails_closed() {
     );
     validate_ci_workflow_text(&source).expect("committed CI workflow should preserve authority");
 
-    let native_pty_step = "      - name: Run native PTY Shell integration\n        run: cargo test -p minimax-tools --test shell_pty --locked -- --nocapture\n";
-    let missing_native_pty = source.replace(native_pty_step, "");
+    let native_io_step = "      - name: Run native Shell I/O integration\n        run: cargo test -p minimax-tools --test shell_io --locked -- --nocapture\n";
+    let missing_native_io = source.replace(native_io_step, "");
     assert_ci_rejected(
-        &missing_native_pty,
-        "CI must run native PTY Shell integration on every hosted platform",
+        &missing_native_io,
+        "CI must run native Shell I/O integration on every hosted platform",
     );
 
-    let linux_only_native_pty = source.replace(
-        native_pty_step,
-        "      - name: Run native PTY Shell integration\n        if: runner.os == 'Linux'\n        run: cargo test -p minimax-tools --test shell_pty --locked -- --nocapture\n",
+    let obsolete_native_pty = source.replace(
+        native_io_step,
+        "      - name: Run native PTY Shell integration\n        run: cargo test -p minimax-tools --test shell_pty --locked -- --nocapture\n",
     );
     assert_ci_rejected(
-        &linux_only_native_pty,
-        "CI must run native PTY Shell integration on every hosted platform",
+        &obsolete_native_pty,
+        "CI must run native Shell I/O integration on every hosted platform",
     );
 
-    let post_run_linux_only_native_pty = source.replace(
-        native_pty_step,
-        "      - name: Run native PTY Shell integration\n        run: cargo test -p minimax-tools --test shell_pty --locked -- --nocapture\n        if: runner.os == 'Linux'\n",
+    let linux_only_native_io = source.replace(
+        native_io_step,
+        "      - name: Run native Shell I/O integration\n        if: runner.os == 'Linux'\n        run: cargo test -p minimax-tools --test shell_io --locked -- --nocapture\n",
     );
     assert_ci_rejected(
-        &post_run_linux_only_native_pty,
-        "CI must run native PTY Shell integration on every hosted platform",
+        &linux_only_native_io,
+        "CI must run native Shell I/O integration on every hosted platform",
+    );
+
+    let post_run_linux_only_native_io = source.replace(
+        native_io_step,
+        "      - name: Run native Shell I/O integration\n        run: cargo test -p minimax-tools --test shell_io --locked -- --nocapture\n        if: runner.os == 'Linux'\n",
+    );
+    assert_ci_rejected(
+        &post_run_linux_only_native_io,
+        "CI must run native Shell I/O integration on every hosted platform",
     );
 
     for forbidden_key in [
@@ -884,31 +893,40 @@ fn ci_keeps_rust_authority_ahead_of_packaging_and_fails_closed() {
         "        continue-on-error : true\n",
         "        shell: bash -c 'exit 0' -- {0}\n",
     ] {
-        let disguised_native_pty_control = source.replace(
-            native_pty_step,
+        let disguised_native_io_control = source.replace(
+            native_io_step,
             &format!(
-                "      - name: Run native PTY Shell integration\n        run: cargo test -p minimax-tools --test shell_pty --locked -- --nocapture\n{forbidden_key}"
+                "      - name: Run native Shell I/O integration\n        run: cargo test -p minimax-tools --test shell_io --locked -- --nocapture\n{forbidden_key}"
             ),
         );
         assert_ci_rejected(
-            &disguised_native_pty_control,
+            &disguised_native_io_control,
             if forbidden_key.trim_start().starts_with(['\'', '"']) {
                 "CI steps mapping keys must be unambiguous"
             } else if forbidden_key.trim_start().starts_with("shell") {
                 "CI authority execution shell must not be overridden"
             } else {
-                "CI must run native PTY Shell integration on every hosted platform"
+                "CI must run native Shell I/O integration on every hosted platform"
             },
         );
     }
 
-    let non_blocking_native_pty = source.replace(
-        native_pty_step,
-        "      - name: Run native PTY Shell integration\n        continue-on-error: true\n        run: cargo test -p minimax-tools --test shell_pty --locked -- --nocapture\n",
+    let non_blocking_native_io = source.replace(
+        native_io_step,
+        "      - name: Run native Shell I/O integration\n        continue-on-error: true\n        run: cargo test -p minimax-tools --test shell_io --locked -- --nocapture\n",
     );
     assert_ci_rejected(
-        &non_blocking_native_pty,
-        "CI must run native PTY Shell integration on every hosted platform",
+        &non_blocking_native_io,
+        "CI must run native Shell I/O integration on every hosted platform",
+    );
+
+    let environment_override_native_io = source.replace(
+        native_io_step,
+        "      - name: Run native Shell I/O integration\n        env:\n          SHELL: forged\n        run: cargo test -p minimax-tools --test shell_io --locked -- --nocapture\n",
+    );
+    assert_ci_rejected(
+        &environment_override_native_io,
+        "CI authority steps must not inject credentials or override the job environment",
     );
 
     let skipped_contract = source.replace(
@@ -984,7 +1002,10 @@ fn ci_keeps_rust_authority_ahead_of_packaging_and_fails_closed() {
         "  verify:\n    runs-on: ${{ matrix.os }}\n",
         "  verify:\n    if: runner.os == 'Linux'\n    runs-on: ${{ matrix.os }}\n",
     );
-    assert_ci_rejected(&conditional_job, "PTY authority job must be unconditional");
+    assert_ci_rejected(
+        &conditional_job,
+        "Shell I/O authority job must be unconditional",
+    );
 
     let dependent_authority_job = source.replace(
         "jobs:\n  verify:\n",
@@ -992,7 +1013,7 @@ fn ci_keeps_rust_authority_ahead_of_packaging_and_fails_closed() {
     );
     assert_ci_rejected(
         &dependent_authority_job,
-        "PTY authority job must not depend on other jobs",
+        "Shell I/O authority job must not depend on other jobs",
     );
 
     let workflow_default_shell = source.replace(
@@ -1021,7 +1042,7 @@ fn ci_keeps_rust_authority_ahead_of_packaging_and_fails_closed() {
         .replace("    env:\n", "    env:\n      runs-on: ${{ matrix.os }}\n");
     assert_ci_rejected(
         &nested_runs_on,
-        "PTY authority step must remain in the authoritative matrix job",
+        "Shell I/O authority step must remain in the authoritative matrix job",
     );
 
     let nested_matrix_os = source.replace(
@@ -1048,17 +1069,17 @@ fn ci_keeps_rust_authority_ahead_of_packaging_and_fails_closed() {
         "CI authority execution shell must not be overridden",
     );
 
-    let forged_native_pty = source.replace(
-        native_pty_step,
-        "      - name: Run native PTY Shell integration\n        shell: bash -c 'exit 0' -- {0}\n        run: cargo test -p minimax-tools --test shell_pty --locked -- --nocapture\n",
+    let forged_native_io = source.replace(
+        native_io_step,
+        "      - name: Run native Shell I/O integration\n        shell: bash -c 'exit 0' -- {0}\n        run: cargo test -p minimax-tools --test shell_io --locked -- --nocapture\n",
     );
-    let release_tail_start = forged_native_pty
+    let release_tail_start = forged_native_io
         .find("      - name: Generate explicit release product fingerprint\n")
         .expect("release tail should exist");
     let moved_release_tail = format!(
         "{}  deferred-release:\n    runs-on: ubuntu-latest\n    steps:\n{}",
-        &forged_native_pty[..release_tail_start],
-        &forged_native_pty[release_tail_start..]
+        &forged_native_io[..release_tail_start],
+        &forged_native_io[release_tail_start..]
     );
     assert_ci_rejected(
         &moved_release_tail,
@@ -1074,31 +1095,31 @@ fn ci_keeps_rust_authority_ahead_of_packaging_and_fails_closed() {
         "check:rust must be an unconditional step in the authoritative matrix job",
     );
 
-    let split_native_pty_step = source.replace(
-        native_pty_step,
-        "      - name: Run native PTY Shell integration\n        run: echo skipped\n      - run: cargo test -p minimax-tools --test shell_pty --locked -- --nocapture\n",
+    let split_native_io_step = source.replace(
+        native_io_step,
+        "      - name: Run native Shell I/O integration\n        run: echo skipped\n      - run: cargo test -p minimax-tools --test shell_io --locked -- --nocapture\n",
     );
     assert_ci_rejected(
-        &split_native_pty_step,
-        "must run native PTY Shell integration on every hosted platform",
+        &split_native_io_step,
+        "must run native Shell I/O integration on every hosted platform",
     );
 
-    let nested_native_pty_step = source.replace(
-        native_pty_step,
-        "      pty-container:\n        - name: Run native PTY Shell integration\n          run: cargo test -p minimax-tools --test shell_pty --locked -- --nocapture\n",
+    let nested_native_io_step = source.replace(
+        native_io_step,
+        "      io-container:\n        - name: Run native Shell I/O integration\n          run: cargo test -p minimax-tools --test shell_io --locked -- --nocapture\n",
     );
     assert_ci_rejected(
-        &nested_native_pty_step,
-        "must run native PTY Shell integration on every hosted platform",
+        &nested_native_io_step,
+        "must run native Shell I/O integration on every hosted platform",
     );
 
     let linux_only_job = source.replace(
-        native_pty_step,
-        "  linux-only:\n    runs-on: ubuntu-latest\n    steps:\n      - name: Run native PTY Shell integration\n        run: cargo test -p minimax-tools --test shell_pty --locked -- --nocapture\n",
+        native_io_step,
+        "  linux-only:\n    runs-on: ubuntu-latest\n    steps:\n      - name: Run native Shell I/O integration\n        run: cargo test -p minimax-tools --test shell_io --locked -- --nocapture\n",
     );
     assert_ci_rejected(
         &linux_only_job,
-        "PTY authority step must remain in the authoritative matrix job",
+        "Shell I/O authority step must remain in the authoritative matrix job",
     );
 
     let missing_canary = source.replace(
@@ -1290,12 +1311,12 @@ fn ci_rejects_escaped_keys_in_steps_mapping() {
     );
     assert_ci_rejected(&escaped_check_if, "steps mapping keys must be unambiguous");
 
-    let escaped_native_pty_if = source.replace(
-        "      - name: Run native PTY Shell integration\n",
-        "      - name: Run native PTY Shell integration\n        \"\\u0069f\": false\n",
+    let escaped_native_io_if = source.replace(
+        "      - name: Run native Shell I/O integration\n",
+        "      - name: Run native Shell I/O integration\n        \"\\u0069f\": false\n",
     );
     assert_ci_rejected(
-        &escaped_native_pty_if,
+        &escaped_native_io_if,
         "steps mapping keys must be unambiguous",
     );
 }
@@ -1328,8 +1349,8 @@ fn ci_rejects_duplicate_authority_mapping_keys() {
     assert_ci_rejected(&duplicate_runs_on, "job mapping keys must be unambiguous");
 
     let duplicate_step_name = source.replace(
-        "      - name: Run native PTY Shell integration\n",
-        "      - name: Run native PTY Shell integration\n        name: Forged duplicate\n",
+        "      - name: Run native Shell I/O integration\n",
+        "      - name: Run native Shell I/O integration\n        name: Forged duplicate\n",
     );
     assert_ci_rejected(
         &duplicate_step_name,

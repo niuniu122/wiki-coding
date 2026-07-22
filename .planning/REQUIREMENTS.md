@@ -139,12 +139,12 @@
 ### Full Access Shell
 
 - [ ] **SHELL-01**: A user in `full-access` can offer and invoke exactly the `shell_command` and `shell_session` model tools, while `confirm` neither advertises them nor permits a forged Shell call to reach approval or execution.
-- [ ] **SHELL-02**: A user can run an arbitrary one-shot command with an optional working directory through PowerShell on Windows or the configured absolute login shell with safe fallbacks on Linux.
-- [ ] **SHELL-03**: A command that outlives its initial yield returns a stable process-scoped session ID and preserves bounded incremental PTY output for later reads.
+- [ ] **SHELL-02**: A user can run an arbitrary one-shot command with an optional working directory through PowerShell on Windows or the configured absolute login shell with safe fallbacks on Linux, using lossless pipe capture by default or a fixed 120x30 terminal with `tty: true`.
+- [ ] **SHELL-03**: A pipe-or-terminal command that outlives its initial yield returns a stable process-scoped session ID and preserves bounded incremental output for later reads.
 - [ ] **SHELL-04**: A user can poll a running Shell session, write bounded stdin to it, or explicitly stop it and receive one stable structured receipt for every action.
 - [ ] **SHELL-05**: Shell execution enforces the fixed session-count, unread-output, aggregate-output, command, working-directory, input, and per-result limits without recording command text or output in safe traces.
 - [ ] **SHELL-06**: Permission downgrade, cancellation, normal application exit, and explicit stop interrupt and then terminate the complete child process tree within bounded cleanup waits.
-- [ ] **SHELL-07**: Windows and Linux tests, TUI status, public tool contracts, documentation, and CI prove the full-access Shell behavior without adding Pi, Node/TypeScript, tmux, or an external terminal runtime.
+- [ ] **SHELL-07**: Windows and Linux pipe-and-terminal tests, TUI status, public tool contracts, documentation, and CI prove the full-access Shell behavior without adding macOS, resizing, browser control, Pi, a Node Agent runtime, tmux, push, release, or an external terminal runtime.
 
 ## Future Requirements
 

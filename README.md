@@ -99,8 +99,12 @@ permission modes:
 model. Choosing `full-access` exposes exactly two additional tools:
 `shell_command` starts a command, and `shell_session` polls its new output,
 writes text or Enter to an interactive prompt, or stops it. Commands that do
-not finish during the first wait return a process-scoped session ID. Restarting
-the CLI invalidates those IDs and returns permission to `confirm`.
+not finish during the first wait return a process-scoped session ID in either
+I/O mode. Ordinary `shell_command` calls default to lossless pipe capture;
+`tty: true` opts into a fixed 120x30 PTY/ConPTY, where terminal applications
+can wrap output at 120 columns. Both modes retain bounded incremental output,
+stdin, session polling, and cleanup. Restarting the CLI invalidates session IDs
+and returns permission to `confirm`.
 
 Approval and subprocess isolation are separate. In `confirm`, Linux process
 tools require Bubblewrap with child networking denied and only the project
@@ -126,10 +130,13 @@ use the same process-tree cleanup path. A forced process kill, machine power
 loss, or operating-system crash cannot guarantee cleanup of every external
 program.
 
-Native PTY/ConPTY Shell is supported on Windows and Linux; macOS is deferred.
-The product implementation is Rust-only and does not require Pi, Node.js,
-tmux, or a separate terminal window at runtime. Node remains a packaging and
-source-verification tool only.
+Native pipe I/O and optional 120x30 PTY/ConPTY I/O are supported on Windows and
+Linux. Windows command payloads up to 32 KiB are delivered outside PowerShell
+argv and acknowledged before the Shell host reports readiness. The product
+implementation is Rust-only; this change does not add macOS support, terminal
+resizing, browser control, Pi, a Node Agent runtime, tmux, push, release, or a
+separate terminal window. Node remains a packaging and source-verification tool
+only.
 
 Read the [subprocess sandbox and platform boundary](docs/release/subprocess-sandbox.md)
 before testing an unfamiliar repository.

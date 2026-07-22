@@ -215,7 +215,7 @@ Plans:
 | 12. Fixture Compatibility and Rust Migration | 4/4 | Complete    | 2026-07-18 |
 | 13. Thin npm and Native Release | 3/3 | Complete    | 2026-07-18 |
 | 14. TypeScript Removal and Hosted Closure | 3/3 | Complete    | 2026-07-18 |
-| 15. Full Access Shell | 0/1 | Ready | - |
+| 15. Full Access Shell | 0/1 | In progress; hosted evidence pending | - |
 
 ### Phase 7: Close milestone integration gaps
 
@@ -439,12 +439,12 @@ Plans:
 **Success Criteria** (what must be TRUE):
 
   1. In `full-access`, the model sees and can invoke exactly `shell_command` and `shell_session` in addition to the existing tools without a per-command confirmation; in `confirm`, neither tool is advertised and a forged call reaches neither approval nor process execution.
-  2. A user can run an arbitrary one-shot command with an optional working directory through PowerShell/ConPTY on Windows or the configured native Shell/PTY path on Linux and receive a stable structured result.
-  3. A command that continues running returns a process-scoped session ID whose new output can be polled without duplication, whose stdin can be written and submitted, and whose process tree can be explicitly stopped.
+  2. A user can run an arbitrary one-shot command with an optional working directory through PowerShell on Windows or the configured native Shell path on Linux, using lossless pipe capture by default or a fixed 120x30 PTY/ConPTY with `tty: true`, and receive a stable structured result; Windows commands up to 32 KiB are delivered outside PowerShell argv.
+  3. A pipe-or-terminal command that continues running returns a process-scoped session ID whose new output can be polled without duplication, whose bounded stdin can be written and submitted, and whose process tree can be explicitly stopped.
   4. Session count, command, working-directory, input, unread-output, aggregate-output, and per-result limits fail predictably, while safe traces expose only bounded metadata and never command, input, working-directory, or output bodies.
-  5. Cancellation before ID delivery, permission downgrade, explicit stop, and normal application exit clean up the complete tested process tree; Windows/Linux PTY tests, TUI output, public contracts, documentation, and CI prove the Rust-only behavior without Pi, Node/TypeScript, tmux, or an external terminal runtime.
+  5. Cancellation before ID delivery, permission downgrade, explicit stop, and normal application exit clean up the complete tested process tree; Windows/Linux pipe-and-terminal tests, TUI output, public contracts, documentation, and CI prove the Rust-only behavior without adding macOS, resizing, browser control, Pi, a Node Agent runtime, tmux, push, release, or an external terminal runtime.
 
-**Plans:** 0/1 plans executed
+**Plans:** 0/1 plans complete; local implementation repair is under verification and fresh hosted Windows/Linux evidence remains pending
 
 Plans:
 
