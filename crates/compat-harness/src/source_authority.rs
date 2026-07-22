@@ -764,7 +764,6 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
         steps_end,
         "CI steps mapping keys must be unambiguous",
     )?;
-    let native_job_text = lines[native_job_start..native_job_end].join("\n");
     let authority_steps_text = lines[*steps_start + 1..steps_end].join("\n");
     let shell_keys = lines[*steps_start + 1..steps_end]
         .iter()
@@ -891,10 +890,65 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
     }) {
         return violation("CI must not include or exclude matrix jobs");
     }
-    if native_job_text.matches(reproducible_msvc_link).count() != 1 {
+    let env_headers = (native_job_start + 1..native_job_end)
+        .filter(|index| {
+            let line = lines[*index];
+            let trimmed = line.trim_start();
+            line.len().saturating_sub(trimmed.len()) == 4 && trimmed == "env:"
+        })
+        .collect::<Vec<_>>();
+    let [env_start] = env_headers.as_slice() else {
+        return violation("CI Windows MSVC builds must retain reproducible /Brepro linking");
+    };
+    let env_end = lines
+        .iter()
+        .enumerate()
+        .take(native_job_end)
+        .skip(*env_start + 1)
+        .find(|(_, line)| {
+            let trimmed = line.trim_start();
+            !trimmed.is_empty() && line.len().saturating_sub(trimmed.len()) <= 4
+        })
+        .map_or(native_job_end, |(index, _)| index);
+    validate_yaml_mapping_level(
+        &lines,
+        *env_start + 1,
+        env_end,
+        6,
+        false,
+        "CI authority environment mapping keys must be unambiguous",
+    )?;
+    if lines[*env_start + 1..env_end]
+        .iter()
+        .filter(|line| line.trim() == reproducible_msvc_link)
+        .count()
+        != 1
+    {
         return violation("CI Windows MSVC builds must retain reproducible /Brepro linking");
     }
-    if !authority_steps_text.contains("run: bash scripts/ci-linux-sandbox-canary.sh") {
+    let canary_headers = (*steps_start + 1..steps_end)
+        .filter(|index| {
+            let line = lines[*index];
+            let trimmed = line.trim_start();
+            line.len().saturating_sub(trimmed.len()) == 6
+                && trimmed == "- name: Run Linux adversarial sandbox canary"
+        })
+        .collect::<Vec<_>>();
+    let [canary_start] = canary_headers.as_slice() else {
+        return violation("CI must retain the Linux adversarial sandbox canary");
+    };
+    let canary_end = lines
+        .iter()
+        .enumerate()
+        .take(steps_end)
+        .skip(*canary_start + 1)
+        .find(|(_, line)| {
+            let trimmed = line.trim_start();
+            !trimmed.is_empty() && line.len().saturating_sub(trimmed.len()) <= 6
+        })
+        .map_or(steps_end, |(index, _)| index);
+    let canary_step = "      - name: Run Linux adversarial sandbox canary\n        if: runner.os == 'Linux'\n        run: bash scripts/ci-linux-sandbox-canary.sh";
+    if lines[*canary_start..canary_end].join("\n") != canary_step {
         return violation("CI must retain the Linux adversarial sandbox canary");
     }
     let check_rust_lines = (*steps_start + 1..steps_end)
@@ -1007,14 +1061,31 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
         return violation("CI source-authority jobs must not publish or mutate remotes");
     }
 
+    if lines[*steps_start + 1..steps_end].iter().any(|line| {
+        let trimmed = line.trim_start();
+        let indent = line.len().saturating_sub(trimmed.len());
+        let value = match indent {
+            6 => trimmed.strip_prefix("- run:").map(str::trim_start),
+            8 => trimmed.strip_prefix("run:").map(str::trim_start),
+            _ => None,
+        };
+        matches!(value, Some("|" | "|-" | "|+" | ">" | ">-" | ">+"))
+    }) {
+        return violation("CI required commands must use executable one-line run mappings");
+    }
+
     let run_commands = lines
         .iter()
         .enumerate()
         .filter_map(|(index, line)| {
-            let line = line.trim();
-            line.strip_prefix("- run: ")
-                .or_else(|| line.strip_prefix("run: "))
-                .map(|run| (index, run))
+            let trimmed = line.trim_start();
+            let indent = line.len().saturating_sub(trimmed.len());
+            match indent {
+                6 => trimmed.strip_prefix("- run: "),
+                8 => trimmed.strip_prefix("run: "),
+                _ => None,
+            }
+            .map(|run| (index, run))
         })
         .collect::<Vec<_>>();
     for (_, command) in &run_commands {
@@ -1072,6 +1143,45 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
                 "CI must run {required} in the authoritative matrix job"
             ));
         }
+        let intentionally_conditional = matches!(
+            required,
+            "npm run test:rust:strict-precondition"
+                | "npm run test:rust:candidate"
+                | "npm run verify:rust-contracts:strict-precondition"
+                | "npm run verify:rust-contracts:candidate"
+        );
+        if !intentionally_conditional {
+            let Some(step_start) = (*steps_start + 1..=*line).rev().find(|index| {
+                let candidate = lines[*index];
+                let trimmed = candidate.trim_start();
+                candidate.len().saturating_sub(trimmed.len()) == 6 && trimmed.starts_with("- ")
+            }) else {
+                return violation("CI required command must belong to a concrete step");
+            };
+            let step_end = lines
+                .iter()
+                .enumerate()
+                .take(steps_end)
+                .skip(step_start + 1)
+                .find(|(_, candidate)| {
+                    let trimmed = candidate.trim_start();
+                    !trimmed.is_empty() && candidate.len().saturating_sub(trimmed.len()) <= 6
+                })
+                .map_or(steps_end, |(index, _)| index);
+            let skipped = lines[step_start..step_end].iter().any(|candidate| {
+                let trimmed = candidate.trim_start();
+                let indent = candidate.len().saturating_sub(trimmed.len());
+                let mapping = match indent {
+                    6 => trimmed.strip_prefix("- "),
+                    8 => Some(trimmed),
+                    _ => None,
+                };
+                mapping.is_some_and(|mapping| matches!(yaml_mapping_key(mapping), Ok(Some("if"))))
+            });
+            if skipped {
+                return violation("CI unconditional required commands must not be skipped");
+            }
+        }
         command_lines.push(*line);
     }
     let test_gate = command_lines[1].max(command_lines[2]);
@@ -1112,10 +1222,34 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
     if *upload <= command_lines[12] {
         return violation("CI evidence upload must follow every installed and milestone gate");
     }
-    if !authority_steps_text.contains(
-        "- name: Upload hosted release evidence\n        uses: actions/upload-artifact@v4\n        with:\n          name: hosted-release-evidence-${{ runner.os }}",
-    ) {
-        return violation("CI evidence upload must cover both candidate and strict runs");
+    let upload_headers = (*steps_start + 1..steps_end)
+        .filter(|index| {
+            let line = lines[*index];
+            let trimmed = line.trim_start();
+            line.len().saturating_sub(trimmed.len()) == 6
+                && trimmed == "- name: Upload hosted release evidence"
+        })
+        .collect::<Vec<_>>();
+    let [upload_start] = upload_headers.as_slice() else {
+        return violation(
+            "CI hosted evidence upload must cover candidate and strict runs and remain unconditional and exact",
+        );
+    };
+    let upload_end = lines
+        .iter()
+        .enumerate()
+        .take(steps_end)
+        .skip(*upload_start + 1)
+        .find(|(_, line)| {
+            let trimmed = line.trim_start();
+            !trimmed.is_empty() && line.len().saturating_sub(trimmed.len()) <= 6
+        })
+        .map_or(steps_end, |(index, _)| index);
+    let expected_upload_step = "      - name: Upload hosted release evidence\n        uses: actions/upload-artifact@v4\n        with:\n          name: hosted-release-evidence-${{ runner.os }}\n          path: target/phase14-ci/evidence/*.json\n          if-no-files-found: error\n          retention-days: 7";
+    if lines[*upload_start..upload_end].join("\n") != expected_upload_step {
+        return violation(
+            "CI hosted evidence upload must cover candidate and strict runs and remain unconditional and exact",
+        );
     }
     for branch in [
         "- name: Verify strict-precondition Rust source authority and contracts\n        if: github.event_name != 'workflow_dispatch'\n        run: npm run verify:rust-contracts:strict-precondition",

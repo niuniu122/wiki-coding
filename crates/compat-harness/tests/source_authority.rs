@@ -1146,6 +1146,73 @@ fn assert_ci_rejected(source: &str, expected: &str) {
 }
 
 #[test]
+fn ci_rejects_non_executing_authority_text_forgery() {
+    let source = fs::read_to_string(repository_root().join(CI_WORKFLOW))
+        .expect("CI workflow should be readable");
+    let reproducible_msvc_link =
+        "RUSTFLAGS: ${{ matrix.os == 'windows-latest' && '-C link-arg=/Brepro' || '' }}";
+    let commented_rustflags = source.replace(
+        &format!("      {reproducible_msvc_link}\n"),
+        &format!("      RUSTFLAGS: ''\n      # {reproducible_msvc_link}\n"),
+    );
+    let conditional_canary = source.replace(
+        "      - name: Run Linux adversarial sandbox canary\n        if: runner.os == 'Linux'\n        run: bash scripts/ci-linux-sandbox-canary.sh\n",
+        "      - name: Run Linux adversarial sandbox canary\n        if: false\n        run: bash scripts/ci-linux-sandbox-canary.sh\n",
+    );
+    let conditional_upload = source.replace(
+        "          retention-days: 7\n",
+        "          retention-days: 7\n        if: false\n",
+    );
+    let scalar_provider_command = source.replace(
+        "      - name: Run Rust Provider evaluation\n        run: npm run eval:provider\n",
+        "      - name: Run Rust Provider evaluation\n        if: false\n        run: |\n          run: npm run eval:provider\n",
+    );
+    let conditional_provider_command = source.replace(
+        "      - name: Run Rust Provider evaluation\n        run: npm run eval:provider\n",
+        "      - name: Run Rust Provider evaluation\n        if: false\n        run: npm run eval:provider\n",
+    );
+
+    let mutations = [
+        (
+            "commented RUSTFLAGS",
+            commented_rustflags,
+            "reproducible /Brepro linking",
+        ),
+        (
+            "conditional Linux canary",
+            conditional_canary,
+            "Linux adversarial sandbox canary",
+        ),
+        (
+            "conditional evidence upload",
+            conditional_upload,
+            "hosted evidence upload",
+        ),
+        (
+            "block scalar required command",
+            scalar_provider_command,
+            "required commands must use executable one-line run mappings",
+        ),
+        (
+            "conditional required command",
+            conditional_provider_command,
+            "unconditional required commands must not be skipped",
+        ),
+    ];
+    let mut accepted = Vec::new();
+    for (label, mutation, expected) in mutations {
+        match validate_ci_workflow_text(&mutation) {
+            Ok(()) => accepted.push(label),
+            Err(error) => assert!(
+                error.to_string().contains(expected),
+                "{label}: expected {expected:?} in {error:?}"
+            ),
+        }
+    }
+    assert!(accepted.is_empty(), "accepted CI forgeries: {accepted:?}");
+}
+
+#[test]
 fn ci_rejects_escaped_keys_in_jobs_and_job_mappings() {
     let source = fs::read_to_string(repository_root().join(CI_WORKFLOW))
         .expect("CI workflow should be readable");
