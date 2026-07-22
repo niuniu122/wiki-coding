@@ -317,6 +317,7 @@ impl ShellSessionManager {
         cancellation: &dyn CancellationPort,
     ) -> Result<ShellReceipt, ShellManagerError> {
         self.gc().await;
+        self.reap_newly_terminal_sessions().await;
         validate_command_request(&request)?;
         if cancellation.is_cancelled() {
             return Err(ShellManagerError::Cancelled);
@@ -510,7 +511,13 @@ impl ShellSessionManager {
                 return Err(ShellManagerError::Cancelled);
             }
             Some(Ok(BlockingWriteResult::Completed(Err(_)))) | Some(Err(_)) => {
-                return Err(ShellManagerError::Io);
+                return Err(
+                    if boundary.load(Ordering::Acquire) == WriteBoundary::Pending as u8 {
+                        ShellManagerError::Io
+                    } else {
+                        ShellManagerError::Indeterminate
+                    },
+                );
             }
             None => {
                 let cancelled_before_write = boundary
@@ -851,7 +858,7 @@ impl ShellSessionManager {
     async fn refresh_session(
         &self,
         session: &Arc<StdMutex<ShellSession>>,
-    ) -> Result<(), ShellManagerError> {
+    ) -> Result<bool, ShellManagerError> {
         let became_terminal = {
             let mut session = session.lock().map_err(|_| ShellManagerError::Io)?;
             if session.state != ShellSessionState::Running {
@@ -888,7 +895,7 @@ impl ShellSessionManager {
                 session.terminal_sequence = Some(sequence);
             }
         }
-        Ok(())
+        Ok(became_terminal)
     }
 
     async fn stop_entry(
@@ -1313,6 +1320,18 @@ impl ShellSessionManager {
         if let Some(gate) = gate {
             gate.entered.wait().await;
             gate.release.wait().await;
+        }
+    }
+
+    async fn reap_newly_terminal_sessions(&self) {
+        let sessions = {
+            let registry = self.inner.lock().await;
+            registry.sessions.values().cloned().collect::<Vec<_>>()
+        };
+        for session in sessions {
+            if self.refresh_session(&session).await == Ok(true) {
+                let _ = self.ensure_cleanup(&session).await;
+            }
         }
     }
 

@@ -597,6 +597,12 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
         false,
         "CI top-level mapping keys must be unambiguous",
     )?;
+    if lines.iter().any(|line| {
+        !line.starts_with(char::is_whitespace)
+            && matches!(yaml_mapping_key(line), Ok(Some("defaults")))
+    }) {
+        return violation("CI authority execution shell must not be overridden");
+    }
     let permission_blocks = lines
         .iter()
         .enumerate()
@@ -758,6 +764,18 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
         steps_end,
         "CI steps mapping keys must be unambiguous",
     )?;
+    let shell_keys = lines[*steps_start + 1..steps_end]
+        .iter()
+        .filter(|line| {
+            let trimmed = line.trim_start();
+            line.len().saturating_sub(trimmed.len()) == 8
+                && matches!(yaml_mapping_key(line), Ok(Some("shell")))
+        })
+        .count();
+    let fingerprint_shell_step = "      - name: Generate explicit release product fingerprint\n        shell: bash\n        run: mkdir -p target/phase14-ci && node scripts/release/product-fingerprint.mjs > target/phase14-ci/fingerprint.json";
+    if shell_keys != 1 || normalized.matches(fingerprint_shell_step).count() != 1 {
+        return violation("CI authority execution shell must not be overridden");
+    }
     if !(*steps_start < *native_pty_start && *native_pty_start < steps_end) {
         return violation("CI PTY authority step must remain in the authoritative matrix job");
     }
@@ -774,6 +792,12 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
         .collect::<Vec<_>>();
     if job_level_keys.contains(&"if") {
         return violation("CI PTY authority job must be unconditional");
+    }
+    if job_level_keys.contains(&"needs") {
+        return violation("CI PTY authority job must not depend on other jobs");
+    }
+    if job_level_keys.contains(&"defaults") {
+        return violation("CI authority execution shell must not be overridden");
     }
     if native_job_lines
         .iter()
@@ -951,7 +975,7 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
     if normalized.contains("continue-on-error:") {
         return violation("CI authority and package gates must fail closed");
     }
-    if contains_github_secret_context(&lowercase)
+    if contains_github_credential_context(&lowercase)
         || [
             "secrets.",
             "authorization: bearer",
@@ -1089,19 +1113,25 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
     Ok(())
 }
 
-fn contains_github_secret_context(source: &str) -> bool {
+fn contains_github_credential_context(source: &str) -> bool {
     let mut remaining = source;
     while let Some(start) = remaining.find("${{") {
         let expression = &remaining[start + 3..];
         let Some(end) = expression.find("}}") else {
-            return contains_ascii_identifier(expression, b"secrets");
+            return expression_contains_github_credential(expression);
         };
-        if contains_ascii_identifier(&expression[..end], b"secrets") {
+        if expression_contains_github_credential(&expression[..end]) {
             return true;
         }
         remaining = &expression[end + 2..];
     }
     false
+}
+
+fn expression_contains_github_credential(expression: &str) -> bool {
+    contains_ascii_identifier(expression, b"secrets")
+        || (contains_ascii_identifier(expression, b"github")
+            && contains_ascii_identifier(expression, b"token"))
 }
 
 fn contains_ascii_identifier(source: &str, identifier: &[u8]) -> bool {

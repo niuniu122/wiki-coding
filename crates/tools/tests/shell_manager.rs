@@ -169,6 +169,7 @@ struct FakeShared {
     exit_on_interrupt: AtomicBool,
     flush_hook: Mutex<Option<FlushHook>>,
     write_error: Mutex<Option<io::ErrorKind>>,
+    partial_write_error: Mutex<Option<(usize, io::ErrorKind)>>,
     flush_error: Mutex<Option<io::ErrorKind>>,
     guard_drops: AtomicUsize,
     guard_disarms: AtomicUsize,
@@ -258,6 +259,14 @@ impl FakeControl {
 
     fn set_write_error(&self, kind: io::ErrorKind) {
         *self.shared.write_error.lock().expect("write error lock") = Some(kind);
+    }
+
+    fn set_partial_write_error(&self, bytes_written: usize, kind: io::ErrorKind) {
+        *self
+            .shared
+            .partial_write_error
+            .lock()
+            .expect("partial write error lock") = Some((bytes_written, kind));
     }
 
     fn set_flush_error(&self, kind: io::ErrorKind) {
@@ -594,6 +603,7 @@ impl FakeBackend {
             exit_on_interrupt: AtomicBool::new(true),
             flush_hook: Mutex::new(None),
             write_error: Mutex::new(None),
+            partial_write_error: Mutex::new(None),
             flush_error: Mutex::new(None),
             guard_drops: AtomicUsize::new(0),
             guard_disarms: AtomicUsize::new(0),
@@ -820,6 +830,20 @@ struct FakeWriter {
 
 impl Write for FakeWriter {
     fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+        if let Some((bytes_written, kind)) = *self
+            .shared
+            .partial_write_error
+            .lock()
+            .expect("partial write error lock")
+        {
+            let bytes_written = bytes_written.min(bytes.len());
+            self.shared
+                .input
+                .lock()
+                .expect("input lock")
+                .extend_from_slice(&bytes[..bytes_written]);
+            return Err(io::Error::new(kind, "scripted partial write failure"));
+        }
         if let Some(kind) = *self.shared.write_error.lock().expect("write error lock") {
             return Err(io::Error::new(kind, "scripted write failure"));
         }
@@ -1374,6 +1398,39 @@ async fn ninth_running_session_fails_before_backend_spawn() {
 }
 
 #[tokio::test]
+async fn gc_reaps_unpolled_natural_exits_before_enforcing_the_running_limit() {
+    let backend = Arc::new(FakeBackend::default());
+    let manager = enabled_manager(Arc::clone(&backend), Arc::new(ManualClock::default())).await;
+    let mut controls = Vec::new();
+    for index in 0..MAX_RUNNING_SHELL_SESSIONS {
+        let control = backend.queue_process();
+        let receipt = manager
+            .start(
+                command_request(&format!("unpolled-{index}"), Duration::ZERO),
+                &NeverCancelled,
+            )
+            .await
+            .expect("session within capacity starts");
+        assert_eq!(receipt.state, ShellSessionState::Running);
+        controls.push(control);
+    }
+    for control in &controls {
+        control.exit(0);
+    }
+
+    let ninth = backend.queue_process();
+    let receipt = manager
+        .start(command_request("after-gc", Duration::ZERO), &NeverCancelled)
+        .await
+        .expect("GC observes natural exits before reserving capacity");
+
+    assert_eq!(receipt.state, ShellSessionState::Running);
+    assert_eq!(backend.spawn_count(), MAX_RUNNING_SHELL_SESSIONS + 1);
+    ninth.exit(0);
+    manager.shutdown().await.expect("cleanup succeeds");
+}
+
+#[tokio::test]
 async fn observed_root_exit_keeps_its_running_slot_until_containment_cleanup_finishes() {
     let backend = Arc::new(FakeBackend::default());
     backend.queue_fast(b"root-exited", 0);
@@ -1845,7 +1902,7 @@ async fn write_after_bytes_are_committed_can_report_indeterminate() {
 }
 
 #[tokio::test]
-async fn real_interrupted_flush_without_cancellation_is_not_cancelled() {
+async fn flush_failure_after_committed_input_is_indeterminate() {
     let backend = Arc::new(FakeBackend::default());
     let control = backend.queue_process();
     control.set_flush_error(io::ErrorKind::Interrupted);
@@ -1871,9 +1928,41 @@ async fn real_interrupted_flush_without_cancellation_is_not_cancelled() {
                 &NeverCancelled,
             )
             .await,
-        Err(ShellManagerError::Io)
+        Err(ShellManagerError::Indeterminate)
     );
     assert_eq!(control.input(), b"committed");
+}
+
+#[tokio::test]
+async fn partial_write_failure_is_indeterminate() {
+    let backend = Arc::new(FakeBackend::default());
+    let control = backend.queue_process();
+    control.set_partial_write_error(4, io::ErrorKind::BrokenPipe);
+    let manager = enabled_manager(Arc::clone(&backend), Arc::new(ManualClock::default())).await;
+    let started = manager
+        .start(
+            command_request("interactive", Duration::ZERO),
+            &NeverCancelled,
+        )
+        .await
+        .expect("interactive command starts");
+
+    assert_eq!(
+        manager
+            .write(
+                ShellWriteRequest {
+                    session_id: started.session_id,
+                    input: "partially-written".to_owned(),
+                    submit: false,
+                    yield_time: Duration::ZERO,
+                    max_output_bytes: OUTPUT_LIMIT,
+                },
+                &NeverCancelled,
+            )
+            .await,
+        Err(ShellManagerError::Indeterminate)
+    );
+    assert_eq!(control.input(), b"part");
 }
 
 #[tokio::test]

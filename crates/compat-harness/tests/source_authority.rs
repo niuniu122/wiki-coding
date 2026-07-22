@@ -882,6 +882,7 @@ fn ci_keeps_rust_authority_ahead_of_packaging_and_fails_closed() {
         "        if : runner.os == 'Linux'\n",
         "        \"continue-on-error\": true\n",
         "        continue-on-error : true\n",
+        "        shell: bash -c 'exit 0' -- {0}\n",
     ] {
         let disguised_native_pty_control = source.replace(
             native_pty_step,
@@ -893,6 +894,8 @@ fn ci_keeps_rust_authority_ahead_of_packaging_and_fails_closed() {
             &disguised_native_pty_control,
             if forbidden_key.trim_start().starts_with(['\'', '"']) {
                 "CI steps mapping keys must be unambiguous"
+            } else if forbidden_key.trim_start().starts_with("shell") {
+                "CI authority execution shell must not be overridden"
             } else {
                 "CI must run native PTY Shell integration on every hosted platform"
             },
@@ -944,6 +947,12 @@ fn ci_keeps_rust_authority_ahead_of_packaging_and_fails_closed() {
     );
     assert_ci_rejected(&credential, "must not inject credentials");
 
+    let implicit_github_token = source.replace(
+        "      CARGO_TARGET_DIR: target/phase14-ci/cargo\n",
+        "      CARGO_TARGET_DIR: target/phase14-ci/cargo\n      FORGED_TOKEN: ${{ github.token }}\n",
+    );
+    assert_ci_rejected(&implicit_github_token, "must not inject credentials");
+
     let write_permission = source.replace("contents: read", "contents: write");
     assert_ci_rejected(&write_permission, "exactly contents: read");
 
@@ -977,6 +986,33 @@ fn ci_keeps_rust_authority_ahead_of_packaging_and_fails_closed() {
     );
     assert_ci_rejected(&conditional_job, "PTY authority job must be unconditional");
 
+    let dependent_authority_job = source.replace(
+        "jobs:\n  verify:\n",
+        "jobs:\n  skipped:\n    if: false\n    runs-on: ubuntu-latest\n    steps:\n      - run: /bin/true\n  verify:\n    needs: skipped\n",
+    );
+    assert_ci_rejected(
+        &dependent_authority_job,
+        "PTY authority job must not depend on other jobs",
+    );
+
+    let workflow_default_shell = source.replace(
+        "permissions:\n  contents: read\n",
+        "defaults:\n  run:\n    shell: bash -c 'exit 0' -- {0}\n\npermissions:\n  contents: read\n",
+    );
+    assert_ci_rejected(
+        &workflow_default_shell,
+        "CI authority execution shell must not be overridden",
+    );
+
+    let job_default_shell = source.replace(
+        "  verify:\n    runs-on: ${{ matrix.os }}\n",
+        "  verify:\n    defaults:\n      run:\n        shell: bash -c 'exit 0' -- {0}\n    runs-on: ${{ matrix.os }}\n",
+    );
+    assert_ci_rejected(
+        &job_default_shell,
+        "CI authority execution shell must not be overridden",
+    );
+
     let nested_runs_on = source
         .replace(
             "    runs-on: ${{ matrix.os }}\n",
@@ -1001,6 +1037,15 @@ fn ci_keeps_rust_authority_ahead_of_packaging_and_fails_closed() {
     assert_ci_rejected(
         &conditional_check,
         "check:rust must be an unconditional step in the authoritative matrix job",
+    );
+
+    let custom_shell_check = source.replace(
+        "      - run: npm run check:rust\n",
+        "      - run: npm run check:rust\n        shell: bash -c 'exit 0' -- {0}\n",
+    );
+    assert_ci_rejected(
+        &custom_shell_check,
+        "CI authority execution shell must not be overridden",
     );
 
     let nested_check = source.replace(
