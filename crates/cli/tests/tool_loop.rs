@@ -23,9 +23,10 @@ use minimax_protocol::{
     V1_TOOL_NAMES,
 };
 use minimax_tools::{
-    BoundedProcess, BuiltinToolPort, NativePtyBackend, NeverCancelled, ProcessShellSessionIds,
-    PtyBackend, PtyChild, PtyGuard, PtyTerminateFuture, ShellCommandRequest, ShellSessionIdSource,
-    ShellSessionManager, ShellSpawnRequest, ShellWriteRequest, SpawnedPty, SystemShellClock,
+    BoundedProcess, BuiltinToolPort, NativeShellBackend, NeverCancelled, ProcessShellSessionIds,
+    ShellBackend, ShellChild, ShellCommandRequest, ShellGuard, ShellSessionIdSource,
+    ShellSessionManager, ShellSpawnRequest, ShellTerminateFuture, ShellWriteRequest, SpawnedShell,
+    SystemShellClock,
 };
 use minimax_tui::ApprovalInput;
 use serde::Deserialize;
@@ -189,12 +190,12 @@ struct DriverShellControl {
     process: Arc<DriverShellProcess>,
 }
 
-impl PtyBackend for DriverShellBackend {
-    fn requires_cursor_handshake(&self) -> bool {
+impl ShellBackend for DriverShellBackend {
+    fn requires_startup_cursor_handshake(&self) -> bool {
         self.requires_handshake.load(Ordering::Acquire)
     }
 
-    fn spawn(&self, _request: &ShellSpawnRequest) -> io::Result<SpawnedPty> {
+    fn spawn(&self, _request: &ShellSpawnRequest) -> io::Result<SpawnedShell> {
         let plan = self
             .plans
             .lock()
@@ -207,7 +208,7 @@ impl PtyBackend for DriverShellBackend {
         if let Some(cancellation) = self.cancel_on_spawn.lock().expect("cancel on spawn").take() {
             cancellation.cancel();
         }
-        Ok(SpawnedPty {
+        Ok(SpawnedShell {
             child: Box::new(DriverShellChild {
                 process: Arc::clone(&plan.process),
             }),
@@ -229,7 +230,7 @@ struct DriverShellChild {
     process: Arc<DriverShellProcess>,
 }
 
-impl PtyChild for DriverShellChild {
+impl ShellChild for DriverShellChild {
     fn process_id(&self) -> u32 {
         8080
     }
@@ -286,15 +287,15 @@ struct DriverShellGuard {
     armed: bool,
 }
 
-impl PtyGuard for DriverShellGuard {
-    fn terminate<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+impl ShellGuard for DriverShellGuard {
+    fn terminate<'a>(&'a mut self) -> ShellTerminateFuture<'a> {
         Box::pin(async move {
             self.process.exit();
             Ok(())
         })
     }
 
-    fn confirm<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+    fn confirm<'a>(&'a mut self) -> ShellTerminateFuture<'a> {
         Box::pin(async { Ok(()) })
     }
 
@@ -1655,6 +1656,7 @@ async fn real_shell_command_cancellations_persist_cancelled_across_startup_phase
             "shell_command",
             serde_json::json!({
                 "command": "long-running",
+                "tty": phase == "handshake",
                 "yield_time_ms": 60_000,
                 "max_output_bytes": 49_152,
             }),
@@ -1696,6 +1698,7 @@ async fn real_shell_session_poll_cancellation_persists_cancelled() {
             ShellCommandRequest {
                 command: "session".to_owned(),
                 cwd: project.path().to_path_buf(),
+                tty: false,
                 yield_time: std::time::Duration::ZERO,
                 max_output_bytes: 49_152,
             },
@@ -1762,6 +1765,7 @@ async fn real_shell_session_write_cancellation_tracks_the_commit_boundary() {
                 ShellCommandRequest {
                     command: "session".to_owned(),
                     cwd: project.path().to_path_buf(),
+                    tty: false,
                     yield_time: std::time::Duration::ZERO,
                     max_output_bytes: 49_152,
                 },
@@ -2096,10 +2100,10 @@ async fn runtime_driver_drop_terminates_native_shell_parent_and_child() {
     };
     #[cfg(windows)]
     let backend =
-        NativePtyBackend::with_host_executable(PathBuf::from(env!("CARGO_BIN_EXE_minimax-cli")))
+        NativeShellBackend::with_host_executable(PathBuf::from(env!("CARGO_BIN_EXE_minimax-cli")))
             .expect("absolute trusted CLI host");
     #[cfg(not(windows))]
-    let backend = NativePtyBackend::default();
+    let backend = NativeShellBackend::default();
     let shell_manager = ShellSessionManager::new(
         Arc::new(backend),
         Arc::new(ProcessShellSessionIds::new().expect("process shell session IDs")),

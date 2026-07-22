@@ -54,6 +54,8 @@ struct ShellCommandArguments {
     #[serde(default)]
     cwd: Option<String>,
     #[serde(default)]
+    tty: bool,
+    #[serde(default)]
     yield_time_ms: Option<u64>,
     #[serde(default)]
     max_output_bytes: Option<usize>,
@@ -92,6 +94,7 @@ fn parse_arguments(
     Ok(ShellCommandRequest {
         command: arguments.command,
         cwd: resolve_cwd(workspace, arguments.cwd.as_deref())?,
+        tty: arguments.tty,
         yield_time,
         max_output_bytes,
     })

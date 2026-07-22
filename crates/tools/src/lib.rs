@@ -43,11 +43,12 @@ pub use process::{
 pub use read::{ListDirectoryTool, ReadFileTool};
 pub use shell::{
     DEFAULT_COMMAND_YIELD, DEFAULT_POLL_YIELD, DEFAULT_WRITE_YIELD, MAX_RUNNING_SHELL_SESSIONS,
-    MAX_TERMINAL_SHELL_RECEIPTS, NativePtyBackend, ProcessShellSessionIds, PtyBackend, PtyChild,
-    PtyGuard, PtyTerminateFuture, ReaderSpawner, ReaderTask, ShellCleanupError,
-    ShellCommandRequest, ShellManagerError, ShellOutputBudget, ShellOutputBuffer, ShellOutputChunk,
+    MAX_TERMINAL_SHELL_RECEIPTS, NativeShellBackend, ProcessShellSessionIds, ReaderSpawner,
+    ReaderTask, ShellBackend, ShellChild, ShellCleanupError, ShellCommandRequest, ShellGuard,
+    ShellIoMode, ShellManagerError, ShellOutputBudget, ShellOutputBuffer, ShellOutputChunk,
     ShellPollRequest, ShellSessionIdSource, ShellSessionManager, ShellSpawnRequest,
-    ShellWriteRequest, SpawnedPty, SystemReaderSpawner, SystemShellClock, TERMINAL_RECEIPT_TTL,
+    ShellTerminateFuture, ShellWriteRequest, SpawnedShell, SystemReaderSpawner, SystemShellClock,
+    TERMINAL_RECEIPT_TTL,
 };
 pub use shell_command::{
     SHELL_EXITED, SHELL_NONZERO_EXIT, SHELL_RUNNING, SHELL_STOPPED, ShellCommandTool,

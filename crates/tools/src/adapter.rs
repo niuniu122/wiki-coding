@@ -11,7 +11,7 @@ use minimax_protocol::{
 
 use crate::{
     ApplyPatchTool, BoundedProcess, GitDiffTool, GitStatusTool, ListDirectoryTool,
-    NativePtyBackend, NpmDiagnosticTool, Preflight, ProcessShellSessionIds, ReadFileTool,
+    NativeShellBackend, NpmDiagnosticTool, Preflight, ProcessShellSessionIds, ReadFileTool,
     RunDiagnosticTool, ShellCommandTool, ShellSessionManager, ShellSessionTool, SystemShellClock,
     ToolDenial, ToolDenialCode, ToolRegistry, WorkspaceRoot, WriteFileTool,
 };
@@ -32,7 +32,7 @@ impl BuiltinToolPort {
         let ids = ProcessShellSessionIds::new()
             .map_err(|_| ToolDenial::failed(ToolDenialCode::ShellLaunchFailed))?;
         let shell_manager = ShellSessionManager::new(
-            Arc::new(NativePtyBackend::default()),
+            Arc::new(NativeShellBackend::default()),
             Arc::new(ids),
             Arc::new(SystemShellClock),
         );

@@ -1,6 +1,7 @@
 use std::ffi::OsString;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 #[cfg(any(windows, target_os = "linux"))]
@@ -9,11 +10,13 @@ use std::time::Duration;
 use minimax_protocol::ShellSessionId;
 use portable_pty::{CommandBuilder, MasterPty, PtySize};
 #[cfg(windows)]
+use std::os::windows::io::AsRawHandle;
+#[cfg(windows)]
 use win32job::{ExtendedLimitInfo, Job};
 
 use super::{
-    PtyBackend, PtyChild, PtyTerminateFuture, ShellManagerError, ShellSessionIdSource,
-    ShellSpawnRequest, SpawnedPty,
+    ShellBackend, ShellChild, ShellIoMode, ShellManagerError, ShellSessionIdSource,
+    ShellSpawnRequest, ShellTerminateFuture, SpawnedShell,
 };
 
 const PROCESS_NONCE_BYTES: usize = 8;
@@ -48,6 +51,22 @@ fn build_host_command_with_environment(
     command.cwd(cwd);
     command
 }
+
+#[cfg(any(windows, target_os = "linux"))]
+fn build_host_process_command(
+    trusted_host: &Path,
+    bootstrap: &super::host::HostBootstrap,
+    cwd: &Path,
+) -> Command {
+    let mut command = Command::new(trusted_host);
+    command.args(bootstrap.arguments());
+    for (key, value) in bootstrap.environment() {
+        command.env(key, value);
+    }
+    command.current_dir(cwd);
+    command
+}
+
 #[derive(Clone, Debug)]
 enum HostExecutable {
     CurrentExecutable,
@@ -55,22 +74,22 @@ enum HostExecutable {
 }
 
 #[derive(Clone)]
-pub struct NativePtyBackend {
+pub struct NativeShellBackend {
     host_executable: HostExecutable,
     startup_observer: Option<Arc<dyn Fn(&'static str) + Send + Sync>>,
 }
 
-impl std::fmt::Debug for NativePtyBackend {
+impl std::fmt::Debug for NativeShellBackend {
     fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         formatter
-            .debug_struct("NativePtyBackend")
+            .debug_struct("NativeShellBackend")
             .field("host_executable", &self.host_executable)
             .field("startup_observer", &self.startup_observer.is_some())
             .finish()
     }
 }
 
-impl Default for NativePtyBackend {
+impl Default for NativeShellBackend {
     fn default() -> Self {
         Self {
             host_executable: HostExecutable::CurrentExecutable,
@@ -79,7 +98,7 @@ impl Default for NativePtyBackend {
     }
 }
 
-impl NativePtyBackend {
+impl NativeShellBackend {
     /// Overrides the trusted internal-host executable for integration tests.
     #[doc(hidden)]
     pub fn with_host_executable(path: PathBuf) -> io::Result<Self> {
@@ -128,7 +147,12 @@ impl NativePtyBackend {
     }
 
     #[cfg(windows)]
-    fn spawn_windows(&self, request: &ShellSpawnRequest) -> io::Result<SpawnedPty> {
+    fn spawn_terminal_windows(
+        &self,
+        request: &ShellSpawnRequest,
+        cols: u16,
+        rows: u16,
+    ) -> io::Result<SpawnedShell> {
         let trusted_host = self.resolve_host_executable()?;
         let (listener, bootstrap) =
             super::host::HostListener::bind(HOST_STARTUP_TIMEOUT).map_err(io::Error::from)?;
@@ -136,8 +160,8 @@ impl NativePtyBackend {
         let mut job = WindowsJobBoundary::new()?;
         let pair = portable_pty::native_pty_system()
             .openpty(PtySize {
-                rows: request.rows,
-                cols: request.cols,
+                rows,
+                cols,
                 pixel_width: 0,
                 pixel_height: 0,
             })
@@ -156,7 +180,7 @@ impl NativePtyBackend {
             child.as_mut(),
             |child| {
                 self.observe_startup("assign_begin");
-                job.assign(child)?;
+                job.assign_terminal(child)?;
                 self.observe_startup("assigned");
                 Ok(())
             },
@@ -168,7 +192,17 @@ impl NativePtyBackend {
                 writer.write_all(b"\x1b[1;1R")?;
                 writer.flush()?;
                 let mut command_sent = false;
-                start_host_protocol(listener, &request.command, self, child, &mut command_sent)
+                start_host_protocol(
+                    listener,
+                    &request.command,
+                    self,
+                    || {
+                        child
+                            .try_wait()
+                            .map(|status| status.map(|status| status.exit_code()))
+                    },
+                    &mut command_sent,
+                )
             },
         );
         let parent_channel = match protocol {
@@ -186,11 +220,11 @@ impl NativePtyBackend {
             }
         };
 
-        Ok(SpawnedPty {
-            child: Box::new(NativePtyChild { child, process_id }),
+        Ok(SpawnedShell {
+            child: Box::new(NativeShellChild { child, process_id }),
             reader,
             writer,
-            guard: Box::new(NativePtyGuard {
+            guard: Box::new(NativeShellGuard {
                 master: Some(pair.master),
                 job: job.take(),
                 parent_channel: Some(parent_channel),
@@ -200,15 +234,20 @@ impl NativePtyBackend {
     }
 
     #[cfg(target_os = "linux")]
-    fn spawn_linux(&self, request: &ShellSpawnRequest) -> io::Result<SpawnedPty> {
+    fn spawn_terminal_linux(
+        &self,
+        request: &ShellSpawnRequest,
+        cols: u16,
+        rows: u16,
+    ) -> io::Result<SpawnedShell> {
         let trusted_host = self.resolve_host_executable()?;
         let (listener, bootstrap) =
             super::host::HostListener::bind(HOST_STARTUP_TIMEOUT).map_err(io::Error::from)?;
         self.observe_startup("listener_bound");
         let pair = portable_pty::native_pty_system()
             .openpty(PtySize {
-                rows: request.rows,
-                cols: request.cols,
+                rows,
+                cols,
                 pixel_width: 0,
                 pixel_height: 0,
             })
@@ -228,7 +267,11 @@ impl NativePtyBackend {
             listener,
             &request.command,
             self,
-            child.as_mut(),
+            || {
+                child
+                    .try_wait()
+                    .map(|status| status.map(|status| status.exit_code()))
+            },
             &mut command_sent,
         ) {
             Ok(parent_channel) => parent_channel,
@@ -238,7 +281,14 @@ impl NativePtyBackend {
                 drop(writer);
                 drop(pair.master);
                 let cleanup = if command_sent {
-                    wait_for_host_cleanup(child.as_mut(), HOST_CLEANUP_TIMEOUT)
+                    wait_for_host_cleanup(
+                        || {
+                            child.try_wait().map(|status| {
+                                status.map(|status| i32::try_from(status.exit_code()).unwrap_or(1))
+                            })
+                        },
+                        HOST_CLEANUP_TIMEOUT,
+                    )
                 } else {
                     kill_and_wait_child(child.as_mut())
                 };
@@ -248,8 +298,8 @@ impl NativePtyBackend {
             }
         };
 
-        Ok(SpawnedPty {
-            child: Box::new(NativePtyChild {
+        Ok(SpawnedShell {
+            child: Box::new(NativeShellChild {
                 child,
                 process_id,
                 observed_exit: None,
@@ -257,7 +307,7 @@ impl NativePtyBackend {
             }),
             reader,
             writer,
-            guard: Box::new(NativePtyGuard {
+            guard: Box::new(NativeShellGuard {
                 master: Some(pair.master),
                 parent_channel: Some(parent_channel),
                 cleanup_confirmed: false,
@@ -265,53 +315,169 @@ impl NativePtyBackend {
             }),
         })
     }
-}
 
-impl PtyBackend for NativePtyBackend {
-    fn requires_cursor_handshake(&self) -> bool {
-        false
+    #[cfg(any(windows, target_os = "linux"))]
+    fn spawn_pipe(&self, request: &ShellSpawnRequest) -> io::Result<SpawnedShell> {
+        let trusted_host = self.resolve_host_executable()?;
+        let (listener, bootstrap) =
+            super::host::HostListener::bind(HOST_STARTUP_TIMEOUT).map_err(io::Error::from)?;
+        self.observe_startup("listener_bound");
+        #[cfg(windows)]
+        let mut job = WindowsJobBoundary::new()?;
+        let filedescriptor::Pipe {
+            read: input_read,
+            write: input_write,
+        } = filedescriptor::Pipe::new().map_err(descriptor_error)?;
+        let filedescriptor::Pipe {
+            read: output_read,
+            write: output_write,
+        } = filedescriptor::Pipe::new().map_err(descriptor_error)?;
+        let mut command = build_host_process_command(&trusted_host, &bootstrap, &request.cwd);
+        command
+            .stdin(input_read.as_stdio().map_err(descriptor_error)?)
+            .stdout(output_write.as_stdio().map_err(descriptor_error)?)
+            .stderr(output_write.as_stdio().map_err(descriptor_error)?);
+        let mut child = command.spawn()?;
+        drop(command);
+        drop(input_read);
+        drop(output_write);
+        self.observe_startup("host_spawned");
+
+        let process_id = child.id();
+        let mut command_sent = false;
+        #[cfg(windows)]
+        let protocol = assign_job_before_host_protocol(
+            &mut child,
+            |child| {
+                self.observe_startup("assign_begin");
+                job.assign_process(child)?;
+                self.observe_startup("assigned");
+                Ok(())
+            },
+            |child| {
+                start_host_protocol(
+                    listener,
+                    &request.command,
+                    self,
+                    || try_wait_host_process(child),
+                    &mut command_sent,
+                )
+            },
+        );
+        #[cfg(target_os = "linux")]
+        let protocol = start_host_protocol(
+            listener,
+            &request.command,
+            self,
+            || try_wait_host_process(&mut child),
+            &mut command_sent,
+        );
+        let parent_channel = match protocol {
+            Ok(parent_channel) => parent_channel,
+            Err(error) => {
+                self.observe_startup("error_cleanup");
+                #[cfg(windows)]
+                let cleanup = {
+                    drop(job.take());
+                    kill_and_poll_process(&mut child)
+                };
+                #[cfg(target_os = "linux")]
+                let cleanup = if command_sent {
+                    wait_for_host_cleanup(|| try_wait_process(&mut child), HOST_CLEANUP_TIMEOUT)
+                } else {
+                    kill_and_wait_process(&mut child)
+                };
+                drop(output_read);
+                drop(input_write);
+                return Err(io::Error::other(format!(
+                    "trusted-host pipe startup failed: {error}; host cleanup: {cleanup}"
+                )));
+            }
+        };
+
+        Ok(SpawnedShell {
+            child: Box::new(NativePipeChild {
+                child,
+                process_id,
+                #[cfg(target_os = "linux")]
+                observed_exit: None,
+                #[cfg(target_os = "linux")]
+                reaped: false,
+            }),
+            reader: Box::new(output_read),
+            writer: Box::new(input_write),
+            guard: Box::new(NativeShellGuard {
+                master: None,
+                #[cfg(windows)]
+                job: job.take(),
+                parent_channel: Some(parent_channel),
+                #[cfg(target_os = "linux")]
+                cleanup_confirmed: false,
+                armed: true,
+            }),
+        })
     }
 
-    fn spawn(&self, request: &ShellSpawnRequest) -> io::Result<SpawnedPty> {
-        #[cfg(windows)]
-        return self.spawn_windows(request);
-
-        #[cfg(target_os = "linux")]
-        return self.spawn_linux(request);
-
-        #[cfg(not(any(windows, target_os = "linux")))]
-        {
-            let resolved = resolve_native_shell(&request.command)?;
-            let pair = portable_pty::native_pty_system()
-                .openpty(PtySize {
-                    rows: request.rows,
-                    cols: request.cols,
-                    pixel_width: 0,
-                    pixel_height: 0,
-                })
-                .map_err(pty_error)?;
-            let mut command = CommandBuilder::new(&resolved.program);
-            command.args(&resolved.args);
-            command.cwd(&request.cwd);
-            let (mut child, reader, writer) = acquire_handles_then_spawn(
-                || pair.master.try_clone_reader().map_err(pty_error),
-                || pair.master.take_writer().map_err(pty_error),
-                || pair.slave.spawn_command(command).map_err(pty_error),
-            )?;
-            drop(pair.slave);
-
-            let process_id = process_id_or_cleanup(child.as_mut())?;
-            Ok(SpawnedPty {
-                child: Box::new(NativePtyChild { child, process_id }),
-                reader,
-                writer,
-                guard: Box::new(NativePtyGuard {
-                    master: Some(pair.master),
-                    #[cfg(not(any(windows, target_os = "linux")))]
-                    process_id,
-                    armed: true,
-                }),
+    #[cfg(not(any(windows, target_os = "linux")))]
+    fn spawn_terminal(
+        &self,
+        request: &ShellSpawnRequest,
+        cols: u16,
+        rows: u16,
+    ) -> io::Result<SpawnedShell> {
+        let resolved = resolve_native_shell(&request.command)?;
+        let pair = portable_pty::native_pty_system()
+            .openpty(PtySize {
+                rows,
+                cols,
+                pixel_width: 0,
+                pixel_height: 0,
             })
+            .map_err(pty_error)?;
+        let mut command = CommandBuilder::new(&resolved.program);
+        command.args(&resolved.args);
+        command.cwd(&request.cwd);
+        let (mut child, reader, writer) = acquire_handles_then_spawn(
+            || pair.master.try_clone_reader().map_err(pty_error),
+            || pair.master.take_writer().map_err(pty_error),
+            || pair.slave.spawn_command(command).map_err(pty_error),
+        )?;
+        drop(pair.slave);
+
+        let process_id = process_id_or_cleanup(child.as_mut())?;
+        Ok(SpawnedShell {
+            child: Box::new(NativeShellChild { child, process_id }),
+            reader,
+            writer,
+            guard: Box::new(NativeShellGuard {
+                master: Some(pair.master),
+                process_id,
+                armed: true,
+            }),
+        })
+    }
+}
+
+impl ShellBackend for NativeShellBackend {
+    fn spawn(&self, request: &ShellSpawnRequest) -> io::Result<SpawnedShell> {
+        match request.io_mode {
+            ShellIoMode::Pipe => {
+                #[cfg(any(windows, target_os = "linux"))]
+                return self.spawn_pipe(request);
+                #[cfg(not(any(windows, target_os = "linux")))]
+                return Err(io::Error::new(
+                    io::ErrorKind::Unsupported,
+                    "native pipe shell is supported only on Windows and Linux",
+                ));
+            }
+            ShellIoMode::Terminal { cols, rows } => {
+                #[cfg(windows)]
+                return self.spawn_terminal_windows(request, cols, rows);
+                #[cfg(target_os = "linux")]
+                return self.spawn_terminal_linux(request, cols, rows);
+                #[cfg(not(any(windows, target_os = "linux")))]
+                return self.spawn_terminal(request, cols, rows);
+            }
         }
     }
 }
@@ -331,10 +497,18 @@ impl WindowsJobBoundary {
         Ok(Self { job: Some(job) })
     }
 
-    fn assign(&self, child: &(dyn portable_pty::Child + Send + Sync)) -> io::Result<()> {
+    fn assign_terminal(&self, child: &(dyn portable_pty::Child + Send + Sync)) -> io::Result<()> {
         let process_handle = child
             .as_raw_handle()
             .ok_or_else(|| io::Error::other("PTY child did not expose a raw process handle"))?;
+        self.assign_handle(process_handle)
+    }
+
+    fn assign_process(&self, child: &std::process::Child) -> io::Result<()> {
+        self.assign_handle(child.as_raw_handle())
+    }
+
+    fn assign_handle(&self, process_handle: std::os::windows::io::RawHandle) -> io::Result<()> {
         self.job
             .as_ref()
             .ok_or_else(|| io::Error::other("Windows Job is missing before assignment"))?
@@ -363,16 +537,15 @@ fn assign_job_before_host_protocol<T, Child: ?Sized>(
 fn start_host_protocol(
     listener: super::host::HostListener,
     command: &str,
-    backend: &NativePtyBackend,
-    child: &mut (dyn portable_pty::Child + Send + Sync),
+    backend: &NativeShellBackend,
+    mut try_wait: impl FnMut() -> io::Result<Option<u32>>,
     command_sent: &mut bool,
 ) -> io::Result<super::host::ParentChannel> {
     let mut parent = listener
         .accept_with_probe(|| {
-            child.try_wait().map(|status| {
-                status.map(|status| {
+            try_wait().map(|status| {
+                status.inspect(|_| {
                     backend.observe_startup("host_exited_before_auth");
-                    status.exit_code()
                 })
             })
         })
@@ -402,16 +575,16 @@ fn start_host_protocol(
 
 #[cfg(target_os = "linux")]
 fn wait_for_host_cleanup(
-    child: &mut (dyn portable_pty::Child + Send + Sync),
+    mut try_wait: impl FnMut() -> io::Result<Option<i32>>,
     timeout: Duration,
 ) -> String {
     let deadline = std::time::Instant::now() + timeout;
     loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
+        match try_wait() {
+            Ok(Some(exit_code)) => {
                 return format!(
                     "control channel closed and host cleanup exited with exit_code={}",
-                    status.exit_code()
+                    exit_code
                 );
             }
             Err(error) => return format!("host cleanup poll failed: {error}"),
@@ -426,7 +599,7 @@ fn wait_for_host_cleanup(
     }
 }
 
-struct NativePtyChild {
+struct NativeShellChild {
     child: Box<dyn portable_pty::Child + Send + Sync>,
     process_id: u32,
     #[cfg(target_os = "linux")]
@@ -435,7 +608,7 @@ struct NativePtyChild {
     reaped: bool,
 }
 
-impl PtyChild for NativePtyChild {
+impl ShellChild for NativeShellChild {
     fn process_id(&self) -> u32 {
         self.process_id
     }
@@ -486,7 +659,86 @@ impl PtyChild for NativePtyChild {
 }
 
 #[cfg(target_os = "linux")]
-impl Drop for NativePtyChild {
+impl Drop for NativeShellChild {
+    fn drop(&mut self) {
+        if self.reaped {
+            return;
+        }
+        let deadline = std::time::Instant::now() + Duration::from_secs(1);
+        loop {
+            match self.child.try_wait() {
+                Ok(Some(_)) | Err(_) => {
+                    self.reaped = true;
+                    break;
+                }
+                Ok(None) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Ok(None) => break,
+            }
+        }
+    }
+}
+
+struct NativePipeChild {
+    child: std::process::Child,
+    process_id: u32,
+    #[cfg(target_os = "linux")]
+    observed_exit: Option<i32>,
+    #[cfg(target_os = "linux")]
+    reaped: bool,
+}
+
+impl ShellChild for NativePipeChild {
+    fn process_id(&self) -> u32 {
+        self.process_id
+    }
+
+    fn try_wait(&mut self) -> io::Result<Option<i32>> {
+        #[cfg(target_os = "linux")]
+        {
+            if self.observed_exit.is_none() {
+                self.observed_exit = linux_observe_exit(self.process_id)?;
+            }
+            Ok(self.observed_exit)
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        try_wait_process(&mut self.child)
+    }
+
+    fn kill(&mut self) -> io::Result<()> {
+        #[cfg(target_os = "linux")]
+        {
+            if self.try_wait()?.is_some() {
+                return Ok(());
+            }
+            Err(io::Error::other(
+                "Linux trusted host retains exclusive descendant-cleanup ownership",
+            ))
+        }
+
+        #[cfg(not(target_os = "linux"))]
+        self.child.kill()
+    }
+
+    fn reap(&mut self) -> io::Result<()> {
+        #[cfg(target_os = "linux")]
+        {
+            if !self.reaped {
+                let status = self.child.wait()?;
+                self.reaped = true;
+                if self.observed_exit.is_none() {
+                    self.observed_exit = Some(exit_status_code(status));
+                }
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl Drop for NativePipeChild {
     fn drop(&mut self) {
         if self.reaped {
             return;
@@ -528,7 +780,7 @@ fn linux_observe_exit(process_id: u32) -> io::Result<Option<i32>> {
     }))
 }
 
-struct NativePtyGuard {
+struct NativeShellGuard {
     master: Option<Box<dyn MasterPty + Send>>,
     #[cfg(windows)]
     job: Option<Job>,
@@ -541,8 +793,8 @@ struct NativePtyGuard {
     armed: bool,
 }
 
-impl super::backend::PtyGuard for NativePtyGuard {
-    fn terminate<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+impl super::backend::ShellGuard for NativeShellGuard {
+    fn terminate<'a>(&'a mut self) -> ShellTerminateFuture<'a> {
         #[cfg(windows)]
         return Box::pin(async move {
             // This Job is unique and non-inherited. Windows' KILL_ON_JOB_CLOSE contract
@@ -593,7 +845,7 @@ impl super::backend::PtyGuard for NativePtyGuard {
         })
     }
 
-    fn confirm<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+    fn confirm<'a>(&'a mut self) -> ShellTerminateFuture<'a> {
         #[cfg(target_os = "linux")]
         return Box::pin(async move {
             if !self.cleanup_confirmed {
@@ -630,7 +882,7 @@ impl super::backend::PtyGuard for NativePtyGuard {
     }
 }
 
-impl Drop for NativePtyGuard {
+impl Drop for NativeShellGuard {
     fn drop(&mut self) {
         if self.armed {
             #[cfg(windows)]
@@ -811,6 +1063,46 @@ fn pty_error(error: impl std::fmt::Display) -> io::Error {
     io::Error::other(error.to_string())
 }
 
+fn descriptor_error(error: impl std::fmt::Display) -> io::Error {
+    io::Error::other(error.to_string())
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+fn exit_status_code(status: std::process::ExitStatus) -> i32 {
+    status.code().unwrap_or(1)
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+fn try_wait_process(child: &mut std::process::Child) -> io::Result<Option<i32>> {
+    child.try_wait().map(|status| status.map(exit_status_code))
+}
+
+#[cfg(any(windows, target_os = "linux"))]
+fn try_wait_host_process(child: &mut std::process::Child) -> io::Result<Option<u32>> {
+    child.try_wait().map(|status| {
+        status.map(|status| {
+            status
+                .code()
+                .and_then(|code| u32::try_from(code).ok())
+                .unwrap_or(1)
+        })
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn kill_and_wait_process(child: &mut std::process::Child) -> String {
+    let kill_error = child.kill().err();
+    let wait_error = child.wait().err();
+    match (kill_error, wait_error) {
+        (None, None) => "direct kill and wait completed".to_owned(),
+        (Some(kill), None) => format!("direct kill failed: {kill}; wait completed"),
+        (None, Some(wait)) => format!("direct kill completed; wait failed: {wait}"),
+        (Some(kill), Some(wait)) => {
+            format!("direct kill failed: {kill}; wait failed: {wait}")
+        }
+    }
+}
+
 fn acquire_handles_then_spawn<Child, Reader, Writer>(
     acquire_reader: impl FnOnce() -> io::Result<Reader>,
     acquire_writer: impl FnOnce() -> io::Result<Writer>,
@@ -867,6 +1159,25 @@ fn kill_and_poll_child(child: &mut (dyn portable_pty::Child + Send + Sync)) -> S
     }
 }
 
+#[cfg(windows)]
+fn kill_and_poll_process(child: &mut std::process::Child) -> String {
+    let kill = match child.kill() {
+        Ok(()) => "direct kill completed".to_owned(),
+        Err(error) => format!("direct kill failed: {error}"),
+    };
+    let deadline = std::time::Instant::now() + Duration::from_secs(1);
+    loop {
+        match try_wait_process(child) {
+            Ok(Some(exit_code)) => return format!("{kill}; poll observed exit_code={exit_code}"),
+            Err(error) => return format!("{kill}; poll failed: {error}"),
+            Ok(None) if std::time::Instant::now() >= deadline => {
+                return format!("{kill}; poll timed out after 1000ms");
+            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(5)),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
@@ -879,12 +1190,12 @@ mod tests {
     #[cfg(windows)]
     use super::assign_job_before_host_protocol;
     use super::{
-        NativePtyBackend, ProcessShellSessionIds, acquire_handles_then_spawn,
+        NativeShellBackend, ProcessShellSessionIds, acquire_handles_then_spawn,
         build_host_command_with_environment, is_executable_with_access_check,
         process_id_or_cleanup, resolve_linux_shell, resolve_windows_shell,
     };
     use crate::shell::host::HostListener;
-    use crate::shell::{PtyBackend, ShellManagerError, ShellSessionIdSource};
+    use crate::shell::{ShellBackend, ShellManagerError, ShellSessionIdSource};
 
     #[test]
     fn native_launches_only_the_trusted_host_with_fixed_bootstrap_metadata() {
@@ -960,12 +1271,12 @@ mod tests {
 
     #[test]
     fn native_backend_completes_its_own_startup_cursor_handshake() {
-        assert!(!NativePtyBackend::default().requires_cursor_handshake());
+        assert!(!NativeShellBackend::default().requires_startup_cursor_handshake());
     }
 
     #[test]
     fn native_backend_rejects_a_relative_trusted_host_override() {
-        let error = NativePtyBackend::with_host_executable(PathBuf::from("relative-host.exe"))
+        let error = NativeShellBackend::with_host_executable(PathBuf::from("relative-host.exe"))
             .expect_err("trusted host override must be absolute");
 
         assert_eq!(error.kind(), io::ErrorKind::InvalidInput);

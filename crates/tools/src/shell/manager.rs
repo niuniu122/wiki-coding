@@ -14,8 +14,8 @@ use minimax_protocol::{
 use tokio::sync::Mutex;
 
 use super::backend::{
-    PtyBackend, PtyChild, PtyGuard, ReaderSpawner, ShellSessionIdSource, ShellSpawnRequest,
-    SpawnedPty, SystemReaderSpawner,
+    ReaderSpawner, ShellBackend, ShellChild, ShellGuard, ShellIoMode, ShellSessionIdSource,
+    ShellSpawnRequest, SpawnedShell, SystemReaderSpawner,
 };
 use super::buffer::{ShellOutputBudget, ShellOutputBuffer};
 
@@ -37,6 +37,7 @@ const STARTUP_CURSOR_HANDSHAKE_WAIT: Duration = Duration::from_secs(2);
 pub struct ShellCommandRequest {
     pub command: String,
     pub cwd: PathBuf,
+    pub tty: bool,
     pub yield_time: Duration,
     pub max_output_bytes: usize,
 }
@@ -80,7 +81,7 @@ pub struct ShellSessionManager {
     inner: Arc<Mutex<ShellSessionRegistry>>,
     unpublished_sessions: Arc<StdMutex<BTreeMap<ShellSessionId, Arc<StdMutex<ShellSession>>>>>,
     lifecycle: Arc<Mutex<()>>,
-    backend: Arc<dyn PtyBackend>,
+    backend: Arc<dyn ShellBackend>,
     ids: Arc<dyn ShellSessionIdSource>,
     clock: Arc<dyn Clock + Send + Sync>,
     output_budget: Arc<ShellOutputBudget>,
@@ -105,9 +106,9 @@ struct ShellSessionRegistry {
 
 struct ShellSession {
     id: ShellSessionId,
-    guard: Option<Box<dyn PtyGuard>>,
+    guard: Option<Box<dyn ShellGuard>>,
     running_slot: Option<RunningSlotLease>,
-    child: Arc<StdMutex<Box<dyn PtyChild>>>,
+    child: Arc<StdMutex<Box<dyn ShellChild>>>,
     writer: Option<Arc<StdMutex<Box<dyn Write + Send>>>>,
     output: Arc<StdMutex<ShellOutputBuffer>>,
     reader: ReaderState,
@@ -271,7 +272,7 @@ impl Drop for RunningSlotLease {
 impl ShellSessionManager {
     #[must_use]
     pub fn new(
-        backend: Arc<dyn PtyBackend>,
+        backend: Arc<dyn ShellBackend>,
         ids: Arc<dyn ShellSessionIdSource>,
         clock: Arc<dyn Clock + Send + Sync>,
     ) -> Self {
@@ -280,7 +281,7 @@ impl ShellSessionManager {
 
     #[must_use]
     pub fn new_with_reader_spawner(
-        backend: Arc<dyn PtyBackend>,
+        backend: Arc<dyn ShellBackend>,
         ids: Arc<dyn ShellSessionIdSource>,
         clock: Arc<dyn Clock + Send + Sync>,
         reader_spawner: Arc<dyn ReaderSpawner>,
@@ -325,11 +326,18 @@ impl ShellSessionManager {
         let (starting_slot, running_slot) = self.reserve_running_slot().await?;
         let mut pending_start = PendingStart::reserved(self.clone(), starting_slot, running_slot);
 
+        let io_mode = if request.tty {
+            ShellIoMode::Terminal {
+                cols: 120,
+                rows: 30,
+            }
+        } else {
+            ShellIoMode::Pipe
+        };
         let spawn_request = ShellSpawnRequest {
             command: request.command,
             cwd: request.cwd,
-            cols: 120,
-            rows: 30,
+            io_mode,
         };
         let spawned = match self.backend.spawn(&spawn_request) {
             Ok(spawned) => spawned,
@@ -339,7 +347,7 @@ impl ShellSessionManager {
                 return Err(ShellManagerError::Launch);
             }
         };
-        match self.own_spawned_resources(spawned) {
+        match self.own_spawned_resources(spawned, io_mode) {
             Ok(resources) => pending_start.own_resources(resources),
             Err(resources) => {
                 pending_start.own_resources(resources);
@@ -653,15 +661,17 @@ impl ShellSessionManager {
 
     fn own_spawned_resources(
         &self,
-        spawned: SpawnedPty,
+        spawned: SpawnedShell,
+        io_mode: ShellIoMode,
     ) -> Result<OwnedSessionResources, OwnedSessionResources> {
-        let SpawnedPty {
+        let SpawnedShell {
             child,
             mut reader,
             writer,
             guard,
         } = spawned;
-        let requires_cursor_handshake = self.backend.requires_cursor_handshake();
+        let requires_cursor_handshake = matches!(io_mode, ShellIoMode::Terminal { .. })
+            && self.backend.requires_startup_cursor_handshake();
         let process_id = child.process_id();
         let child = Arc::new(StdMutex::new(child));
         let writer = Arc::new(StdMutex::new(writer));
@@ -1421,8 +1431,8 @@ async fn wait_for_reader_completion(completion: &Arc<ReaderCompletion>) -> bool 
 }
 
 struct OwnedSessionResources {
-    guard: Option<Box<dyn PtyGuard>>,
-    child: Arc<StdMutex<Box<dyn PtyChild>>>,
+    guard: Option<Box<dyn ShellGuard>>,
+    child: Arc<StdMutex<Box<dyn ShellChild>>>,
     writer: Arc<StdMutex<Box<dyn Write + Send>>>,
     output: Arc<StdMutex<ShellOutputBuffer>>,
     startup_handshake: Option<mpsc::Receiver<StartupHandshakeOutcome>>,
@@ -1694,8 +1704,8 @@ mod tests {
     };
     use crate::NeverCancelled;
     use crate::shell::{
-        PtyBackend, PtyChild, PtyTerminateFuture, ShellSessionIdSource, ShellSpawnRequest,
-        SpawnedPty, SystemShellClock,
+        ShellBackend, ShellChild, ShellIoMode, ShellSessionIdSource, ShellSpawnRequest,
+        ShellTerminateFuture, SpawnedShell, SystemShellClock,
     };
 
     #[derive(Default)]
@@ -1719,12 +1729,12 @@ mod tests {
         }
     }
 
-    impl PtyBackend for PublishLockBackend {
-        fn spawn(&self, _request: &ShellSpawnRequest) -> io::Result<SpawnedPty> {
+    impl ShellBackend for PublishLockBackend {
+        fn spawn(&self, _request: &ShellSpawnRequest) -> io::Result<SpawnedShell> {
             self.process.running.store(true, Ordering::Release);
             let (sender, receiver) = std::sync::mpsc::channel();
             *self.process.reader.lock().expect("reader sender") = Some(sender);
-            Ok(SpawnedPty {
+            Ok(SpawnedShell {
                 child: Box::new(PublishLockChild {
                     process: Arc::clone(&self.process),
                 }),
@@ -1781,18 +1791,18 @@ mod tests {
         fail: Arc<AtomicBool>,
     }
 
-    impl crate::shell::PtyGuard for FailingContainmentGuard {
-        fn terminate<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+    impl crate::shell::ShellGuard for FailingContainmentGuard {
+        fn terminate<'a>(&'a mut self) -> ShellTerminateFuture<'a> {
             Box::pin(async { Err(io::Error::other("scripted containment failure")) })
         }
 
-        fn confirm<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+        fn confirm<'a>(&'a mut self) -> ShellTerminateFuture<'a> {
             Box::pin(async { Ok(()) })
         }
     }
 
-    impl crate::shell::PtyGuard for RecoveringContainmentGuard {
-        fn terminate<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+    impl crate::shell::ShellGuard for RecoveringContainmentGuard {
+        fn terminate<'a>(&'a mut self) -> ShellTerminateFuture<'a> {
             Box::pin(async move {
                 if self.fail.load(Ordering::Acquire) {
                     Err(io::Error::other("scripted containment failure"))
@@ -1803,17 +1813,17 @@ mod tests {
             })
         }
 
-        fn confirm<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+        fn confirm<'a>(&'a mut self) -> ShellTerminateFuture<'a> {
             Box::pin(async { Ok(()) })
         }
     }
 
-    impl crate::shell::PtyGuard for NoRuntimeOrderGuard {
-        fn terminate<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+    impl crate::shell::ShellGuard for NoRuntimeOrderGuard {
+        fn terminate<'a>(&'a mut self) -> ShellTerminateFuture<'a> {
             Box::pin(async { Ok(()) })
         }
 
-        fn confirm<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+        fn confirm<'a>(&'a mut self) -> ShellTerminateFuture<'a> {
             Box::pin(async { Ok(()) })
         }
     }
@@ -1828,17 +1838,17 @@ mod tests {
         }
     }
 
-    impl crate::shell::PtyGuard for BlockingNoRuntimeGuard {
-        fn terminate<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+    impl crate::shell::ShellGuard for BlockingNoRuntimeGuard {
+        fn terminate<'a>(&'a mut self) -> ShellTerminateFuture<'a> {
             Box::pin(async { Ok(()) })
         }
 
-        fn confirm<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+        fn confirm<'a>(&'a mut self) -> ShellTerminateFuture<'a> {
             Box::pin(async { Ok(()) })
         }
     }
 
-    impl PtyChild for BlockingKillChild {
+    impl ShellChild for BlockingKillChild {
         fn process_id(&self) -> u32 {
             78
         }
@@ -1873,12 +1883,12 @@ mod tests {
         }
     }
 
-    impl crate::shell::PtyGuard for PassiveGuard {
-        fn terminate<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+    impl crate::shell::ShellGuard for PassiveGuard {
+        fn terminate<'a>(&'a mut self) -> ShellTerminateFuture<'a> {
             Box::pin(async { Ok(()) })
         }
 
-        fn confirm<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+        fn confirm<'a>(&'a mut self) -> ShellTerminateFuture<'a> {
             Box::pin(async { Ok(()) })
         }
     }
@@ -1902,15 +1912,15 @@ mod tests {
         }
     }
 
-    impl crate::shell::PtyGuard for PublishLockGuard {
-        fn terminate<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+    impl crate::shell::ShellGuard for PublishLockGuard {
+        fn terminate<'a>(&'a mut self) -> ShellTerminateFuture<'a> {
             Box::pin(async move {
                 self.process.exit();
                 Ok(())
             })
         }
 
-        fn confirm<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+        fn confirm<'a>(&'a mut self) -> ShellTerminateFuture<'a> {
             Box::pin(async { Ok(()) })
         }
 
@@ -1948,8 +1958,7 @@ mod tests {
                 .spawn(&ShellSpawnRequest {
                     command: format!("no-runtime-{index}"),
                     cwd: std::path::PathBuf::from("."),
-                    cols: 120,
-                    rows: 30,
+                    io_mode: ShellIoMode::Pipe,
                 })
                 .expect("no-runtime process");
             spawned.guard = Box::new(NoRuntimeOrderGuard {
@@ -1959,7 +1968,7 @@ mod tests {
                 early_running_release: Arc::clone(&early_running_release),
             });
             let resources = manager
-                .own_spawned_resources(spawned)
+                .own_spawned_resources(spawned, ShellIoMode::Pipe)
                 .unwrap_or_else(|_| panic!("no-runtime resources"));
             pending.own_resources(resources);
             starts.push(pending);
@@ -2005,12 +2014,11 @@ mod tests {
                 .spawn(&ShellSpawnRequest {
                     command: "idle-runtime-drop".to_owned(),
                     cwd: std::path::PathBuf::from("."),
-                    cols: 120,
-                    rows: 30,
+                    io_mode: ShellIoMode::Pipe,
                 })
                 .expect("idle-runtime process");
             let resources = manager
-                .own_spawned_resources(spawned)
+                .own_spawned_resources(spawned, ShellIoMode::Pipe)
                 .unwrap_or_else(|_| panic!("idle-runtime resources"));
             pending.own_resources(resources);
             drop(pending);
@@ -2051,8 +2059,7 @@ mod tests {
                 .spawn(&ShellSpawnRequest {
                     command: "idle-runtime-failure".to_owned(),
                     cwd: std::path::PathBuf::from("."),
-                    cols: 120,
-                    rows: 30,
+                    io_mode: ShellIoMode::Pipe,
                 })
                 .expect("idle-runtime process");
             spawned.guard = Box::new(RecoveringContainmentGuard {
@@ -2060,7 +2067,7 @@ mod tests {
                 fail: Arc::clone(&fail),
             });
             let resources = manager
-                .own_spawned_resources(spawned)
+                .own_spawned_resources(spawned, ShellIoMode::Pipe)
                 .unwrap_or_else(|_| panic!("idle-runtime resources"));
             pending.own_resources(resources);
             drop(pending);
@@ -2116,8 +2123,7 @@ mod tests {
                 .spawn(&ShellSpawnRequest {
                     command: "blocked-cleanup".to_owned(),
                     cwd: std::path::PathBuf::from("."),
-                    cols: 120,
-                    rows: 30,
+                    io_mode: ShellIoMode::Pipe,
                 })
                 .expect("blocked cleanup process");
             spawned.child = Box::new(BlockingKillChild {
@@ -2129,7 +2135,7 @@ mod tests {
             spawned.guard.disarm();
             spawned.guard = Box::new(PassiveGuard);
             let resources = manager
-                .own_spawned_resources(spawned)
+                .own_spawned_resources(spawned, ShellIoMode::Pipe)
                 .unwrap_or_else(|_| panic!("blocked cleanup resources"));
             pending.own_resources(resources);
             drop(pending);
@@ -2182,8 +2188,7 @@ mod tests {
             .spawn(&ShellSpawnRequest {
                 command: "no-runtime-disable-barrier".to_owned(),
                 cwd: std::path::PathBuf::from("."),
-                cols: 120,
-                rows: 30,
+                io_mode: ShellIoMode::Pipe,
             })
             .expect("no-runtime process");
         spawned.guard = Box::new(BlockingNoRuntimeGuard {
@@ -2194,7 +2199,7 @@ mod tests {
             early_running_release: Arc::clone(&early_running_release),
         });
         let resources = manager
-            .own_spawned_resources(spawned)
+            .own_spawned_resources(spawned, ShellIoMode::Pipe)
             .unwrap_or_else(|_| panic!("no-runtime resources"));
         pending.own_resources(resources);
 
@@ -2294,13 +2299,12 @@ mod tests {
             .spawn(&ShellSpawnRequest {
                 command: "registration-race".to_owned(),
                 cwd: std::path::PathBuf::from("."),
-                cols: 120,
-                rows: 30,
+                io_mode: ShellIoMode::Pipe,
             })
             .expect("scripted process starts");
         spawned.guard = Box::new(FailingContainmentGuard);
         let resources = manager
-            .own_spawned_resources(spawned)
+            .own_spawned_resources(spawned, ShellIoMode::Pipe)
             .unwrap_or_else(|_| panic!("scripted resources are owned"));
         pending.own_resources(resources);
         let (settlement_manager, settlement) = pending.take_settlement();
@@ -2351,8 +2355,7 @@ mod tests {
                 .spawn(&ShellSpawnRequest {
                     command: format!("unpublished-cycle-{cycle}"),
                     cwd: std::path::PathBuf::from("."),
-                    cols: 120,
-                    rows: 30,
+                    io_mode: ShellIoMode::Pipe,
                 })
                 .expect("scripted process starts");
             spawned.guard = Box::new(RecoveringContainmentGuard {
@@ -2360,7 +2363,7 @@ mod tests {
                 fail: Arc::clone(&fail),
             });
             let resources = manager
-                .own_spawned_resources(spawned)
+                .own_spawned_resources(spawned, ShellIoMode::Pipe)
                 .unwrap_or_else(|_| panic!("scripted resources are owned"));
             pending.own_resources(resources);
             let (settlement_manager, settlement) = pending.take_settlement();
@@ -2400,7 +2403,7 @@ mod tests {
         }
     }
 
-    impl PtyChild for PublishLockChild {
+    impl ShellChild for PublishLockChild {
         fn process_id(&self) -> u32 {
             77
         }
@@ -2506,6 +2509,7 @@ mod tests {
                     ShellCommandRequest {
                         command: "publish-lock".to_owned(),
                         cwd: std::path::PathBuf::from("."),
+                        tty: false,
                         yield_time: Duration::ZERO,
                         max_output_bytes: MAX_SHELL_OUTPUT_BYTES,
                     },
@@ -2552,6 +2556,7 @@ mod tests {
                 ShellCommandRequest {
                     command: "lock-contention".to_owned(),
                     cwd: std::path::PathBuf::from("."),
+                    tty: false,
                     yield_time: Duration::ZERO,
                     max_output_bytes: MAX_SHELL_OUTPUT_BYTES,
                 },

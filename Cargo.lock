@@ -1017,6 +1017,7 @@ dependencies = [
 name = "minimax-tools"
 version = "0.1.1"
 dependencies = [
+ "filedescriptor",
  "getrandom 0.4.3",
  "minimax-core",
  "minimax-protocol",

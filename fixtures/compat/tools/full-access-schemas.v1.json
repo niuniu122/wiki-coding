@@ -135,6 +135,10 @@
         "properties": {
           "command": { "minLength": 1, "maxLength": 32768, "type": "string" },
           "cwd": { "maxLength": 4096, "minLength": 1, "type": "string" },
+          "tty": {
+            "description": "Use a real PTY/ConPTY terminal; defaults to false.",
+            "type": "boolean"
+          },
           "yield_time_ms": { "minimum": 250, "maximum": 60000, "type": "integer" },
           "max_output_bytes": { "minimum": 1024, "maximum": 49152, "type": "integer" }
         },

@@ -10,10 +10,10 @@ use minimax_protocol::{
     MAX_SHELL_INPUT_BYTES, MAX_SHELL_UNREAD_BYTES, ShellSessionId, ShellSessionState,
 };
 use minimax_tools::{
-    MAX_RUNNING_SHELL_SESSIONS, MAX_TERMINAL_SHELL_RECEIPTS, ProcessShellSessionIds, PtyBackend,
-    PtyChild, PtyTerminateFuture, ReaderSpawner, ReaderTask, ShellCleanupError,
-    ShellCommandRequest, ShellManagerError, ShellPollRequest, ShellSessionIdSource,
-    ShellSessionManager, ShellSpawnRequest, ShellWriteRequest, SpawnedPty, TERMINAL_RECEIPT_TTL,
+    MAX_RUNNING_SHELL_SESSIONS, MAX_TERMINAL_SHELL_RECEIPTS, ProcessShellSessionIds, ReaderSpawner,
+    ReaderTask, ShellBackend, ShellChild, ShellCleanupError, ShellCommandRequest, ShellIoMode,
+    ShellManagerError, ShellPollRequest, ShellSessionIdSource, ShellSessionManager,
+    ShellSpawnRequest, ShellTerminateFuture, ShellWriteRequest, SpawnedShell, TERMINAL_RECEIPT_TTL,
 };
 
 const OUTPUT_LIMIT: usize = 1024;
@@ -552,6 +552,7 @@ impl SpawnGate {
 #[derive(Default)]
 struct FakeBackend {
     plans: Mutex<VecDeque<FakePlan>>,
+    requests: Mutex<Vec<ShellSpawnRequest>>,
     cursor_handshake_required: AtomicBool,
     spawns: AtomicUsize,
     termination: Arc<FakeTermination>,
@@ -628,6 +629,15 @@ impl FakeBackend {
         self.spawns.load(Ordering::Acquire)
     }
 
+    fn request_modes(&self) -> Vec<ShellIoMode> {
+        self.requests
+            .lock()
+            .expect("requests lock")
+            .iter()
+            .map(|request| request.io_mode)
+            .collect()
+    }
+
     fn set_termination_error(&self, enabled: bool) {
         self.termination.error.store(enabled, Ordering::Release);
     }
@@ -663,13 +673,16 @@ impl FakeBackend {
     }
 }
 
-impl PtyBackend for FakeBackend {
-    fn requires_cursor_handshake(&self) -> bool {
+impl ShellBackend for FakeBackend {
+    fn requires_startup_cursor_handshake(&self) -> bool {
         self.cursor_handshake_required.load(Ordering::Acquire)
     }
 
-    fn spawn(&self, request: &ShellSpawnRequest) -> io::Result<SpawnedPty> {
-        assert_eq!((request.cols, request.rows), (120, 30));
+    fn spawn(&self, request: &ShellSpawnRequest) -> io::Result<SpawnedShell> {
+        self.requests
+            .lock()
+            .expect("requests lock")
+            .push(request.clone());
         let plan = self
             .plans
             .lock()
@@ -681,7 +694,7 @@ impl PtyBackend for FakeBackend {
         }
         self.spawns.fetch_add(1, Ordering::AcqRel);
         self.spawn_notify.notify_waiters();
-        Ok(SpawnedPty {
+        Ok(SpawnedShell {
             child: Box::new(FakeChild {
                 shared: Arc::clone(&plan.shared),
             }),
@@ -713,8 +726,8 @@ struct FakeGuard {
     destructive_complete: bool,
 }
 
-impl minimax_tools::PtyGuard for FakeGuard {
-    fn terminate<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+impl minimax_tools::ShellGuard for FakeGuard {
+    fn terminate<'a>(&'a mut self) -> ShellTerminateFuture<'a> {
         Box::pin(async move {
             if self.destructive_complete {
                 return Ok(());
@@ -738,7 +751,7 @@ impl minimax_tools::PtyGuard for FakeGuard {
         })
     }
 
-    fn confirm<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+    fn confirm<'a>(&'a mut self) -> ShellTerminateFuture<'a> {
         Box::pin(async move {
             self.termination
                 .confirmation_count
@@ -772,7 +785,7 @@ impl Drop for FakeGuard {
     }
 }
 
-impl PtyChild for FakeChild {
+impl ShellChild for FakeChild {
     fn process_id(&self) -> u32 {
         self.shared.process_id
     }
@@ -900,8 +913,16 @@ fn command_request(command: &str, yield_time: Duration) -> ShellCommandRequest {
     ShellCommandRequest {
         command: command.to_owned(),
         cwd: PathBuf::from("."),
+        tty: false,
         yield_time,
         max_output_bytes: OUTPUT_LIMIT,
+    }
+}
+
+fn terminal_command_request(command: &str, yield_time: Duration) -> ShellCommandRequest {
+    ShellCommandRequest {
+        tty: true,
+        ..command_request(command, yield_time)
     }
 }
 
@@ -1082,8 +1103,9 @@ async fn long_command_returns_id_and_poll_delivers_only_new_output() {
 }
 
 #[tokio::test]
-async fn ordinary_fake_backend_does_not_wait_for_a_cursor_handshake() {
+async fn pipe_mode_does_not_wait_for_a_cursor_handshake() {
     let backend = Arc::new(FakeBackend::default());
+    backend.require_cursor_handshake();
     backend.queue_process();
     let manager = enabled_manager(Arc::clone(&backend), Arc::new(ManualClock::default())).await;
 
@@ -1096,9 +1118,10 @@ async fn ordinary_fake_backend_does_not_wait_for_a_cursor_handshake() {
 
     cleanup.expect("ordinary fake cleanup succeeds");
     let receipt = started
-        .expect("ordinary fake start does not wait")
-        .expect("ordinary fake start succeeds");
+        .expect("pipe start does not wait")
+        .expect("pipe start succeeds");
     assert_eq!(receipt.state, ShellSessionState::Running);
+    assert_eq!(backend.request_modes(), [ShellIoMode::Pipe]);
 }
 
 #[tokio::test]
@@ -1110,7 +1133,10 @@ async fn required_cursor_handshake_completes_before_session_publication() {
     let start_manager = manager.clone();
     let start = tokio::spawn(async move {
         start_manager
-            .start(command_request("required", Duration::ZERO), &NeverCancelled)
+            .start(
+                terminal_command_request("required", Duration::ZERO),
+                &NeverCancelled,
+            )
             .await
     });
     tokio::time::timeout(Duration::from_secs(1), backend.wait_for_spawn_count(1))
@@ -1133,6 +1159,13 @@ async fn required_cursor_handshake_completes_before_session_publication() {
         .expect("required handshake start succeeds");
     assert_eq!(receipt.state, ShellSessionState::Running);
     assert_eq!(handshake_input, b"\x1b[1;1R");
+    assert_eq!(
+        backend.request_modes(),
+        [ShellIoMode::Terminal {
+            cols: 120,
+            rows: 30,
+        }]
+    );
 }
 
 #[tokio::test]
@@ -1144,7 +1177,10 @@ async fn required_cursor_handshake_recognizes_a_split_query_before_publication()
     let start_manager = manager.clone();
     let start = tokio::spawn(async move {
         start_manager
-            .start(command_request("split", Duration::ZERO), &NeverCancelled)
+            .start(
+                terminal_command_request("split", Duration::ZERO),
+                &NeverCancelled,
+            )
             .await
     });
     tokio::time::timeout(Duration::from_secs(1), backend.wait_for_spawn_count(1))
@@ -1182,7 +1218,7 @@ async fn required_cursor_handshake_write_failure_cleans_up_before_start_returns(
     let start = tokio::spawn(async move {
         start_manager
             .start(
-                command_request("write-failure", Duration::ZERO),
+                terminal_command_request("write-failure", Duration::ZERO),
                 &NeverCancelled,
             )
             .await
@@ -1212,7 +1248,7 @@ async fn required_cursor_handshake_flush_failure_cleans_up_before_start_returns(
     let start = tokio::spawn(async move {
         start_manager
             .start(
-                command_request("flush-failure", Duration::ZERO),
+                terminal_command_request("flush-failure", Duration::ZERO),
                 &NeverCancelled,
             )
             .await
@@ -1241,7 +1277,10 @@ async fn required_cursor_handshake_eof_before_query_cleans_up_before_start_retur
     let start_manager = manager.clone();
     let start = tokio::spawn(async move {
         start_manager
-            .start(command_request("eof", Duration::ZERO), &NeverCancelled)
+            .start(
+                terminal_command_request("eof", Duration::ZERO),
+                &NeverCancelled,
+            )
             .await
     });
     tokio::time::timeout(Duration::from_secs(1), backend.wait_for_spawn_count(1))
@@ -1268,7 +1307,10 @@ async fn required_cursor_handshake_timeout_cleans_up_before_start_returns() {
     let start_manager = manager.clone();
     let start = tokio::spawn(async move {
         start_manager
-            .start(command_request("timeout", Duration::ZERO), &NeverCancelled)
+            .start(
+                terminal_command_request("timeout", Duration::ZERO),
+                &NeverCancelled,
+            )
             .await
     });
     backend.wait_for_spawn_count(1).await;
@@ -1290,7 +1332,10 @@ async fn cursor_queries_after_publication_never_write_a_second_response() {
     let start_manager = manager.clone();
     let start = tokio::spawn(async move {
         start_manager
-            .start(command_request("one-shot", Duration::ZERO), &NeverCancelled)
+            .start(
+                terminal_command_request("one-shot", Duration::ZERO),
+                &NeverCancelled,
+            )
             .await
     });
     tokio::time::timeout(Duration::from_secs(1), backend.wait_for_spawn_count(1))
@@ -1601,7 +1646,7 @@ async fn abort_during_startup_handshake_settles_reservation_and_process() {
     let start = tokio::spawn(async move {
         start_manager
             .start(
-                command_request("abort-handshake", Duration::from_secs(60)),
+                terminal_command_request("abort-handshake", Duration::from_secs(60)),
                 &NeverCancelled,
             )
             .await

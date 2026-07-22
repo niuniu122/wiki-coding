@@ -10,15 +10,20 @@ use minimax_protocol::ShellSessionId;
 
 use super::manager::ShellManagerError;
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ShellIoMode {
+    Pipe,
+    Terminal { cols: u16, rows: u16 },
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ShellSpawnRequest {
     pub command: String,
     pub cwd: PathBuf,
-    pub cols: u16,
-    pub rows: u16,
+    pub io_mode: ShellIoMode,
 }
 
-pub trait PtyChild: Send {
+pub trait ShellChild: Send {
     fn process_id(&self) -> u32;
     fn try_wait(&mut self) -> io::Result<Option<i32>>;
     fn kill(&mut self) -> io::Result<()>;
@@ -27,18 +32,18 @@ pub trait PtyChild: Send {
     }
 }
 
-pub trait PtyGuard: Send {
-    fn terminate<'a>(&'a mut self) -> PtyTerminateFuture<'a>;
-    fn confirm<'a>(&'a mut self) -> PtyTerminateFuture<'a>;
+pub trait ShellGuard: Send {
+    fn terminate<'a>(&'a mut self) -> ShellTerminateFuture<'a>;
+    fn confirm<'a>(&'a mut self) -> ShellTerminateFuture<'a>;
     fn close_io(&mut self) {}
     fn disarm(&mut self) {}
 }
 
-pub struct SpawnedPty {
-    pub child: Box<dyn PtyChild>,
+pub struct SpawnedShell {
+    pub child: Box<dyn ShellChild>,
     pub reader: Box<dyn Read + Send>,
     pub writer: Box<dyn Write + Send>,
-    pub guard: Box<dyn PtyGuard>,
+    pub guard: Box<dyn ShellGuard>,
 }
 
 pub type ReaderTask = Box<dyn FnOnce() + Send + 'static>;
@@ -56,14 +61,14 @@ impl ReaderSpawner for SystemReaderSpawner {
     }
 }
 
-pub type PtyTerminateFuture<'a> = Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>>;
+pub type ShellTerminateFuture<'a> = Pin<Box<dyn Future<Output = io::Result<()>> + Send + 'a>>;
 
-pub trait PtyBackend: Send + Sync {
-    fn requires_cursor_handshake(&self) -> bool {
+pub trait ShellBackend: Send + Sync {
+    fn requires_startup_cursor_handshake(&self) -> bool {
         false
     }
 
-    fn spawn(&self, request: &ShellSpawnRequest) -> io::Result<SpawnedPty>;
+    fn spawn(&self, request: &ShellSpawnRequest) -> io::Result<SpawnedShell>;
 }
 
 pub trait ShellSessionIdSource: Send + Sync {

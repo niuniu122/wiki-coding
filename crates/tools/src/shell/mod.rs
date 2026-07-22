@@ -5,8 +5,9 @@ mod manager;
 mod native;
 
 pub use backend::{
-    PtyBackend, PtyChild, PtyGuard, PtyTerminateFuture, ReaderSpawner, ReaderTask,
-    ShellSessionIdSource, ShellSpawnRequest, SpawnedPty, SystemReaderSpawner, SystemShellClock,
+    ReaderSpawner, ReaderTask, ShellBackend, ShellChild, ShellGuard, ShellIoMode,
+    ShellSessionIdSource, ShellSpawnRequest, ShellTerminateFuture, SpawnedShell,
+    SystemReaderSpawner, SystemShellClock,
 };
 pub use buffer::{ShellOutputBudget, ShellOutputBuffer, ShellOutputChunk};
 pub use manager::{
@@ -14,4 +15,4 @@ pub use manager::{
     MAX_TERMINAL_SHELL_RECEIPTS, ShellCleanupError, ShellCommandRequest, ShellManagerError,
     ShellPollRequest, ShellSessionManager, ShellWriteRequest, TERMINAL_RECEIPT_TTL,
 };
-pub use native::{NativePtyBackend, ProcessShellSessionIds};
+pub use native::{NativeShellBackend, ProcessShellSessionIds};

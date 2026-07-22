@@ -14,8 +14,8 @@ use minimax_protocol::{
 };
 use minimax_tools::{
     BoundedProcess, BuiltinToolPort, MAX_RUNNING_SHELL_SESSIONS, NeverCancelled, Preflight,
-    PtyBackend, PtyChild, PtyTerminateFuture, ShellManagerError, ShellSessionIdSource,
-    ShellSessionManager, ShellSpawnRequest, SpawnedPty,
+    ShellBackend, ShellChild, ShellIoMode, ShellManagerError, ShellSessionIdSource,
+    ShellSessionManager, ShellSpawnRequest, ShellTerminateFuture, SpawnedShell,
 };
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -128,6 +128,63 @@ async fn shell_command_rejects_blank_and_oversized_commands_with_exact_codes() {
     ));
     assert_eq!(result.status, ToolTerminalStatus::Rejected);
     assert_eq!(result.code, "input_limit");
+    assert_eq!(fixture.backend.spawn_count(), 0);
+}
+
+#[tokio::test]
+async fn shell_command_defaults_to_pipe_and_accepts_explicit_terminal_mode() {
+    let fixture = Fixture::new().await;
+    fixture.backend.queue_exited(b"pipe".to_vec(), 0);
+    fixture.backend.queue_exited(b"terminal".to_vec(), 0);
+
+    let first = invoke(
+        &fixture.port,
+        invocation(
+            "shell_command",
+            ToolEffect::Process,
+            json!({"command": "first"}),
+        ),
+    )
+    .await;
+    let second = invoke(
+        &fixture.port,
+        invocation(
+            "shell_command",
+            ToolEffect::Process,
+            json!({"command": "second", "tty": true}),
+        ),
+    )
+    .await;
+
+    assert_eq!(first.code, "shell_exited");
+    assert_eq!(second.code, "shell_exited");
+    assert_eq!(
+        fixture.backend.request_modes(),
+        vec![
+            ShellIoMode::Pipe,
+            ShellIoMode::Terminal {
+                cols: 120,
+                rows: 30,
+            },
+        ]
+    );
+}
+
+#[tokio::test]
+async fn shell_command_rejects_non_boolean_tty_before_manager_work() {
+    let fixture = Fixture::new().await;
+    let result = invoke(
+        &fixture.port,
+        invocation(
+            "shell_command",
+            ToolEffect::Process,
+            json!({"command": "never", "tty": "yes"}),
+        ),
+    )
+    .await;
+
+    assert_eq!(result.status, ToolTerminalStatus::Rejected);
+    assert_eq!(result.code, "invalid_arguments");
     assert_eq!(fixture.backend.spawn_count(), 0);
 }
 
@@ -580,13 +637,22 @@ impl FakeBackend {
             .collect()
     }
 
+    fn request_modes(&self) -> Vec<ShellIoMode> {
+        self.requests
+            .lock()
+            .expect("requests lock")
+            .iter()
+            .map(|request| request.io_mode)
+            .collect()
+    }
+
     fn request_count(&self) -> usize {
         self.requests.lock().expect("requests lock").len()
     }
 }
 
-impl PtyBackend for FakeBackend {
-    fn spawn(&self, request: &ShellSpawnRequest) -> io::Result<SpawnedPty> {
+impl ShellBackend for FakeBackend {
+    fn spawn(&self, request: &ShellSpawnRequest) -> io::Result<SpawnedShell> {
         self.requests
             .lock()
             .expect("requests lock")
@@ -603,7 +669,7 @@ impl PtyBackend for FakeBackend {
         let process_id = self.next_process_id.fetch_add(1, Ordering::AcqRel) + 1;
         let state = Arc::new(Mutex::new(exit_code));
         self.spawns.fetch_add(1, Ordering::AcqRel);
-        Ok(SpawnedPty {
+        Ok(SpawnedShell {
             child: Box::new(FakeChild {
                 process_id,
                 state: Arc::clone(&state),
@@ -625,8 +691,8 @@ struct FakeGuard {
     terminations: Arc<AtomicUsize>,
 }
 
-impl minimax_tools::PtyGuard for FakeGuard {
-    fn terminate<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+impl minimax_tools::ShellGuard for FakeGuard {
+    fn terminate<'a>(&'a mut self) -> ShellTerminateFuture<'a> {
         Box::pin(async move {
             self.terminations.fetch_add(1, Ordering::AcqRel);
             *self.state.lock().expect("process state lock") = Some(-15);
@@ -634,7 +700,7 @@ impl minimax_tools::PtyGuard for FakeGuard {
         })
     }
 
-    fn confirm<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+    fn confirm<'a>(&'a mut self) -> ShellTerminateFuture<'a> {
         Box::pin(async { Ok(()) })
     }
 }
@@ -644,7 +710,7 @@ struct FakeChild {
     state: Arc<Mutex<Option<i32>>>,
 }
 
-impl PtyChild for FakeChild {
+impl ShellChild for FakeChild {
     fn process_id(&self) -> u32 {
         self.process_id
     }
