@@ -4,6 +4,8 @@
 use std::io::Write as _;
 #[cfg(target_os = "linux")]
 use std::io::{BufRead as _, BufReader};
+#[cfg(windows)]
+use std::os::windows::fs::OpenOptionsExt as _;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
@@ -15,7 +17,7 @@ fn real_internal_host_preserves_exit_stdio_and_hides_bootstrap_environment() {
     let secret_command_marker = "internal-command-must-not-be-echoed-71f5650d";
     let shell_command = format!(
         "$m='{secret_command_marker}'; if ([Environment]::CommandLine.Contains($m)) {{ Write-Output 'argv-dirty' }} else {{ Write-Output 'argv-clean' }}; Write-Output 'shell-stdio-ok'; \
-         'MINIMAX_SHELL_HOST_ADDRESS','MINIMAX_SHELL_HOST_TOKEN','MINIMAX_SHELL_HOST_VERSION','MINIMAX_SHELL_HOST_TIMEOUT_MS','MINIMAX_SHELL_COMMAND_PATH' | \
+         'MINIMAX_SHELL_HOST_ADDRESS','MINIMAX_SHELL_HOST_TOKEN','MINIMAX_SHELL_HOST_VERSION','MINIMAX_SHELL_HOST_TIMEOUT_MS','MINIMAX_SHELL_COMMAND_PATH','MINIMAX_SHELL_ACK_ADDRESS','MINIMAX_SHELL_ACK_TOKEN' | \
          ForEach-Object {{ Write-Output \"$_=$([String]::IsNullOrEmpty([Environment]::GetEnvironmentVariable($_, 'Process')))\" }}; exit 7"
     );
     let mut command_payload = tempfile::Builder::new()
@@ -67,6 +69,8 @@ fn real_internal_host_preserves_exit_stdio_and_hides_bootstrap_environment() {
         "MINIMAX_SHELL_HOST_VERSION",
         "MINIMAX_SHELL_HOST_TIMEOUT_MS",
         "MINIMAX_SHELL_COMMAND_PATH",
+        "MINIMAX_SHELL_ACK_ADDRESS",
+        "MINIMAX_SHELL_ACK_TOKEN",
     ] {
         assert!(stdout.contains(&format!("{key}=True")), "{stdout}");
     }
@@ -75,6 +79,155 @@ fn real_internal_host_preserves_exit_stdio_and_hides_bootstrap_environment() {
         !command_payload_path.exists(),
         "PowerShell bootstrap must delete the parent-owned payload"
     );
+}
+
+#[cfg(windows)]
+#[test]
+fn real_internal_host_never_readies_a_payload_that_cannot_be_deleted() {
+    let shell_command = "Write-Output 'pre-ready-user-code-must-not-run'; Start-Sleep -Seconds 120";
+    let mut command_payload = tempfile::Builder::new()
+        .prefix("minimax-shell-ack-delete-")
+        .suffix(".ps1")
+        .tempfile()
+        .expect("stage acknowledgement payload");
+    command_payload
+        .write_all(shell_command.as_bytes())
+        .expect("write acknowledgement payload");
+    command_payload
+        .flush()
+        .expect("flush acknowledgement payload");
+    let command_payload = command_payload.into_temp_path();
+    let command_payload_path = command_payload.to_path_buf();
+    let deletion_block = std::fs::OpenOptions::new()
+        .read(true)
+        .share_mode(1)
+        .open(&command_payload_path)
+        .expect("hold read-sharing handle that denies deletion");
+
+    let (listener, bootstrap) =
+        HostListener::bind(Duration::from_secs(5)).expect("bind internal host listener");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_minimax-shell-test-host"));
+    command.args(bootstrap.arguments());
+    command.envs(bootstrap.environment());
+    command.env("MINIMAX_SHELL_COMMAND_PATH", &command_payload_path);
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let child = command.spawn().expect("spawn trusted test host");
+
+    let mut parent = listener.accept().expect("authenticate test host");
+    parent.send_activate().expect("activate contained host");
+    assert_eq!(
+        parent.recv_event().expect("contained"),
+        HostEvent::Contained
+    );
+    parent
+        .send_command(shell_command)
+        .expect("deliver authenticated command");
+    let startup_event = parent.recv_event();
+    drop(parent);
+    let output = child.wait_with_output().expect("wait for failed test host");
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 host stdout");
+
+    assert_ne!(startup_event.ok(), Some(HostEvent::Ready));
+    assert_eq!(output.status.code(), Some(125), "{stdout:?}");
+    assert!(
+        !stdout.contains("pre-ready-user-code-must-not-run"),
+        "{stdout:?}"
+    );
+    assert!(
+        command_payload_path.exists(),
+        "the held handle must deterministically block bootstrap deletion"
+    );
+    drop(deletion_block);
+    drop(command_payload);
+    assert!(
+        !command_payload_path.exists(),
+        "parent owner deletes after the blocking handle closes"
+    );
+}
+
+#[cfg(windows)]
+#[test]
+fn real_internal_host_rejects_missing_corrupt_and_read_blocked_payloads_before_ready() {
+    for failure in [
+        PayloadFailure::Missing,
+        PayloadFailure::Corrupt,
+        PayloadFailure::ReadBlocked,
+    ] {
+        assert_payload_failure_before_ready(failure);
+    }
+}
+
+#[cfg(windows)]
+#[derive(Clone, Copy, Debug)]
+enum PayloadFailure {
+    Missing,
+    Corrupt,
+    ReadBlocked,
+}
+
+#[cfg(windows)]
+fn assert_payload_failure_before_ready(failure: PayloadFailure) {
+    let command_text = "Write-Output 'payload-failure-user-code-must-not-run'";
+    let mut payload = tempfile::Builder::new()
+        .prefix("minimax-shell-ack-failure-")
+        .suffix(".ps1")
+        .tempfile()
+        .expect("stage failure payload");
+    payload
+        .write_all(command_text.as_bytes())
+        .expect("write failure payload");
+    payload.flush().expect("flush failure payload");
+    let payload = payload.into_temp_path();
+    let payload_path = payload.to_path_buf();
+    let read_block = match failure {
+        PayloadFailure::Missing => {
+            std::fs::remove_file(&payload_path).expect("remove missing payload fixture");
+            None
+        }
+        PayloadFailure::Corrupt => {
+            std::fs::write(&payload_path, [0xff]).expect("corrupt payload fixture");
+            None
+        }
+        PayloadFailure::ReadBlocked => Some(
+            std::fs::OpenOptions::new()
+                .read(true)
+                .share_mode(0)
+                .open(&payload_path)
+                .expect("lock payload against host reads"),
+        ),
+    };
+
+    let (listener, bootstrap) =
+        HostListener::bind(Duration::from_secs(5)).expect("bind internal host listener");
+    let mut command = Command::new(env!("CARGO_BIN_EXE_minimax-shell-test-host"));
+    command.args(bootstrap.arguments());
+    command.envs(bootstrap.environment());
+    command.env("MINIMAX_SHELL_COMMAND_PATH", &payload_path);
+    command.stdout(Stdio::piped()).stderr(Stdio::piped());
+    let child = command.spawn().expect("spawn trusted test host");
+    let mut parent = listener.accept().expect("authenticate test host");
+    parent.send_activate().expect("activate contained host");
+    assert_eq!(
+        parent.recv_event().expect("contained"),
+        HostEvent::Contained
+    );
+    parent
+        .send_command(command_text)
+        .expect("deliver authenticated command");
+    let startup_event = parent.recv_event();
+    drop(parent);
+    let output = child.wait_with_output().expect("wait for rejected host");
+    let stdout = String::from_utf8(output.stdout).expect("UTF-8 host stdout");
+
+    assert_ne!(startup_event.ok(), Some(HostEvent::Ready), "{failure:?}");
+    assert_eq!(output.status.code(), Some(125), "{failure:?}: {stdout:?}");
+    assert!(
+        !stdout.contains("payload-failure-user-code-must-not-run"),
+        "{failure:?}: {stdout:?}"
+    );
+    drop(read_block);
+    drop(payload);
+    assert!(!payload_path.exists(), "{failure:?}");
 }
 
 #[cfg(target_os = "linux")]

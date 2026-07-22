@@ -378,7 +378,7 @@ async fn windows_trusted_host_bootstrap_metadata_is_removed_before_the_user_comm
     let manager = native_manager();
     manager.enable().await;
     let root = repository_root();
-    let command = "'MINIMAX_SHELL_HOST_ADDRESS','MINIMAX_SHELL_HOST_TOKEN','MINIMAX_SHELL_HOST_VERSION','MINIMAX_SHELL_HOST_TIMEOUT_MS' | ForEach-Object { Write-Output \"$_=$([String]::IsNullOrEmpty([Environment]::GetEnvironmentVariable($_, 'Process')))\" }";
+    let command = "'MINIMAX_SHELL_HOST_ADDRESS','MINIMAX_SHELL_HOST_TOKEN','MINIMAX_SHELL_HOST_VERSION','MINIMAX_SHELL_HOST_TIMEOUT_MS','MINIMAX_SHELL_COMMAND_PATH','MINIMAX_SHELL_ACK_ADDRESS','MINIMAX_SHELL_ACK_TOKEN' | ForEach-Object { Write-Output \"$_=$([String]::IsNullOrEmpty([Environment]::GetEnvironmentVariable($_, 'Process')))\" }";
 
     let first = start_command(&manager, command, &root, true, Duration::from_secs(5)).await;
     let cleanup = cleanup(&manager).await;
@@ -403,6 +403,18 @@ async fn windows_trusted_host_bootstrap_metadata_is_removed_before_the_user_comm
         receipt
             .output
             .contains("MINIMAX_SHELL_HOST_TIMEOUT_MS=True"),
+        "{receipt:?}"
+    );
+    assert!(
+        receipt.output.contains("MINIMAX_SHELL_COMMAND_PATH=True"),
+        "{receipt:?}"
+    );
+    assert!(
+        receipt.output.contains("MINIMAX_SHELL_ACK_ADDRESS=True"),
+        "{receipt:?}"
+    );
+    assert!(
+        receipt.output.contains("MINIMAX_SHELL_ACK_TOKEN=True"),
         "{receipt:?}"
     );
 }

@@ -23,7 +23,11 @@ const HOST_TIMEOUT_ENV: &str = "MINIMAX_SHELL_HOST_TIMEOUT_MS";
 #[cfg(windows)]
 pub(super) const WINDOWS_COMMAND_PATH_ENV: &str = "MINIMAX_SHELL_COMMAND_PATH";
 #[cfg(windows)]
-const WINDOWS_COMMAND_BOOTSTRAP: &str = "$p=$env:MINIMAX_SHELL_COMMAND_PATH; Remove-Item Env:MINIMAX_SHELL_COMMAND_PATH -ErrorAction SilentlyContinue; try {$c=[IO.File]::ReadAllText($p,[Text.UTF8Encoding]::new($false,$true))} finally {Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue}; Invoke-Expression $c";
+const WINDOWS_ACK_ADDRESS_ENV: &str = "MINIMAX_SHELL_ACK_ADDRESS";
+#[cfg(windows)]
+const WINDOWS_ACK_TOKEN_ENV: &str = "MINIMAX_SHELL_ACK_TOKEN";
+#[cfg(windows)]
+const WINDOWS_COMMAND_BOOTSTRAP: &str = "$p=$env:MINIMAX_SHELL_COMMAND_PATH;$a=$env:MINIMAX_SHELL_ACK_ADDRESS;$t=$env:MINIMAX_SHELL_ACK_TOKEN;Remove-Item Env:MINIMAX_SHELL_COMMAND_PATH -ErrorAction SilentlyContinue;Remove-Item Env:MINIMAX_SHELL_ACK_ADDRESS -ErrorAction SilentlyContinue;Remove-Item Env:MINIMAX_SHELL_ACK_TOKEN -ErrorAction SilentlyContinue;try{$c=[IO.File]::ReadAllText($p,[Text.UTF8Encoding]::new($false,$true))}catch{throw 'shell command payload decode failed'}finally{Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue};if([IO.File]::Exists($p)){throw 'shell command payload cleanup failed'};$s=[Net.Sockets.TcpClient]::new();try{$h,$o=$a.Split(':');$s.Connect($h,[int]$o);$b=[Text.Encoding]::ASCII.GetBytes($t);$n=$s.GetStream();$n.Write($b,0,$b.Length)}finally{$s.Dispose()};Remove-Variable p,a,t,s,h,o,b,n -ErrorAction SilentlyContinue;Invoke-Expression $c";
 const PROTOCOL_MAGIC: [u8; 8] = *b"MMXHOST1";
 const PROTOCOL_VERSION: u16 = 1;
 const HEADER_BYTES: usize = 15;
@@ -174,15 +178,15 @@ impl HostBootstrap {
 }
 
 pub fn run_internal_shell_host() -> i32 {
-    let result = HostBootstrap::from_current_environment()
-        .and_then(HostBootstrap::connect)
-        .and_then(|channel| {
-            run_host_lifecycle(
-                channel,
-                PlatformHostSupervisor::new(),
-                Duration::from_millis(10),
-            )
-        });
+    let result = HostBootstrap::from_current_environment().and_then(|bootstrap| {
+        let startup_deadline = bootstrap.deadline;
+        let channel = bootstrap.connect()?;
+        run_host_lifecycle(
+            channel,
+            platform_host_supervisor(startup_deadline),
+            Duration::from_millis(10),
+        )
+    });
     match result {
         Ok(RootExit::Code(code)) => code,
         Ok(RootExit::Signal(signal)) => 128 + i32::from(signal),
@@ -193,11 +197,26 @@ pub fn run_internal_shell_host() -> i32 {
 #[cfg(windows)]
 type PlatformHostSupervisor = WindowsProcessSupervisor;
 
+#[cfg(windows)]
+fn platform_host_supervisor(startup_deadline: Instant) -> PlatformHostSupervisor {
+    WindowsProcessSupervisor::new(startup_deadline)
+}
+
 #[cfg(target_os = "linux")]
 type PlatformHostSupervisor = LinuxProcessSupervisor;
 
+#[cfg(target_os = "linux")]
+fn platform_host_supervisor(_startup_deadline: Instant) -> PlatformHostSupervisor {
+    LinuxProcessSupervisor::new()
+}
+
 #[cfg(not(any(windows, target_os = "linux")))]
 struct PlatformHostSupervisor;
+
+#[cfg(not(any(windows, target_os = "linux")))]
+fn platform_host_supervisor(_startup_deadline: Instant) -> PlatformHostSupervisor {
+    PlatformHostSupervisor::new()
+}
 
 #[cfg(not(any(windows, target_os = "linux")))]
 impl PlatformHostSupervisor {
@@ -582,14 +601,16 @@ fn linux_root_exit_from_status(status: ExitStatus) -> RootExit {
 struct WindowsProcessSupervisor {
     child: Option<Child>,
     observed_exit: Option<RootExit>,
+    startup_deadline: Instant,
 }
 
 #[cfg(windows)]
 impl WindowsProcessSupervisor {
-    fn new() -> Self {
+    fn new(startup_deadline: Instant) -> Self {
         Self {
             child: None,
             observed_exit: None,
+            startup_deadline,
         }
     }
 }
@@ -620,6 +641,7 @@ impl HostSupervisor for WindowsProcessSupervisor {
                 "Windows shell command payload does not match the authenticated command",
             ));
         }
+        let acknowledgement = WindowsBootstrapAcknowledgement::bind(self.startup_deadline)?;
         let shell = resolve_windows_process_shell()?;
         let mut process = Command::new(shell.program);
         process.args(shell.args);
@@ -632,12 +654,18 @@ impl HostSupervisor for WindowsProcessSupervisor {
             process.env_remove(key);
         }
         process.env(WINDOWS_COMMAND_PATH_ENV, command_payload_path);
+        process.envs(acknowledgement.environment());
         process
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit());
         let child = process.spawn()?;
         self.child = Some(child);
+        acknowledgement.wait(
+            self.child
+                .as_mut()
+                .expect("spawned PowerShell child is stored before acknowledgement"),
+        )?;
         Ok(())
     }
 
@@ -679,6 +707,77 @@ impl HostSupervisor for WindowsProcessSupervisor {
 #[cfg(windows)]
 pub(super) struct WindowsCommandPayload {
     path: tempfile::TempPath,
+}
+
+#[cfg(windows)]
+struct WindowsBootstrapAcknowledgement {
+    listener: TcpListener,
+    address: SocketAddr,
+    token: String,
+    deadline: Instant,
+}
+
+#[cfg(windows)]
+impl WindowsBootstrapAcknowledgement {
+    fn bind(deadline: Instant) -> io::Result<Self> {
+        let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0))?;
+        listener.set_nonblocking(true)?;
+        let address = listener.local_addr()?;
+        let mut token = [0_u8; AUTH_TOKEN_BYTES];
+        getrandom::fill(&mut token).map_err(|error| {
+            io::Error::other(format!(
+                "shell bootstrap acknowledgement token generation failed: {error}"
+            ))
+        })?;
+        Ok(Self {
+            listener,
+            address,
+            token: encode_hex(&token),
+            deadline,
+        })
+    }
+
+    fn environment(&self) -> Vec<(&'static str, String)> {
+        vec![
+            (WINDOWS_ACK_ADDRESS_ENV, self.address.to_string()),
+            (WINDOWS_ACK_TOKEN_ENV, self.token.clone()),
+        ]
+    }
+
+    fn wait(&self, child: &mut Child) -> io::Result<()> {
+        loop {
+            if Instant::now() >= self.deadline {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "PowerShell command bootstrap acknowledgement timed out",
+                ));
+            }
+            match self.listener.accept() {
+                Ok((mut stream, peer)) if peer.ip().is_loopback() => {
+                    let remaining = self.deadline.saturating_duration_since(Instant::now());
+                    stream.set_nonblocking(false)?;
+                    stream.set_read_timeout(Some(AUTH_ATTEMPT_TIMEOUT.min(remaining)))?;
+                    let mut received = vec![0_u8; self.token.len()];
+                    if stream.read_exact(&mut received).is_ok()
+                        && received.as_slice() == self.token.as_bytes()
+                    {
+                        return Ok(());
+                    }
+                }
+                Ok(_) => {}
+                Err(error) if error.kind() == io::ErrorKind::WouldBlock => {
+                    if child.try_wait()?.is_some() {
+                        return Err(io::Error::new(
+                            io::ErrorKind::InvalidData,
+                            "PowerShell exited before command bootstrap acknowledgement",
+                        ));
+                    }
+                    std::thread::sleep(ACCEPT_POLL_INTERVAL);
+                }
+                Err(error) => return Err(error),
+            }
+        }
+    }
 }
 
 #[cfg(windows)]
@@ -1504,17 +1603,41 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
+    fn windows_command_payload_bootstrap_removes_ack_variables_before_user_code() {
+        let command = "'p','a','t','s','h','o','b','n' | ForEach-Object { Write-Output \"$_=$($null -eq (Get-Variable -Name $_ -ValueOnly -ErrorAction SilentlyContinue))\" }";
+        let output = run_windows_command_payload(command);
+        let stdout = String::from_utf8(output.stdout).expect("UTF-8 PowerShell stdout");
+
+        assert_eq!(output.status.code(), Some(0), "{stdout:?}");
+        for variable in ["p", "a", "t", "s", "h", "o", "b", "n"] {
+            assert!(stdout.contains(&format!("{variable}=True")), "{stdout:?}");
+        }
+    }
+
+    #[cfg(windows)]
+    #[test]
     fn windows_command_payload_bootstrap_rejects_invalid_utf8_and_deletes_payload() {
         let payload = super::WindowsCommandPayload::stage("Write-Output 'must-not-run'")
             .expect("stage command");
         let path = payload.path().to_owned();
         std::fs::write(&path, [0xff]).expect("replace payload with invalid UTF-8");
         let shell = super::resolve_windows_process_shell().expect("PowerShell");
-        let output = std::process::Command::new(shell.program)
+        let acknowledgement = super::WindowsBootstrapAcknowledgement::bind(
+            std::time::Instant::now() + Duration::from_secs(5),
+        )
+        .expect("bind bootstrap acknowledgement");
+        let mut process = std::process::Command::new(shell.program);
+        process
             .args(shell.args)
             .env(super::WINDOWS_COMMAND_PATH_ENV, &path)
-            .output()
-            .expect("run PowerShell bootstrap");
+            .envs(acknowledgement.environment())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        let mut child = process.spawn().expect("run PowerShell bootstrap");
+        acknowledgement
+            .wait(&mut child)
+            .expect_err("invalid UTF-8 must not acknowledge bootstrap readiness");
+        let output = child.wait_with_output().expect("collect PowerShell output");
 
         assert!(!output.status.success(), "invalid UTF-8 must fail decoding");
         assert!(!String::from_utf8_lossy(&output.stdout).contains("must-not-run"));
@@ -1544,11 +1667,29 @@ mod tests {
         let payload = super::WindowsCommandPayload::stage(command).expect("stage command");
         let path = payload.path().to_owned();
         let shell = super::resolve_windows_process_shell().expect("PowerShell");
-        let output = std::process::Command::new(shell.program)
+        let acknowledgement = super::WindowsBootstrapAcknowledgement::bind(
+            std::time::Instant::now() + Duration::from_secs(5),
+        )
+        .expect("bind bootstrap acknowledgement");
+        let mut process = std::process::Command::new(shell.program);
+        process
             .args(shell.args)
             .env(super::WINDOWS_COMMAND_PATH_ENV, &path)
-            .output()
-            .expect("run PowerShell bootstrap");
+            .envs(acknowledgement.environment())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped());
+        let mut child = process.spawn().expect("run PowerShell bootstrap");
+        if let Err(error) = acknowledgement.wait(&mut child) {
+            let output = child
+                .wait_with_output()
+                .expect("collect failed PowerShell output");
+            panic!(
+                "PowerShell acknowledges bootstrap: {error}; stdout={:?}; stderr={:?}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+        let output = child.wait_with_output().expect("collect PowerShell output");
         assert!(!path.exists(), "bootstrap must delete its payload");
         output
     }
