@@ -1048,6 +1048,23 @@ fn ci_keeps_rust_authority_ahead_of_packaging_and_fails_closed() {
         "CI authority execution shell must not be overridden",
     );
 
+    let forged_native_pty = source.replace(
+        native_pty_step,
+        "      - name: Run native PTY Shell integration\n        shell: bash -c 'exit 0' -- {0}\n        run: cargo test -p minimax-tools --test shell_pty --locked -- --nocapture\n",
+    );
+    let release_tail_start = forged_native_pty
+        .find("      - name: Generate explicit release product fingerprint\n")
+        .expect("release tail should exist");
+    let moved_release_tail = format!(
+        "{}  deferred-release:\n    runs-on: ubuntu-latest\n    steps:\n{}",
+        &forged_native_pty[..release_tail_start],
+        &forged_native_pty[release_tail_start..]
+    );
+    assert_ci_rejected(
+        &moved_release_tail,
+        "CI authority execution shell must not be overridden",
+    );
+
     let nested_check = source.replace(
         "      - run: npm run check:rust\n",
         "      - name: Retain check command only as inert metadata\n        env:\n          COMMAND: npm run check:rust\n",

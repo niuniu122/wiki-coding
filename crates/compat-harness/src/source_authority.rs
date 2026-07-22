@@ -764,6 +764,8 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
         steps_end,
         "CI steps mapping keys must be unambiguous",
     )?;
+    let native_job_text = lines[native_job_start..native_job_end].join("\n");
+    let authority_steps_text = lines[*steps_start + 1..steps_end].join("\n");
     let shell_keys = lines[*steps_start + 1..steps_end]
         .iter()
         .filter(|line| {
@@ -773,7 +775,10 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
         })
         .count();
     let fingerprint_shell_step = "      - name: Generate explicit release product fingerprint\n        shell: bash\n        run: mkdir -p target/phase14-ci && node scripts/release/product-fingerprint.mjs > target/phase14-ci/fingerprint.json";
-    if shell_keys != 1 || normalized.matches(fingerprint_shell_step).count() != 1 {
+    if shell_keys != 1
+        || normalized.matches(fingerprint_shell_step).count() != 1
+        || authority_steps_text.matches(fingerprint_shell_step).count() != 1
+    {
         return violation("CI authority execution shell must not be overridden");
     }
     if !(*steps_start < *native_pty_start && *native_pty_start < steps_end) {
@@ -885,6 +890,12 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
         indent >= 8 && matches!(yaml_mapping_key(line), Ok(Some("include" | "exclude")))
     }) {
         return violation("CI must not include or exclude matrix jobs");
+    }
+    if native_job_text.matches(reproducible_msvc_link).count() != 1 {
+        return violation("CI Windows MSVC builds must retain reproducible /Brepro linking");
+    }
+    if !authority_steps_text.contains("run: bash scripts/ci-linux-sandbox-canary.sh") {
+        return violation("CI must retain the Linux adversarial sandbox canary");
     }
     let check_rust_lines = (*steps_start + 1..steps_end)
         .filter(|index| {
@@ -1056,6 +1067,11 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
         let [line] = matches.as_slice() else {
             return violation(format!("CI must run {required} exactly once"));
         };
+        if !(*steps_start < *line && *line < steps_end) {
+            return violation(format!(
+                "CI must run {required} in the authoritative matrix job"
+            ));
+        }
         command_lines.push(*line);
     }
     let test_gate = command_lines[1].max(command_lines[2]);
@@ -1090,10 +1106,13 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
     let [upload] = uploads.as_slice() else {
         return violation("CI must retain exactly one hosted evidence upload");
     };
+    if !(*steps_start < *upload && *upload < steps_end) {
+        return violation("CI evidence upload must remain in the authoritative matrix job");
+    }
     if *upload <= command_lines[12] {
         return violation("CI evidence upload must follow every installed and milestone gate");
     }
-    if !normalized.contains(
+    if !authority_steps_text.contains(
         "- name: Upload hosted release evidence\n        uses: actions/upload-artifact@v4\n        with:\n          name: hosted-release-evidence-${{ runner.os }}",
     ) {
         return violation("CI evidence upload must cover both candidate and strict runs");
@@ -1104,7 +1123,7 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
         "- name: Run strict-precondition Rust tests\n        if: github.event_name != 'workflow_dispatch'\n        run: npm run test:rust:strict-precondition",
         "- name: Run hosted evidence candidate Rust tests\n        if: github.event_name == 'workflow_dispatch'\n        run: npm run test:rust:candidate",
     ] {
-        if !normalized.contains(branch) {
+        if !authority_steps_text.contains(branch) {
             return violation(
                 "CI strict/candidate branching must differ only for hosted evidence freshness",
             );
