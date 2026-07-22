@@ -25,8 +25,8 @@ use minimax_protocol::{
 use minimax_tools::{
     BoundedProcess, BuiltinToolPort, NativeShellBackend, NeverCancelled, ProcessShellSessionIds,
     ShellBackend, ShellChild, ShellCommandRequest, ShellGuard, ShellSessionIdSource,
-    ShellSessionManager, ShellSpawnRequest, ShellTerminateFuture, ShellWriteRequest, SpawnedShell,
-    SystemShellClock,
+    ShellSessionManager, ShellSpawnRequest, ShellSpawnResult, ShellTerminateFuture,
+    ShellWriteRequest, SpawnedShell, SystemShellClock,
 };
 use minimax_tui::ApprovalInput;
 use serde::Deserialize;
@@ -195,7 +195,7 @@ impl ShellBackend for DriverShellBackend {
         self.requires_handshake.load(Ordering::Acquire)
     }
 
-    fn spawn(&self, _request: &ShellSpawnRequest) -> io::Result<SpawnedShell> {
+    fn spawn(&self, _request: &ShellSpawnRequest) -> ShellSpawnResult {
         let plan = self
             .plans
             .lock()

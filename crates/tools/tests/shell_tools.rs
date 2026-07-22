@@ -15,7 +15,7 @@ use minimax_protocol::{
 use minimax_tools::{
     BoundedProcess, BuiltinToolPort, MAX_RUNNING_SHELL_SESSIONS, NeverCancelled, Preflight,
     ShellBackend, ShellChild, ShellIoMode, ShellManagerError, ShellSessionIdSource,
-    ShellSessionManager, ShellSpawnRequest, ShellTerminateFuture, SpawnedShell,
+    ShellSessionManager, ShellSpawnRequest, ShellSpawnResult, ShellTerminateFuture, SpawnedShell,
 };
 use serde_json::{Value, json};
 use tempfile::TempDir;
@@ -652,7 +652,7 @@ impl FakeBackend {
 }
 
 impl ShellBackend for FakeBackend {
-    fn spawn(&self, request: &ShellSpawnRequest) -> io::Result<SpawnedShell> {
+    fn spawn(&self, request: &ShellSpawnRequest) -> ShellSpawnResult {
         self.requests
             .lock()
             .expect("requests lock")
@@ -664,7 +664,7 @@ impl ShellBackend for FakeBackend {
             .pop_front()
             .ok_or_else(|| io::Error::other("no scripted process"))?;
         let Plan::Process { output, exit_code } = plan else {
-            return Err(io::Error::other("scripted launch failure"));
+            return Err(io::Error::other("scripted launch failure").into());
         };
         let process_id = self.next_process_id.fetch_add(1, Ordering::AcqRel) + 1;
         let state = Arc::new(Mutex::new(exit_code));

@@ -6,8 +6,8 @@ mod native;
 
 pub use backend::{
     ReaderSpawner, ReaderTask, ShellBackend, ShellChild, ShellGuard, ShellIoMode,
-    ShellSessionIdSource, ShellSpawnRequest, ShellTerminateFuture, SpawnedShell,
-    SystemReaderSpawner, SystemShellClock,
+    ShellSessionIdSource, ShellSpawnError, ShellSpawnRequest, ShellSpawnResult,
+    ShellTerminateFuture, SpawnedShell, SystemReaderSpawner, SystemShellClock,
 };
 pub use buffer::{ShellOutputBudget, ShellOutputBuffer, ShellOutputChunk};
 pub use manager::{

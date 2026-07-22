@@ -46,9 +46,9 @@ pub use shell::{
     MAX_TERMINAL_SHELL_RECEIPTS, NativeShellBackend, ProcessShellSessionIds, ReaderSpawner,
     ReaderTask, ShellBackend, ShellChild, ShellCleanupError, ShellCommandRequest, ShellGuard,
     ShellIoMode, ShellManagerError, ShellOutputBudget, ShellOutputBuffer, ShellOutputChunk,
-    ShellPollRequest, ShellSessionIdSource, ShellSessionManager, ShellSpawnRequest,
-    ShellTerminateFuture, ShellWriteRequest, SpawnedShell, SystemReaderSpawner, SystemShellClock,
-    TERMINAL_RECEIPT_TTL,
+    ShellPollRequest, ShellSessionIdSource, ShellSessionManager, ShellSpawnError,
+    ShellSpawnRequest, ShellSpawnResult, ShellTerminateFuture, ShellWriteRequest, SpawnedShell,
+    SystemReaderSpawner, SystemShellClock, TERMINAL_RECEIPT_TTL,
 };
 pub use shell_command::{
     SHELL_EXITED, SHELL_NONZERO_EXIT, SHELL_RUNNING, SHELL_STOPPED, ShellCommandTool,

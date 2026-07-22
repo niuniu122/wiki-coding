@@ -48,6 +48,59 @@ pub struct SpawnedShell {
     pub guard: Box<dyn ShellGuard>,
 }
 
+pub struct ShellSpawnError {
+    source: io::Error,
+    cleanup: Option<SpawnedShell>,
+}
+
+impl ShellSpawnError {
+    #[must_use]
+    pub fn with_cleanup(source: io::Error, cleanup: SpawnedShell) -> Self {
+        Self {
+            source,
+            cleanup: Some(cleanup),
+        }
+    }
+
+    #[must_use]
+    pub fn into_parts(self) -> (io::Error, Option<SpawnedShell>) {
+        (self.source, self.cleanup)
+    }
+}
+
+impl std::fmt::Debug for ShellSpawnError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("ShellSpawnError")
+            .field("source", &self.source)
+            .field("has_cleanup", &self.cleanup.is_some())
+            .finish()
+    }
+}
+
+impl std::fmt::Display for ShellSpawnError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.source.fmt(formatter)
+    }
+}
+
+impl std::error::Error for ShellSpawnError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.source)
+    }
+}
+
+impl From<io::Error> for ShellSpawnError {
+    fn from(source: io::Error) -> Self {
+        Self {
+            source,
+            cleanup: None,
+        }
+    }
+}
+
+pub type ShellSpawnResult = Result<SpawnedShell, ShellSpawnError>;
+
 pub type ReaderTask = Box<dyn FnOnce() + Send + 'static>;
 
 pub trait ReaderSpawner: Send + Sync {
@@ -70,7 +123,7 @@ pub trait ShellBackend: Send + Sync {
         false
     }
 
-    fn spawn(&self, request: &ShellSpawnRequest) -> io::Result<SpawnedShell>;
+    fn spawn(&self, request: &ShellSpawnRequest) -> ShellSpawnResult;
 }
 
 pub trait ShellSessionIdSource: Send + Sync {

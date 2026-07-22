@@ -341,7 +341,14 @@ impl ShellSessionManager {
         };
         let spawned = match self.backend.spawn(&spawn_request) {
             Ok(spawned) => spawned,
-            Err(_) => {
+            Err(error) => {
+                let (_source, cleanup) = error.into_parts();
+                if let Some(spawned) = cleanup {
+                    let resources = self
+                        .own_spawned_resources(spawned, io_mode)
+                        .unwrap_or_else(|resources| resources);
+                    pending_start.own_resources(resources);
+                }
                 let (manager, session) = pending_start.take_settlement();
                 manager.settle_unpublished_start(session).await?;
                 return Err(ShellManagerError::Launch);
@@ -1718,8 +1725,8 @@ mod tests {
     };
     use crate::NeverCancelled;
     use crate::shell::{
-        ShellBackend, ShellChild, ShellIoMode, ShellSessionIdSource, ShellSpawnRequest,
-        ShellTerminateFuture, SpawnedShell, SystemShellClock,
+        ShellBackend, ShellChild, ShellIoMode, ShellSessionIdSource, ShellSpawnError,
+        ShellSpawnRequest, ShellTerminateFuture, SpawnedShell, SystemShellClock,
     };
 
     #[derive(Default)]
@@ -1734,6 +1741,31 @@ mod tests {
         guard_terminations: std::sync::atomic::AtomicUsize,
     }
 
+    struct RecoverableSpawnFailureBackend {
+        process: Arc<PublishLockProcess>,
+        fail_cleanup: Arc<AtomicBool>,
+    }
+
+    impl ShellBackend for RecoverableSpawnFailureBackend {
+        fn spawn(&self, _request: &ShellSpawnRequest) -> Result<SpawnedShell, ShellSpawnError> {
+            self.process.running.store(true, Ordering::Release);
+            Err(ShellSpawnError::with_cleanup(
+                io::Error::other("scripted recoverable spawn failure"),
+                SpawnedShell {
+                    child: Box::new(PublishLockChild {
+                        process: Arc::clone(&self.process),
+                    }),
+                    reader: Box::new(io::empty()),
+                    writer: Box::new(SilentWriter),
+                    guard: Box::new(RecoveringContainmentGuard {
+                        process: Arc::clone(&self.process),
+                        fail: Arc::clone(&self.fail_cleanup),
+                    }),
+                },
+            ))
+        }
+    }
+
     impl PublishLockProcess {
         fn exit(&self) {
             self.running.store(false, Ordering::Release);
@@ -1744,7 +1776,7 @@ mod tests {
     }
 
     impl ShellBackend for PublishLockBackend {
-        fn spawn(&self, _request: &ShellSpawnRequest) -> io::Result<SpawnedShell> {
+        fn spawn(&self, _request: &ShellSpawnRequest) -> crate::shell::ShellSpawnResult {
             self.process.running.store(true, Ordering::Release);
             let (sender, receiver) = std::sync::mpsc::channel();
             *self.process.reader.lock().expect("reader sender") = Some(sender);
@@ -2349,6 +2381,77 @@ mod tests {
                 ],
             })
         );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn aborted_recoverable_spawn_failure_stays_owned_until_disable_retry() {
+        let process = Arc::new(PublishLockProcess::default());
+        let fail_cleanup = Arc::new(AtomicBool::new(true));
+        let backend = Arc::new(RecoverableSpawnFailureBackend {
+            process: Arc::clone(&process),
+            fail_cleanup: Arc::clone(&fail_cleanup),
+        });
+        let manager =
+            ShellSessionManager::new(backend, Arc::new(FixedIds), Arc::new(SystemShellClock));
+        manager.enable().await;
+        let gate = Arc::new(UnpublishedRegistrationGate {
+            entered: tokio::sync::Barrier::new(2),
+            release: tokio::sync::Barrier::new(2),
+        });
+        *manager
+            .unpublished_registration_gate
+            .lock()
+            .expect("registration gate lock") = Some(Arc::clone(&gate));
+
+        let start_manager = manager.clone();
+        let start = tokio::spawn(async move {
+            start_manager
+                .start(
+                    ShellCommandRequest {
+                        command: "recoverable-spawn-failure".to_owned(),
+                        cwd: std::path::PathBuf::from("."),
+                        tty: false,
+                        yield_time: Duration::ZERO,
+                        max_output_bytes: MAX_SHELL_OUTPUT_BYTES,
+                    },
+                    &NeverCancelled,
+                )
+                .await
+        });
+        gate.entered.wait().await;
+        assert_eq!(
+            manager
+                .unpublished_sessions
+                .lock()
+                .expect("unpublished registry")
+                .len(),
+            1
+        );
+        assert_eq!(manager.slots.starting.load(Ordering::Acquire), 0);
+        assert_eq!(manager.slots.running.load(Ordering::Acquire), 1);
+
+        start.abort();
+        assert!(
+            start
+                .await
+                .expect_err("start task is aborted")
+                .is_cancelled()
+        );
+        fail_cleanup.store(false, Ordering::Release);
+        manager
+            .disable_and_stop_all()
+            .await
+            .expect("disable retries the registered spawn failure");
+        assert_eq!(manager.slots.running.load(Ordering::Acquire), 0);
+        assert!(!process.running.load(Ordering::Acquire));
+        assert!(
+            manager
+                .unpublished_sessions
+                .lock()
+                .expect("unpublished registry")
+                .is_empty()
+        );
+        gate.release.wait().await;
     }
 
     #[tokio::test]

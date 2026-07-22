@@ -13,7 +13,8 @@ use minimax_tools::{
     MAX_RUNNING_SHELL_SESSIONS, MAX_TERMINAL_SHELL_RECEIPTS, ProcessShellSessionIds, ReaderSpawner,
     ReaderTask, ShellBackend, ShellChild, ShellCleanupError, ShellCommandRequest, ShellIoMode,
     ShellManagerError, ShellPollRequest, ShellSessionIdSource, ShellSessionManager,
-    ShellSpawnRequest, ShellTerminateFuture, ShellWriteRequest, SpawnedShell, TERMINAL_RECEIPT_TTL,
+    ShellSpawnRequest, ShellSpawnResult, ShellTerminateFuture, ShellWriteRequest, SpawnedShell,
+    TERMINAL_RECEIPT_TTL,
 };
 
 const OUTPUT_LIMIT: usize = 1024;
@@ -678,7 +679,7 @@ impl ShellBackend for FakeBackend {
         self.cursor_handshake_required.load(Ordering::Acquire)
     }
 
-    fn spawn(&self, request: &ShellSpawnRequest) -> io::Result<SpawnedShell> {
+    fn spawn(&self, request: &ShellSpawnRequest) -> ShellSpawnResult {
         self.requests
             .lock()
             .expect("requests lock")

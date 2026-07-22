@@ -18,9 +18,12 @@ use std::os::windows::io::AsRawHandle;
 #[cfg(windows)]
 use win32job::{ExtendedLimitInfo, Job};
 
+#[cfg(windows)]
+use super::ShellSpawnError;
+
 use super::{
     ShellBackend, ShellChild, ShellIoMode, ShellManagerError, ShellSessionIdSource,
-    ShellSpawnRequest, ShellTerminateFuture, SpawnedShell,
+    ShellSpawnRequest, ShellSpawnResult, ShellTerminateFuture, SpawnedShell,
 };
 
 const PROCESS_NONCE_BYTES: usize = 8;
@@ -156,7 +159,7 @@ impl NativeShellBackend {
         request: &ShellSpawnRequest,
         cols: u16,
         rows: u16,
-    ) -> io::Result<SpawnedShell> {
+    ) -> ShellSpawnResult {
         let trusted_host = self.resolve_host_executable()?;
         let command_payload = super::host::WindowsCommandPayload::stage(request.command.as_str())?;
         let (listener, bootstrap) =
@@ -208,14 +211,21 @@ impl NativeShellBackend {
             Ok(parent_channel) => parent_channel,
             Err(error) => {
                 self.observe_startup("error_cleanup");
-                control.terminate_tree();
-                drop(reader);
-                drop(writer);
-                let _ = control.close_io_before(std::time::Instant::now() + Duration::from_secs(1));
-                let cleanup = kill_and_poll_conpty_child(&mut child);
-                return Err(io::Error::other(format!(
-                    "Windows trusted-host startup failed: {error}; host cleanup: {cleanup}"
-                )));
+                return Err(ShellSpawnError::with_cleanup(
+                    io::Error::other(format!("Windows trusted-host startup failed: {error}")),
+                    SpawnedShell {
+                        child: Box::new(WindowsConPtyChild { child }),
+                        reader: Box::new(reader),
+                        writer: Box::new(writer),
+                        guard: Box::new(NativeShellGuard {
+                            conpty: Some(control),
+                            job: None,
+                            command_payload: Some(command_payload),
+                            parent_channel: None,
+                            armed: true,
+                        }),
+                    },
+                ));
             }
         };
 
@@ -318,7 +328,7 @@ impl NativeShellBackend {
     }
 
     #[cfg(any(windows, target_os = "linux"))]
-    fn spawn_pipe(&self, request: &ShellSpawnRequest) -> io::Result<SpawnedShell> {
+    fn spawn_pipe(&self, request: &ShellSpawnRequest) -> ShellSpawnResult {
         let trusted_host = self.resolve_host_executable()?;
         #[cfg(windows)]
         let command_payload = super::host::WindowsCommandPayload::stage(request.command.as_str())?;
@@ -385,21 +395,35 @@ impl NativeShellBackend {
             Err(error) => {
                 self.observe_startup("error_cleanup");
                 #[cfg(windows)]
-                let cleanup = {
-                    drop(job.take());
-                    kill_and_poll_process(&mut child)
-                };
+                return Err(ShellSpawnError::with_cleanup(
+                    io::Error::other(format!("trusted-host pipe startup failed: {error}")),
+                    SpawnedShell {
+                        child: Box::new(NativePipeChild { child, process_id }),
+                        reader: Box::new(output_read),
+                        writer: Box::new(input_write),
+                        guard: Box::new(NativeShellGuard {
+                            conpty: None,
+                            job: job.take(),
+                            command_payload: Some(command_payload),
+                            parent_channel: None,
+                            armed: true,
+                        }),
+                    },
+                ));
                 #[cfg(target_os = "linux")]
-                let cleanup = if command_sent {
-                    wait_for_host_cleanup(|| try_wait_process(&mut child), HOST_CLEANUP_TIMEOUT)
-                } else {
-                    kill_and_wait_process(&mut child)
-                };
-                drop(output_read);
-                drop(input_write);
-                return Err(io::Error::other(format!(
-                    "trusted-host pipe startup failed: {error}; host cleanup: {cleanup}"
-                )));
+                {
+                    let cleanup = if command_sent {
+                        wait_for_host_cleanup(|| try_wait_process(&mut child), HOST_CLEANUP_TIMEOUT)
+                    } else {
+                        kill_and_wait_process(&mut child)
+                    };
+                    drop(output_read);
+                    drop(input_write);
+                    return Err(io::Error::other(format!(
+                        "trusted-host pipe startup failed: {error}; host cleanup: {cleanup}"
+                    ))
+                    .into());
+                }
             }
         };
 
@@ -473,7 +497,7 @@ impl NativeShellBackend {
 }
 
 impl ShellBackend for NativeShellBackend {
-    fn spawn(&self, request: &ShellSpawnRequest) -> io::Result<SpawnedShell> {
+    fn spawn(&self, request: &ShellSpawnRequest) -> ShellSpawnResult {
         match request.io_mode {
             ShellIoMode::Pipe => {
                 #[cfg(any(windows, target_os = "linux"))]
@@ -482,15 +506,18 @@ impl ShellBackend for NativeShellBackend {
                 return Err(io::Error::new(
                     io::ErrorKind::Unsupported,
                     "native pipe shell is supported only on Windows and Linux",
-                ));
+                )
+                .into());
             }
             ShellIoMode::Terminal { cols, rows } => {
                 #[cfg(windows)]
                 return self.spawn_terminal_windows(request, cols, rows);
                 #[cfg(target_os = "linux")]
-                return self.spawn_terminal_linux(request, cols, rows);
+                return self
+                    .spawn_terminal_linux(request, cols, rows)
+                    .map_err(Into::into);
                 #[cfg(not(any(windows, target_os = "linux")))]
-                return self.spawn_terminal(request, cols, rows);
+                return self.spawn_terminal(request, cols, rows).map_err(Into::into);
             }
         }
     }
@@ -1213,44 +1240,6 @@ fn kill_and_wait_child(child: &mut (dyn portable_pty::Child + Send + Sync)) -> S
     }
 }
 
-#[cfg(windows)]
-fn kill_and_poll_conpty_child(child: &mut minimax_windows_conpty::ConPtyChild) -> String {
-    let kill = match child.kill() {
-        Ok(()) => "direct kill completed".to_owned(),
-        Err(error) => format!("direct kill failed: {error}"),
-    };
-    let deadline = std::time::Instant::now() + Duration::from_secs(1);
-    loop {
-        match child.try_wait() {
-            Ok(Some(exit_code)) => return format!("{kill}; poll observed exit_code={exit_code}"),
-            Err(error) => return format!("{kill}; poll failed: {error}"),
-            Ok(None) if std::time::Instant::now() >= deadline => {
-                return format!("{kill}; poll timed out after 1000ms");
-            }
-            Ok(None) => std::thread::sleep(Duration::from_millis(5)),
-        }
-    }
-}
-
-#[cfg(windows)]
-fn kill_and_poll_process(child: &mut std::process::Child) -> String {
-    let kill = match child.kill() {
-        Ok(()) => "direct kill completed".to_owned(),
-        Err(error) => format!("direct kill failed: {error}"),
-    };
-    let deadline = std::time::Instant::now() + Duration::from_secs(1);
-    loop {
-        match try_wait_process(child) {
-            Ok(Some(exit_code)) => return format!("{kill}; poll observed exit_code={exit_code}"),
-            Err(error) => return format!("{kill}; poll failed: {error}"),
-            Ok(None) if std::time::Instant::now() >= deadline => {
-                return format!("{kill}; poll timed out after 1000ms");
-            }
-            Ok(None) => std::thread::sleep(Duration::from_millis(5)),
-        }
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
@@ -1280,8 +1269,8 @@ mod tests {
     use crate::shell::{ShellBackend, ShellManagerError, ShellSessionIdSource};
     #[cfg(windows)]
     use crate::shell::{
-        ShellCommandRequest, ShellIoMode, ShellSessionManager, ShellSpawnRequest, SpawnedShell,
-        SystemShellClock,
+        ShellCommandRequest, ShellIoMode, ShellSessionManager, ShellSpawnRequest, ShellSpawnResult,
+        SpawnedShell, SystemShellClock,
     };
     #[cfg(windows)]
     use minimax_protocol::{MAX_SHELL_OUTPUT_BYTES, ShellSessionState};
@@ -1629,13 +1618,14 @@ mod tests {
 
     #[cfg(windows)]
     impl ShellBackend for OneShotSpawnBackend {
-        fn spawn(&self, request: &ShellSpawnRequest) -> io::Result<SpawnedShell> {
+        fn spawn(&self, request: &ShellSpawnRequest) -> ShellSpawnResult {
             assert_eq!(request.io_mode, ShellIoMode::Pipe);
             self.spawned
                 .lock()
                 .expect("one-shot backend lock")
                 .take()
                 .ok_or_else(|| io::Error::other("one-shot backend already consumed"))
+                .map_err(Into::into)
         }
     }
 

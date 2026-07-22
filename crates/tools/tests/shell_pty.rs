@@ -1,5 +1,13 @@
+#[cfg(windows)]
+use std::collections::HashSet;
+#[cfg(windows)]
+use std::fs::File;
+#[cfg(windows)]
+use std::os::windows::fs::OpenOptionsExt as _;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+#[cfg(windows)]
+use std::sync::Mutex;
 use std::time::Duration;
 
 #[cfg(windows)]
@@ -138,6 +146,212 @@ async fn windows_trusted_host_reports_the_required_startup_order_online() {
         .guard
         .close_io(std::time::Instant::now() + Duration::from_secs(2))
         .expect("close trusted-host ConPTY");
+}
+
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn windows_failed_pipe_start_retains_payload_and_slot_until_cleanup_retry() {
+    assert_failed_native_start_retains_cleanup(false).await;
+}
+
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn windows_failed_terminal_start_retains_payload_and_slot_until_cleanup_retry() {
+    assert_failed_native_start_retains_cleanup(true).await;
+}
+
+#[cfg(windows)]
+async fn assert_failed_native_start_retains_cleanup(tty: bool) {
+    let fixture = tempfile::tempdir().expect("failed native startup fixture");
+    let user_code_marker = fixture.path().join("user-code-ran.txt");
+    let branch = if tty { "terminal" } else { "pipe" };
+    let command = format!(
+        "Set-Content -LiteralPath '{}' -NoNewline -Value '{branch}-must-not-run'; Start-Sleep -Seconds 120",
+        powershell_path_literal(&user_code_marker)
+    );
+    let existing_payloads = windows_command_payload_paths();
+    let blocked = Arc::new(Mutex::new(BlockedStartupPayload::new(existing_payloads)));
+    let observer_state = Arc::clone(&blocked);
+    let observed_command = command.clone();
+    let backend = NativeShellBackend::with_host_executable(PathBuf::from(env!(
+        "CARGO_BIN_EXE_minimax-shell-test-host"
+    )))
+    .expect("absolute trusted test host")
+    .with_startup_observer(Arc::new(move |stage| {
+        let mut blocked = observer_state.lock().expect("blocked payload state");
+        blocked.stages.push(stage);
+        if stage == "listener_bound" && blocked.path.is_none() {
+            blocked.block_new_payload(&observed_command);
+        }
+    }));
+    let manager = ShellSessionManager::new(
+        Arc::new(backend),
+        Arc::new(ProcessShellSessionIds::new().expect("process shell session IDs")),
+        Arc::new(SystemShellClock),
+    );
+    manager.enable().await;
+
+    let startup = tokio::time::timeout(
+        TEST_TIMEOUT,
+        manager.start(
+            command_request(&command, fixture.path(), tty, Duration::ZERO),
+            &NeverCancelled,
+        ),
+    )
+    .await
+    .expect("failed native startup remains bounded");
+    assert_eq!(startup, Err(ShellManagerError::Indeterminate));
+    assert!(
+        !user_code_marker.exists(),
+        "user command must remain unreachable before Ready"
+    );
+
+    let first_retry = manager
+        .disable_and_stop_all()
+        .await
+        .expect_err("blocked payload deletion must retain unpublished cleanup ownership");
+    assert_eq!(first_retry.session_ids.len(), 1);
+    assert!(
+        first_retry.session_ids[0]
+            .as_str()
+            .starts_with("shell-unpublished-"),
+        "failed start must never publish a user-visible session: {first_retry:?}"
+    );
+    let payload_path = blocked
+        .lock()
+        .expect("blocked payload state")
+        .path
+        .clone()
+        .expect("observer captured staged payload");
+    assert!(
+        payload_path.exists(),
+        "manager must retain the exact payload after a failed cleanup attempt"
+    );
+
+    blocked
+        .lock()
+        .expect("blocked payload state")
+        .release_deletion_block();
+    manager
+        .disable_and_stop_all()
+        .await
+        .expect("real cleanup retry removes failed-start resources");
+    assert!(!payload_path.exists(), "cleanup retry must delete payload");
+    assert!(
+        !user_code_marker.exists(),
+        "cleanup retry must not execute user code"
+    );
+
+    manager.enable().await;
+    let mut running = Vec::new();
+    for index in 0..MAX_RUNNING_SHELL_SESSIONS {
+        let receipt = manager
+            .start(
+                command_request(
+                    format!("Write-Output 'capacity-{branch}-{index}'; Start-Sleep -Seconds 120"),
+                    fixture.path(),
+                    tty,
+                    Duration::ZERO,
+                ),
+                &NeverCancelled,
+            )
+            .await
+            .expect("successful cleanup restores every running slot");
+        assert_eq!(receipt.state, ShellSessionState::Running);
+        running.push(receipt.session_id);
+    }
+    let ninth = manager
+        .start(
+            command_request(
+                "Write-Output 'capacity-overflow-must-not-run'",
+                fixture.path(),
+                tty,
+                Duration::ZERO,
+            ),
+            &NeverCancelled,
+        )
+        .await;
+    assert_eq!(ninth, Err(ShellManagerError::SessionLimit));
+    manager
+        .disable_and_stop_all()
+        .await
+        .expect("capacity verification cleanup");
+    assert_eq!(running.len(), MAX_RUNNING_SHELL_SESSIONS);
+
+    let blocked = blocked.lock().expect("blocked payload state");
+    assert!(
+        blocked.stages.iter().all(|stage| !stage.contains(&command)),
+        "startup observer must remain secret-free"
+    );
+}
+
+#[cfg(windows)]
+struct BlockedStartupPayload {
+    existing: HashSet<PathBuf>,
+    path: Option<PathBuf>,
+    deletion_block: Option<File>,
+    stages: Vec<&'static str>,
+}
+
+#[cfg(windows)]
+impl BlockedStartupPayload {
+    fn new(existing: HashSet<PathBuf>) -> Self {
+        Self {
+            existing,
+            path: None,
+            deletion_block: None,
+            stages: Vec::new(),
+        }
+    }
+
+    fn block_new_payload(&mut self, command: &str) {
+        let path = windows_command_payload_paths()
+            .into_iter()
+            .filter(|path| !self.existing.contains(path))
+            .find(|path| std::fs::read_to_string(path).is_ok_and(|contents| contents == command))
+            .expect("find exact newly staged command payload");
+        let deletion_block = std::fs::OpenOptions::new()
+            .read(true)
+            .share_mode(1)
+            .open(&path)
+            .expect("hold read-sharing handle that denies payload deletion");
+        self.path = Some(path);
+        self.deletion_block = Some(deletion_block);
+    }
+
+    fn release_deletion_block(&mut self) {
+        drop(self.deletion_block.take());
+    }
+}
+
+#[cfg(windows)]
+impl Drop for BlockedStartupPayload {
+    fn drop(&mut self) {
+        drop(self.deletion_block.take());
+        if let Some(path) = self.path.as_ref() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+}
+
+#[cfg(windows)]
+fn windows_command_payload_paths() -> HashSet<PathBuf> {
+    std::fs::read_dir(std::env::temp_dir())
+        .into_iter()
+        .flatten()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .is_some_and(|name| name.starts_with("minimax-shell-") && name.ends_with(".ps1"))
+        })
+        .collect()
+}
+
+#[cfg(windows)]
+fn powershell_path_literal(path: &Path) -> String {
+    path.to_string_lossy().replace('\'', "''")
 }
 
 fn command_request(
