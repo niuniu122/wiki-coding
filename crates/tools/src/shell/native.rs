@@ -1,5 +1,7 @@
 use std::ffi::OsString;
 use std::io;
+#[cfg(windows)]
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
@@ -8,7 +10,9 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use minimax_protocol::ShellSessionId;
-use portable_pty::{CommandBuilder, MasterPty, PtySize};
+use portable_pty::CommandBuilder;
+#[cfg(not(windows))]
+use portable_pty::{MasterPty, PtySize};
 #[cfg(windows)]
 use std::os::windows::io::AsRawHandle;
 #[cfg(windows)]
@@ -157,30 +161,20 @@ impl NativeShellBackend {
         let (listener, bootstrap) =
             super::host::HostListener::bind(HOST_STARTUP_TIMEOUT).map_err(io::Error::from)?;
         self.observe_startup("listener_bound");
-        let mut job = WindowsJobBoundary::new()?;
-        let pair = portable_pty::native_pty_system()
-            .openpty(PtySize {
-                rows,
-                cols,
-                pixel_width: 0,
-                pixel_height: 0,
-            })
-            .map_err(pty_error)?;
-        let command = build_host_command(&trusted_host, &bootstrap, &request.cwd);
-        let (mut child, reader, mut writer) = acquire_handles_then_spawn(
-            || pair.master.try_clone_reader().map_err(pty_error),
-            || pair.master.take_writer().map_err(pty_error),
-            || pair.slave.spawn_command(command).map_err(pty_error),
-        )?;
-        drop(pair.slave);
+        let command = build_host_process_command(&trusted_host, &bootstrap, &request.cwd);
+        let minimax_windows_conpty::SpawnedConPty {
+            mut child,
+            reader,
+            mut writer,
+            mut control,
+        } = minimax_windows_conpty::spawn(&command, cols, rows)?;
         self.observe_startup("host_spawned");
 
-        let process_id = process_id_or_cleanup(child.as_mut())?;
         let protocol = assign_job_before_host_protocol(
-            child.as_mut(),
+            &mut child,
             |child| {
                 self.observe_startup("assign_begin");
-                job.assign_terminal(child)?;
+                control.assign_job(child)?;
                 self.observe_startup("assigned");
                 Ok(())
             },
@@ -199,7 +193,7 @@ impl NativeShellBackend {
                     || {
                         child
                             .try_wait()
-                            .map(|status| status.map(|status| status.exit_code()))
+                            .map(|status| status.map(|code| code as u32))
                     },
                     &mut command_sent,
                 )
@@ -209,11 +203,11 @@ impl NativeShellBackend {
             Ok(parent_channel) => parent_channel,
             Err(error) => {
                 self.observe_startup("error_cleanup");
-                drop(job.take());
+                control.terminate_tree();
                 drop(reader);
                 drop(writer);
-                drop(pair.master);
-                let cleanup = kill_and_poll_child(child.as_mut());
+                let _ = control.close_io_before(std::time::Instant::now() + Duration::from_secs(1));
+                let cleanup = kill_and_poll_conpty_child(&mut child);
                 return Err(io::Error::other(format!(
                     "Windows trusted-host startup failed: {error}; host cleanup: {cleanup}"
                 )));
@@ -221,12 +215,12 @@ impl NativeShellBackend {
         };
 
         Ok(SpawnedShell {
-            child: Box::new(NativeShellChild { child, process_id }),
-            reader,
-            writer,
+            child: Box::new(WindowsConPtyChild { child }),
+            reader: Box::new(reader),
+            writer: Box::new(writer),
             guard: Box::new(NativeShellGuard {
-                master: Some(pair.master),
-                job: job.take(),
+                conpty: Some(control),
+                job: None,
                 parent_channel: Some(parent_channel),
                 armed: true,
             }),
@@ -308,6 +302,7 @@ impl NativeShellBackend {
             reader,
             writer,
             guard: Box::new(NativeShellGuard {
+                #[cfg(not(windows))]
                 master: Some(pair.master),
                 parent_channel: Some(parent_channel),
                 cleanup_confirmed: false,
@@ -407,7 +402,10 @@ impl NativeShellBackend {
             reader: Box::new(output_read),
             writer: Box::new(input_write),
             guard: Box::new(NativeShellGuard {
+                #[cfg(not(windows))]
                 master: None,
+                #[cfg(windows)]
+                conpty: None,
                 #[cfg(windows)]
                 job: job.take(),
                 parent_channel: Some(parent_channel),
@@ -450,6 +448,7 @@ impl NativeShellBackend {
             reader,
             writer,
             guard: Box::new(NativeShellGuard {
+                #[cfg(not(windows))]
                 master: Some(pair.master),
                 process_id,
                 armed: true,
@@ -495,13 +494,6 @@ impl WindowsJobBoundary {
         let job = Job::create_with_limit_info(&limits)
             .map_err(|error| io::Error::other(format!("create Windows Job: {error}")))?;
         Ok(Self { job: Some(job) })
-    }
-
-    fn assign_terminal(&self, child: &(dyn portable_pty::Child + Send + Sync)) -> io::Result<()> {
-        let process_handle = child
-            .as_raw_handle()
-            .ok_or_else(|| io::Error::other("PTY child did not expose a raw process handle"))?;
-        self.assign_handle(process_handle)
     }
 
     fn assign_process(&self, child: &std::process::Child) -> io::Result<()> {
@@ -599,6 +591,31 @@ fn wait_for_host_cleanup(
     }
 }
 
+#[cfg(windows)]
+struct WindowsConPtyChild {
+    child: minimax_windows_conpty::ConPtyChild,
+}
+
+#[cfg(windows)]
+impl ShellChild for WindowsConPtyChild {
+    fn process_id(&self) -> u32 {
+        self.child.process_id()
+    }
+
+    fn try_wait(&mut self) -> io::Result<Option<i32>> {
+        self.child.try_wait()
+    }
+
+    fn kill(&mut self) -> io::Result<()> {
+        self.child.kill()
+    }
+
+    fn reap(&mut self) -> io::Result<()> {
+        self.child.reap()
+    }
+}
+
+#[cfg(not(windows))]
 struct NativeShellChild {
     child: Box<dyn portable_pty::Child + Send + Sync>,
     process_id: u32,
@@ -608,6 +625,7 @@ struct NativeShellChild {
     reaped: bool,
 }
 
+#[cfg(not(windows))]
 impl ShellChild for NativeShellChild {
     fn process_id(&self) -> u32 {
         self.process_id
@@ -781,7 +799,10 @@ fn linux_observe_exit(process_id: u32) -> io::Result<Option<i32>> {
 }
 
 struct NativeShellGuard {
+    #[cfg(not(windows))]
     master: Option<Box<dyn MasterPty + Send>>,
+    #[cfg(windows)]
+    conpty: Option<minimax_windows_conpty::ConPtyControl>,
     #[cfg(windows)]
     job: Option<Job>,
     #[cfg(any(windows, target_os = "linux"))]
@@ -800,6 +821,9 @@ impl super::backend::ShellGuard for NativeShellGuard {
             // This Job is unique and non-inherited. Windows' KILL_ON_JOB_CLOSE contract
             // terminates every associated process when this final Job handle closes.
             drop(self.job.take());
+            if let Some(conpty) = self.conpty.as_mut() {
+                conpty.terminate_tree();
+            }
             drop(self.parent_channel.take());
             self.armed = false;
             Ok(())
@@ -860,7 +884,12 @@ impl super::backend::ShellGuard for NativeShellGuard {
         return Box::pin(async move {
             // Closing the final KILL_ON_JOB_CLOSE handle is the Windows containment
             // confirmation boundary; there is no reusable process-group ID to probe.
-            if self.job.is_some() {
+            if self.job.is_some()
+                || self
+                    .conpty
+                    .as_ref()
+                    .is_some_and(|conpty| !conpty.tree_terminated())
+            {
                 Err(io::Error::other(
                     "Windows Job confirmation preceded closing the Job handle",
                 ))
@@ -873,8 +902,14 @@ impl super::backend::ShellGuard for NativeShellGuard {
         Box::pin(async { Ok(()) })
     }
 
-    fn close_io(&mut self) {
+    fn close_io(&mut self, _deadline: std::time::Instant) -> io::Result<()> {
+        #[cfg(windows)]
+        if let Some(conpty) = self.conpty.as_mut() {
+            return conpty.close_io_before(_deadline);
+        }
+        #[cfg(not(windows))]
         drop(self.master.take());
+        Ok(())
     }
 
     fn disarm(&mut self) {
@@ -888,6 +923,7 @@ impl Drop for NativeShellGuard {
             #[cfg(windows)]
             {
                 drop(self.job.take());
+                drop(self.conpty.take());
                 drop(self.parent_channel.take());
             }
             #[cfg(target_os = "linux")]
@@ -1059,6 +1095,7 @@ fn resolve_native_shell(_command: &str) -> io::Result<ResolvedShell> {
     ))
 }
 
+#[cfg(not(windows))]
 fn pty_error(error: impl std::fmt::Display) -> io::Error {
     io::Error::other(error.to_string())
 }
@@ -1103,6 +1140,7 @@ fn kill_and_wait_process(child: &mut std::process::Child) -> String {
     }
 }
 
+#[cfg(any(not(windows), test))]
 fn acquire_handles_then_spawn<Child, Reader, Writer>(
     acquire_reader: impl FnOnce() -> io::Result<Reader>,
     acquire_writer: impl FnOnce() -> io::Result<Writer>,
@@ -1114,6 +1152,7 @@ fn acquire_handles_then_spawn<Child, Reader, Writer>(
     Ok((child, reader, writer))
 }
 
+#[cfg(any(not(windows), test))]
 fn process_id_or_cleanup(child: &mut (dyn portable_pty::Child + Send + Sync)) -> io::Result<u32> {
     if let Some(process_id) = child.process_id() {
         return Ok(process_id);
@@ -1125,6 +1164,7 @@ fn process_id_or_cleanup(child: &mut (dyn portable_pty::Child + Send + Sync)) ->
     )))
 }
 
+#[cfg(any(not(windows), test))]
 fn kill_and_wait_child(child: &mut (dyn portable_pty::Child + Send + Sync)) -> String {
     let kill_error = child.kill().err();
     let wait_error = child.wait().err();
@@ -1139,7 +1179,7 @@ fn kill_and_wait_child(child: &mut (dyn portable_pty::Child + Send + Sync)) -> S
 }
 
 #[cfg(windows)]
-fn kill_and_poll_child(child: &mut (dyn portable_pty::Child + Send + Sync)) -> String {
+fn kill_and_poll_conpty_child(child: &mut minimax_windows_conpty::ConPtyChild) -> String {
     let kill = match child.kill() {
         Ok(()) => "direct kill completed".to_owned(),
         Err(error) => format!("direct kill failed: {error}"),
@@ -1147,9 +1187,7 @@ fn kill_and_poll_child(child: &mut (dyn portable_pty::Child + Send + Sync)) -> S
     let deadline = std::time::Instant::now() + Duration::from_secs(1);
     loop {
         match child.try_wait() {
-            Ok(Some(status)) => {
-                return format!("{kill}; poll observed exit_code={}", status.exit_code());
-            }
+            Ok(Some(exit_code)) => return format!("{kill}; poll observed exit_code={exit_code}"),
             Err(error) => return format!("{kill}; poll failed: {error}"),
             Ok(None) if std::time::Instant::now() >= deadline => {
                 return format!("{kill}; poll timed out after 1000ms");

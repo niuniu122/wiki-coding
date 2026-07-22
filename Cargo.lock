@@ -1021,6 +1021,7 @@ dependencies = [
  "getrandom 0.4.3",
  "minimax-core",
  "minimax-protocol",
+ "minimax-windows-conpty",
  "portable-pty",
  "rustix",
  "serde",
@@ -1053,6 +1054,14 @@ dependencies = [
  "serde_json",
  "sha2",
  "tempfile",
+]
+
+[[package]]
+name = "minimax-windows-conpty"
+version = "0.1.1"
+dependencies = [
+ "win32job",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

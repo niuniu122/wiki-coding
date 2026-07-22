@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::sync::atomic::{AtomicU8, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Condvar, Mutex as StdMutex, mpsc};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use minimax_core::{CancellationPort, Clock};
 use minimax_protocol::{
@@ -1144,13 +1144,19 @@ impl ShellSessionManager {
         session: &Arc<StdMutex<ShellSession>>,
         tree_cleanup_confirmed: bool,
     ) -> bool {
+        let deadline = Instant::now() + CLEANUP_WAIT;
         let (writer, mut guard) = match session.lock() {
             Ok(mut session) => (session.writer.take(), session.guard.take()),
             Err(_) => return false,
         };
         drop(writer);
-        if let Some(guard) = guard.as_mut() {
-            guard.close_io();
+        if let Some(io_guard) = guard.as_mut()
+            && io_guard.close_io(deadline).is_err()
+        {
+            if let Ok(mut session) = session.lock() {
+                session.guard = guard.take();
+            }
+            return false;
         }
         if let Ok(mut session) = session.lock() {
             session.guard = guard.take();
@@ -1167,7 +1173,11 @@ impl ShellSessionManager {
             Err(_) => return false,
         };
         if let Some(completion) = completion
-            && !wait_for_reader_completion(&completion).await
+            && !wait_for_reader_completion(
+                &completion,
+                deadline.saturating_duration_since(Instant::now()),
+            )
+            .await
         {
             return false;
         }
@@ -1185,8 +1195,12 @@ impl ShellSessionManager {
         };
         let reader_closed = match handle {
             Some(handle) => matches!(
-                tokio::task::spawn_blocking(move || handle.join().is_ok()).await,
-                Ok(true)
+                tokio::time::timeout(
+                    deadline.saturating_duration_since(Instant::now()),
+                    tokio::task::spawn_blocking(move || handle.join().is_ok()),
+                )
+                .await,
+                Ok(Ok(true))
             ),
             None => true,
         };
@@ -1422,10 +1436,10 @@ impl Drop for ShellSessionManager {
     }
 }
 
-async fn wait_for_reader_completion(completion: &Arc<ReaderCompletion>) -> bool {
+async fn wait_for_reader_completion(completion: &Arc<ReaderCompletion>, timeout: Duration) -> bool {
     let completion = Arc::clone(completion);
     matches!(
-        tokio::task::spawn_blocking(move || completion.wait_timeout(CLEANUP_WAIT)).await,
+        tokio::task::spawn_blocking(move || completion.wait_timeout(timeout)).await,
         Ok(true)
     )
 }

@@ -7,25 +7,16 @@ use minimax_protocol::{
     ToolInvocation,
 };
 use minimax_tools::{
-    NativeShellBackend, NeverCancelled, ProcessShellSessionIds, ShellCommandRequest,
-    ShellCommandTool, ShellManagerError, ShellPollRequest, ShellSessionManager, ShellWriteRequest,
-    SystemShellClock, WorkspaceRoot,
+    MAX_RUNNING_SHELL_SESSIONS, NativeShellBackend, NeverCancelled, ProcessShellSessionIds,
+    ShellCommandRequest, ShellCommandTool, ShellManagerError, ShellPollRequest,
+    ShellSessionManager, ShellWriteRequest, SystemShellClock, WorkspaceRoot,
 };
 #[cfg(windows)]
 use minimax_tools::{ShellBackend, ShellIoMode, ShellSpawnRequest};
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(15);
-// Independent managers otherwise oversubscribe Windows ConPTY teardown and can
-// exhaust the fixed reader-EOF cleanup deadline. Manager concurrency is covered
-// by shell_manager.rs; keep these OS integration tests deterministic.
-static NATIVE_TEST_CONCURRENCY: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
-
-async fn native_test_permit() -> tokio::sync::SemaphorePermit<'static> {
-    NATIVE_TEST_CONCURRENCY
-        .acquire()
-        .await
-        .expect("native test semaphore remains open")
-}
+const NATIVE_CONCURRENCY_STRESS_ROUNDS: usize = 1;
+const INDEPENDENT_NATIVE_MANAGER_COUNT: usize = MAX_RUNNING_SHELL_SESSIONS;
 
 #[derive(Clone, Copy)]
 enum FixtureKind {
@@ -78,7 +69,6 @@ fn native_manager() -> ShellSessionManager {
 #[cfg(windows)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn windows_trusted_host_reports_the_required_startup_order_online() {
-    let _native_test_permit = native_test_permit().await;
     let (stage_tx, stage_rx) = std::sync::mpsc::channel();
     let backend = NativeShellBackend::with_host_executable(PathBuf::from(env!(
         "CARGO_BIN_EXE_minimax-shell-test-host"
@@ -142,7 +132,10 @@ async fn windows_trusted_host_reports_the_required_startup_order_online() {
         .confirm()
         .await
         .expect("confirm trusted-host Job closure");
-    spawned.guard.close_io();
+    spawned
+        .guard
+        .close_io(std::time::Instant::now() + Duration::from_secs(2))
+        .expect("close trusted-host ConPTY");
 }
 
 fn command_request(
@@ -263,7 +256,6 @@ async fn cleanup(manager: &ShellSessionManager) -> Result<(), String> {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn fast_command_returns_terminal_output_and_exit_zero() {
-    let _native_test_permit = native_test_permit().await;
     let manager = native_manager();
     manager.enable().await;
     let root = Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -290,7 +282,6 @@ async fn fast_command_returns_terminal_output_and_exit_zero() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn nonzero_command_preserves_exit_seven_and_output() {
-    let _native_test_permit = native_test_permit().await;
     let manager = native_manager();
     manager.enable().await;
     let root = repository_root();
@@ -319,7 +310,6 @@ async fn nonzero_command_preserves_exit_seven_and_output() {
 #[cfg(windows)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn windows_trusted_host_preserves_native_nonterminating_error_semantics() {
-    let _native_test_permit = native_test_permit().await;
     let fixture = tempfile::tempdir().expect("error preference fixture");
     let direct_marker = fixture.path().join("direct.txt");
     let hosted_marker = fixture.path().join("hosted.txt");
@@ -366,7 +356,6 @@ async fn windows_trusted_host_preserves_native_nonterminating_error_semantics() 
 #[cfg(windows)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn windows_trusted_host_bootstrap_metadata_is_removed_before_the_user_command_runs() {
-    let _native_test_permit = native_test_permit().await;
     let manager = native_manager();
     manager.enable().await;
     let root = repository_root();
@@ -402,7 +391,6 @@ async fn windows_trusted_host_bootstrap_metadata_is_removed_before_the_user_comm
 #[cfg(windows)]
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn windows_trusted_host_does_not_inject_bootstrap_as_powershell_variables() {
-    let _native_test_permit = native_test_permit().await;
     let manager = native_manager();
     manager.enable().await;
     let command = "'hostAddress','hostToken','hostVersion','hostTimeout' | ForEach-Object { Write-Output \"$_=$($null -eq (Get-Variable -Name $_ -ValueOnly -ErrorAction SilentlyContinue))\" }";
@@ -431,7 +419,6 @@ async fn windows_trusted_host_does_not_inject_bootstrap_as_powershell_variables(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn long_command_polling_delivers_only_incremental_output() {
-    let _native_test_permit = native_test_permit().await;
     let manager = native_manager();
     manager.enable().await;
     let root = repository_root();
@@ -463,7 +450,6 @@ async fn long_command_polling_delivers_only_incremental_output() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn prompt_receives_write_and_submit_then_exits() {
-    let _native_test_permit = native_test_permit().await;
     let manager = native_manager();
     manager.enable().await;
     let root = repository_root();
@@ -510,7 +496,6 @@ async fn prompt_receives_write_and_submit_then_exits() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn pipe_prompt_receives_write_and_submit_then_exits() {
-    let _native_test_permit = native_test_permit().await;
     let manager = native_manager();
     manager.enable().await;
 
@@ -556,7 +541,6 @@ async fn pipe_prompt_receives_write_and_submit_then_exits() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn native_shell_defaults_to_redirected_pipe_io() {
-    let _native_test_permit = native_test_permit().await;
     let manager = native_manager();
     manager.enable().await;
     let first = start_command(
@@ -575,7 +559,6 @@ async fn native_shell_defaults_to_redirected_pipe_io() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn native_shell_observes_terminal_stdin_and_stdout() {
-    let _native_test_permit = native_test_permit().await;
     let manager = native_manager();
     manager.enable().await;
     let root = repository_root();
@@ -600,9 +583,117 @@ async fn native_shell_observes_terminal_stdin_and_stdout() {
     assert!(output.contains(tty_expected_output()), "{output:?}");
 }
 
+#[tokio::test(flavor = "multi_thread", worker_threads = 8)]
+async fn eight_concurrent_terminal_sessions_close_readers_within_cleanup_deadline() {
+    for round in 0..NATIVE_CONCURRENCY_STRESS_ROUNDS {
+        let manager = native_manager();
+        manager.enable().await;
+        let managers = (0..MAX_RUNNING_SHELL_SESSIONS)
+            .map(|_| manager.clone())
+            .collect::<Vec<_>>();
+
+        run_concurrent_terminal_round(managers, round).await;
+        cleanup(&manager)
+            .await
+            .unwrap_or_else(|error| panic!("shared-manager round {round} cleanup: {error}"));
+    }
+}
+
+#[test]
+fn independent_native_managers_close_terminal_readers_concurrently() {
+    let round_start = Arc::new(std::sync::Barrier::new(INDEPENDENT_NATIVE_MANAGER_COUNT));
+    let mut runtimes = Vec::with_capacity(INDEPENDENT_NATIVE_MANAGER_COUNT);
+    for index in 0..INDEPENDENT_NATIVE_MANAGER_COUNT {
+        let round_start = Arc::clone(&round_start);
+        runtimes.push(std::thread::spawn(move || {
+            let runtime = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(2)
+                .enable_all()
+                .build()
+                .expect("independent native runtime");
+            let mut errors = Vec::new();
+            for round in 0..NATIVE_CONCURRENCY_STRESS_ROUNDS {
+                let manager = native_manager();
+                runtime.block_on(manager.enable());
+                round_start.wait();
+                let marker = format!("independent-terminal-{round}-{index}");
+                let root = repository_root();
+                let outcome = runtime.block_on(async {
+                    let first = start_command(
+                        &manager,
+                        concurrent_terminal_command(&marker),
+                        &root,
+                        true,
+                        Duration::from_secs(5),
+                    )
+                    .await;
+                    let settled = match first {
+                        Ok(receipt) => settle_session(&manager, receipt).await,
+                        Err(error) => Err(error),
+                    };
+                    cleanup(&manager).await?;
+                    let (terminal, output) = settled?;
+                    if terminal.exit_code != Some(0) {
+                        return Err(format!(
+                            "{marker} exited with {:?}: {output:?}",
+                            terminal.exit_code
+                        ));
+                    }
+                    assert_concurrent_terminal_output(&marker, &output)?;
+                    Ok::<(), String>(())
+                });
+                if let Err(error) = outcome {
+                    errors.push(format!("round {round} manager {index}: {error}"));
+                }
+            }
+            errors
+        }));
+    }
+
+    let errors = runtimes
+        .into_iter()
+        .flat_map(|runtime| runtime.join().expect("independent native manager thread"))
+        .collect::<Vec<_>>();
+    assert!(errors.is_empty(), "{}", errors.join("\n"));
+}
+
+async fn run_concurrent_terminal_round(managers: Vec<ShellSessionManager>, round: usize) {
+    assert!(!managers.is_empty());
+    let root = repository_root();
+    let mut sessions = tokio::task::JoinSet::new();
+    for (index, manager) in managers.into_iter().enumerate() {
+        let root = root.clone();
+        sessions.spawn(async move {
+            let marker = format!("concurrent-terminal-{round}-{index}");
+            let first = start_command(
+                &manager,
+                concurrent_terminal_command(&marker),
+                &root,
+                true,
+                Duration::from_secs(5),
+            )
+            .await?;
+            let (terminal, output) = settle_session(&manager, first).await?;
+            if terminal.exit_code != Some(0) {
+                return Err(format!(
+                    "{marker} exited with {:?}: {output:?}",
+                    terminal.exit_code
+                ));
+            }
+            assert_concurrent_terminal_output(&marker, &output)?;
+            Ok::<(), String>(())
+        });
+    }
+
+    while let Some(session_result) = sessions.join_next().await {
+        session_result
+            .expect("concurrent terminal task")
+            .unwrap_or_else(|error| panic!("terminal round {round}: {error}"));
+    }
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unicode_emoji_and_native_pipe_redirection_round_trip() {
-    let _native_test_permit = native_test_permit().await;
     let manager = native_manager();
     manager.enable().await;
     let root = repository_root();
@@ -649,7 +740,6 @@ async fn unicode_emoji_and_native_pipe_redirection_round_trip() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn shell_command_uses_default_relative_and_outside_working_directories() {
-    let _native_test_permit = native_test_permit().await;
     let manager = native_manager();
     manager.enable().await;
     let root = repository_root();
@@ -693,7 +783,6 @@ async fn shell_command_uses_default_relative_and_outside_working_directories() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn long_pipe_output_preserves_one_logical_working_directory_line() {
-    let _native_test_permit = native_test_permit().await;
     let fixture = tempfile::tempdir().expect("long pipe cwd fixture");
     let mut cwd = fixture.path().to_owned();
     while std::fs::canonicalize(&cwd)
@@ -739,7 +828,6 @@ async fn long_pipe_output_preserves_one_logical_working_directory_line() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn unread_output_over_one_mib_is_truncated_and_result_stays_bounded() {
-    let _native_test_permit = native_test_permit().await;
     let manager = native_manager();
     manager.enable().await;
     let root = repository_root();
@@ -777,7 +865,6 @@ async fn unread_output_over_one_mib_is_truncated_and_result_stays_bounded() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn explicit_stop_terminates_the_reported_parent_and_child() {
-    let _native_test_permit = native_test_permit().await;
     for tty in [false, true] {
         assert_tree_cleanup(TreeCleanup::Stop, tty).await;
     }
@@ -785,7 +872,6 @@ async fn explicit_stop_terminates_the_reported_parent_and_child() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn permission_downgrade_terminates_the_reported_parent_and_child() {
-    let _native_test_permit = native_test_permit().await;
     for tty in [false, true] {
         assert_tree_cleanup(TreeCleanup::Downgrade, tty).await;
     }
@@ -793,7 +879,6 @@ async fn permission_downgrade_terminates_the_reported_parent_and_child() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn normal_shutdown_terminates_the_reported_parent_and_child() {
-    let _native_test_permit = native_test_permit().await;
     for tty in [false, true] {
         assert_tree_cleanup(TreeCleanup::Shutdown, tty).await;
     }
@@ -801,7 +886,6 @@ async fn normal_shutdown_terminates_the_reported_parent_and_child() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn natural_parent_exit_still_terminates_a_stdio_closed_background_child() {
-    let _native_test_permit = native_test_permit().await;
     let manager = native_manager();
     manager.enable().await;
     let root = repository_root();
@@ -836,7 +920,6 @@ async fn natural_parent_exit_still_terminates_a_stdio_closed_background_child() 
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn manager_drop_terminates_the_reported_parent_and_child() {
-    let _native_test_permit = native_test_permit().await;
     let manager = native_manager();
     manager.enable().await;
     let root = repository_root();
@@ -1230,6 +1313,46 @@ fn redirected_fixture() -> &'static str {
 #[cfg(target_os = "linux")]
 fn redirected_expected_output() -> &'static str {
     "in=true;out=true"
+}
+
+#[cfg(windows)]
+fn concurrent_terminal_command(marker: &str) -> String {
+    format!(
+        "Start-Sleep -Milliseconds 500; 0..255 | ForEach-Object {{ [Console]::Write((('ch' + 'unk:{marker}:{{0:D3}}:') -f $_) + ('x' * 64) + \"|`r`n\") }}; [Console]::Write('ta' + 'il:{marker}|')"
+    )
+}
+
+#[cfg(target_os = "linux")]
+fn concurrent_terminal_command(marker: &str) -> String {
+    format!(
+        "sleep 0.5; i=0; while [ $i -le 255 ]; do printf 'ch%sunk:{marker}:%03d:%064d|\\n' '' \"$i\" 0; i=$((i+1)); done; printf 'ta%sil:{marker}|' ''"
+    )
+}
+
+fn assert_concurrent_terminal_output(marker: &str, output: &str) -> Result<(), String> {
+    for index in 0..=255 {
+        let chunk = format!("chunk:{marker}:{index:03}:");
+        let occurrences = output.match_indices(&chunk).count();
+        if occurrences != 1 {
+            let positions = output
+                .match_indices(&chunk)
+                .map(|(position, _)| position)
+                .collect::<Vec<_>>();
+            return Err(format!(
+                "{marker} chunk {index:03} occurred {occurrences} times at {positions:?} in {} bytes",
+                output.len(),
+            ));
+        }
+    }
+    let tail = format!("tail:{marker}|");
+    let occurrences = output.match_indices(&tail).count();
+    if occurrences != 1 {
+        return Err(format!(
+            "{marker} exact final tail occurred {occurrences} times in {} bytes",
+            output.len()
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(windows)]

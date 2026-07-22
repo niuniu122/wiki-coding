@@ -3,7 +3,7 @@ use std::io::{self, Read, Write};
 use std::path::PathBuf;
 use std::pin::Pin;
 use std::thread;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use minimax_core::Clock;
 use minimax_protocol::ShellSessionId;
@@ -35,7 +35,9 @@ pub trait ShellChild: Send {
 pub trait ShellGuard: Send {
     fn terminate<'a>(&'a mut self) -> ShellTerminateFuture<'a>;
     fn confirm<'a>(&'a mut self) -> ShellTerminateFuture<'a>;
-    fn close_io(&mut self) {}
+    fn close_io(&mut self, _deadline: Instant) -> io::Result<()> {
+        Ok(())
+    }
     fn disarm(&mut self) {}
 }
 
