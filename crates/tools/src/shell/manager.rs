@@ -78,6 +78,7 @@ pub struct ShellCleanupError {
 #[derive(Clone)]
 pub struct ShellSessionManager {
     inner: Arc<Mutex<ShellSessionRegistry>>,
+    unpublished_sessions: Arc<StdMutex<BTreeMap<ShellSessionId, Arc<StdMutex<ShellSession>>>>>,
     lifecycle: Arc<Mutex<()>>,
     backend: Arc<dyn PtyBackend>,
     ids: Arc<dyn ShellSessionIdSource>,
@@ -100,7 +101,6 @@ struct ShellSessionRegistry {
     accepting: bool,
     terminal_sequence: u64,
     sessions: BTreeMap<ShellSessionId, Arc<StdMutex<ShellSession>>>,
-    unpublished_sessions: BTreeMap<ShellSessionId, Arc<StdMutex<ShellSession>>>,
 }
 
 struct ShellSession {
@@ -290,8 +290,8 @@ impl ShellSessionManager {
                 accepting: false,
                 terminal_sequence: 0,
                 sessions: BTreeMap::new(),
-                unpublished_sessions: BTreeMap::new(),
             })),
+            unpublished_sessions: Arc::new(StdMutex::new(BTreeMap::new())),
             lifecycle: Arc::new(Mutex::new(())),
             backend,
             ids,
@@ -576,9 +576,9 @@ impl ShellSessionManager {
             }
             settled.as_mut().await;
         }
-        let sessions = {
+        let mut sessions = {
             let registry = self.inner.lock().await;
-            let mut sessions = registry
+            registry
                 .sessions
                 .iter()
                 .filter_map(|(id, session)| {
@@ -587,15 +587,15 @@ impl ShellSessionManager {
                         .is_ok_and(|session| !session.cleanup_succeeded);
                     include.then(|| (id.clone(), Arc::clone(session)))
                 })
-                .collect::<Vec<_>>();
-            sessions.extend(
-                registry
-                    .unpublished_sessions
-                    .iter()
-                    .map(|(id, session)| (id.clone(), Arc::clone(session))),
-            );
-            sessions
+                .collect::<Vec<_>>()
         };
+        sessions.extend(
+            self.unpublished_sessions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .iter()
+                .map(|(id, session)| (id.clone(), Arc::clone(session))),
+        );
 
         let mut failed = Vec::new();
         for (session_id, session) in sessions {
@@ -607,14 +607,14 @@ impl ShellSessionManager {
                 failed.push(session_id);
             }
         }
-        {
-            let mut registry = self.inner.lock().await;
-            registry.unpublished_sessions.retain(|_, session| {
+        self.unpublished_sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .retain(|_, session| {
                 !session
                     .lock()
                     .is_ok_and(|session| session.cleanup_succeeded)
             });
-        }
         if failed.is_empty() {
             Ok(())
         } else {
@@ -1238,48 +1238,68 @@ impl ShellSessionManager {
         })
     }
 
-    async fn settle_unpublished_start(
+    fn settle_unpublished_start(
         &self,
         settlement: PendingSettlement,
-    ) -> Result<(), ShellManagerError> {
+    ) -> impl std::future::Future<Output = Result<(), ShellManagerError>> + Send + 'static {
+        let registered = self.register_unpublished_start(settlement);
         let manager = self.clone();
-        let settlement =
-            tokio::spawn(async move { manager.finish_unpublished_start(settlement).await });
-        settlement
+        async move {
+            let Some((internal_id, session)) = registered else {
+                return Ok(());
+            };
+            tokio::spawn(async move {
+                manager
+                    .finish_registered_unpublished_start(internal_id, session)
+                    .await
+            })
             .await
             .unwrap_or(Err(ShellManagerError::Indeterminate))
+        }
     }
 
-    async fn finish_unpublished_start(
+    fn register_unpublished_start(
         &self,
         mut settlement: PendingSettlement,
-    ) -> Result<(), ShellManagerError> {
-        let Some(session) = settlement.session.as_ref().cloned() else {
+    ) -> Option<(ShellSessionId, Arc<StdMutex<ShellSession>>)> {
+        let Some(session) = settlement.session.take() else {
             drop(settlement.running_slot.take());
             drop(settlement.starting_slot.take());
-            return Ok(());
+            return None;
         };
         let internal_id = session
             .lock()
             .map(|session| session.id.clone())
             .unwrap_or_else(|_| self.next_unpublished_id());
+        self.unpublished_sessions
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .insert(internal_id.clone(), Arc::clone(&session));
+        drop(settlement.running_slot.take());
+        drop(settlement.starting_slot.take());
+        Some((internal_id, session))
+    }
+
+    async fn finish_registered_unpublished_start(
+        &self,
+        internal_id: ShellSessionId,
+        session: Arc<StdMutex<ShellSession>>,
+    ) -> Result<(), ShellManagerError> {
         let cleanup = self.ensure_cleanup(&session).await;
         #[cfg(test)]
         self.wait_at_unpublished_registration_gate().await;
-        let mut registry = self.inner.lock().await;
-        let completed_session = match cleanup {
-            Ok(()) => settlement.session.take(),
-            Err(_) => {
-                if let Some(session) = settlement.session.take() {
-                    registry.unpublished_sessions.insert(internal_id, session);
-                }
-                None
+        if cleanup.is_ok() {
+            let mut unpublished = self
+                .unpublished_sessions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if unpublished
+                .get(&internal_id)
+                .is_some_and(|registered| Arc::ptr_eq(registered, &session))
+            {
+                unpublished.remove(&internal_id);
             }
-        };
-        drop(settlement.running_slot.take());
-        drop(settlement.starting_slot.take());
-        drop(registry);
-        drop(completed_session);
+        }
         cleanup
     }
 
@@ -1333,18 +1353,20 @@ impl Drop for ShellSessionManager {
         if Arc::strong_count(&self.inner) != 1 {
             return;
         }
-        let sessions = match self.inner.try_lock() {
+        let mut sessions = match self.inner.try_lock() {
             Ok(mut registry) => {
                 registry.accepting = false;
-                registry
-                    .sessions
-                    .values()
-                    .chain(registry.unpublished_sessions.values())
-                    .cloned()
-                    .collect::<Vec<_>>()
+                registry.sessions.values().cloned().collect::<Vec<_>>()
             }
             Err(_) => return,
         };
+        sessions.extend(
+            self.unpublished_sessions
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+                .values()
+                .cloned(),
+        );
         for session in sessions {
             let (guard, writer, child) = match session.try_lock() {
                 Ok(mut session) if session.state == ShellSessionState::Running => {
@@ -1488,82 +1510,43 @@ struct PendingSettlement {
     session: Option<Arc<StdMutex<ShellSession>>>,
 }
 
-impl PendingSettlement {
-    fn cleanup_without_runtime(&mut self) {
-        if let Some(session) = self.session.take() {
-            let (guard, running_slot, writer, child) = match session.lock() {
-                Ok(mut session) => (
-                    session.guard.take(),
-                    session.running_slot.take(),
-                    session.writer.take(),
-                    Some(Arc::clone(&session.child)),
-                ),
-                Err(_) => (None, None, None, None),
-            };
-            drop(guard);
-            drop(writer);
-            if let Some(child) = child
-                && let Ok(mut child) = child.try_lock()
-            {
-                let _ = child.kill();
-            }
-            drop(running_slot);
-            drop(session);
-        }
-        drop(self.running_slot.take());
-        drop(self.starting_slot.take());
-    }
-}
-
-impl Drop for PendingSettlement {
-    fn drop(&mut self) {
-        self.cleanup_without_runtime();
-    }
-}
-
 impl Drop for PendingStart {
     fn drop(&mut self) {
         if self.manager.is_none() {
             return;
         }
-        let (manager, mut settlement) = self.take_settlement();
-        if tokio::runtime::Handle::try_current().is_ok() {
-            settle_unpublished_start_on_independent_executor(manager, settlement);
-        } else {
-            settlement.cleanup_without_runtime();
+        let (manager, settlement) = self.take_settlement();
+        if let Some((internal_id, session)) = manager.register_unpublished_start(settlement) {
+            settle_unpublished_start_on_independent_executor(manager, internal_id, session);
         }
     }
 }
 
 fn settle_unpublished_start_on_independent_executor(
     manager: ShellSessionManager,
-    settlement: PendingSettlement,
+    internal_id: ShellSessionId,
+    session: Arc<StdMutex<ShellSession>>,
 ) {
-    let work = Arc::new(StdMutex::new(Some((manager, settlement))));
+    let work = Arc::new(StdMutex::new(Some((manager, internal_id, session))));
     let worker_work = Arc::clone(&work);
-    let spawned = thread::Builder::new()
+    let _ = thread::Builder::new()
         .name("shell-unpublished-cleanup".to_owned())
         .spawn(move || {
-            let Some((manager, mut settlement)) =
+            let Some((manager, internal_id, session)) =
                 worker_work.lock().ok().and_then(|mut work| work.take())
             else {
                 return;
             };
-            match tokio::runtime::Builder::new_current_thread()
+            let Ok(runtime) = tokio::runtime::Builder::new_current_thread()
                 .enable_all()
                 .build()
-            {
-                Ok(runtime) => {
-                    let _ = runtime.block_on(manager.finish_unpublished_start(settlement));
-                }
-                Err(_) => settlement.cleanup_without_runtime(),
-            }
+            else {
+                return;
+            };
+            let _ =
+                runtime.block_on(manager.finish_registered_unpublished_start(internal_id, session));
+            runtime.shutdown_timeout(CLEANUP_WAIT);
         });
-    if spawned.is_err()
-        && let Some((_manager, mut settlement)) = work.lock().ok().and_then(|mut work| work.take())
-    {
-        settlement.cleanup_without_runtime();
-    }
 }
 
 impl OwnedSessionResources {
@@ -1762,6 +1745,16 @@ mod tests {
         early_running_release: Arc<AtomicBool>,
     }
 
+    struct BlockingKillChild {
+        process: Arc<PublishLockProcess>,
+        entered: Arc<(Mutex<bool>, Condvar)>,
+        release: Arc<(Mutex<bool>, Condvar)>,
+    }
+
+    struct SilentWriter;
+
+    struct PassiveGuard;
+
     struct FailingContainmentGuard;
 
     struct RecoveringContainmentGuard {
@@ -1817,6 +1810,51 @@ mod tests {
     }
 
     impl crate::shell::PtyGuard for BlockingNoRuntimeGuard {
+        fn terminate<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+            Box::pin(async { Ok(()) })
+        }
+
+        fn confirm<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
+            Box::pin(async { Ok(()) })
+        }
+    }
+
+    impl PtyChild for BlockingKillChild {
+        fn process_id(&self) -> u32 {
+            78
+        }
+
+        fn try_wait(&mut self) -> io::Result<Option<i32>> {
+            Ok((!self.process.running.load(Ordering::Acquire)).then_some(-2))
+        }
+
+        fn kill(&mut self) -> io::Result<()> {
+            {
+                let (entered, signal) = &*self.entered;
+                *entered.lock().expect("blocking kill entered") = true;
+                signal.notify_all();
+            }
+            let (release, signal) = &*self.release;
+            let mut release = release.lock().expect("blocking kill release");
+            while !*release {
+                release = signal.wait(release).expect("blocking kill release wait");
+            }
+            self.process.exit();
+            Ok(())
+        }
+    }
+
+    impl Write for SilentWriter {
+        fn write(&mut self, bytes: &[u8]) -> io::Result<usize> {
+            Ok(bytes.len())
+        }
+
+        fn flush(&mut self) -> io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl crate::shell::PtyGuard for PassiveGuard {
         fn terminate<'a>(&'a mut self) -> PtyTerminateFuture<'a> {
             Box::pin(async { Ok(()) })
         }
@@ -1912,12 +1950,19 @@ mod tests {
         drop(starts);
 
         assert!(started.elapsed() < Duration::from_secs(2));
+        assert_eq!(manager.slots.starting.load(Ordering::Acquire), 0);
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while (guard_drops.load(Ordering::Acquire) != MAX_RUNNING_SHELL_SESSIONS
+            || manager.slots.running.load(Ordering::Acquire) != 0)
+            && Instant::now() < deadline
+        {
+            std::thread::sleep(Duration::from_millis(10));
+        }
         assert_eq!(
             guard_drops.load(Ordering::Acquire),
             MAX_RUNNING_SHELL_SESSIONS
         );
         assert!(!early_running_release.load(Ordering::Acquire));
-        assert_eq!(manager.slots.starting.load(Ordering::Acquire), 0);
         assert_eq!(manager.slots.running.load(Ordering::Acquire), 0);
     }
 
@@ -2030,6 +2075,76 @@ mod tests {
         assert_eq!(manager.slots.running.load(Ordering::Acquire), 0);
     }
 
+    #[test]
+    fn blocked_cleanup_is_registered_before_the_starting_lease_is_released() {
+        let backend = Arc::new(PublishLockBackend::default());
+        let manager = ShellSessionManager::new(
+            backend.clone(),
+            Arc::new(FixedIds),
+            Arc::new(SystemShellClock),
+        );
+        let entered = Arc::new((Mutex::new(false), Condvar::new()));
+        let release = Arc::new((Mutex::new(false), Condvar::new()));
+        let idle_runtime = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("idle runtime");
+        idle_runtime.block_on(async {
+            manager.enable().await;
+            let (starting_slot, running_slot) = manager.slots.reserve().expect("slot reservation");
+            let mut pending = PendingStart::reserved(manager.clone(), starting_slot, running_slot);
+            let mut spawned = backend
+                .spawn(&ShellSpawnRequest {
+                    command: "blocked-cleanup".to_owned(),
+                    cwd: std::path::PathBuf::from("."),
+                    cols: 120,
+                    rows: 30,
+                })
+                .expect("blocked cleanup process");
+            spawned.child = Box::new(BlockingKillChild {
+                process: Arc::clone(&backend.process),
+                entered: Arc::clone(&entered),
+                release: Arc::clone(&release),
+            });
+            spawned.writer = Box::new(SilentWriter);
+            spawned.guard.disarm();
+            spawned.guard = Box::new(PassiveGuard);
+            let resources = manager
+                .own_spawned_resources(spawned)
+                .unwrap_or_else(|_| panic!("blocked cleanup resources"));
+            pending.own_resources(resources);
+            drop(pending);
+        });
+
+        let (entered_lock, entered_signal) = &*entered;
+        let (entered_lock, _) = entered_signal
+            .wait_timeout_while(
+                entered_lock.lock().expect("blocking kill entered"),
+                Duration::from_secs(5),
+                |entered| !*entered,
+            )
+            .expect("blocking kill entered wait");
+        let kill_entered = *entered_lock;
+        drop(entered_lock);
+        let starting_while_kill_is_blocked = manager.slots.starting.load(Ordering::Acquire);
+        let running_while_kill_is_blocked = manager.slots.running.load(Ordering::Acquire);
+        {
+            let (release, signal) = &*release;
+            *release.lock().expect("blocking kill release") = true;
+            signal.notify_all();
+        }
+
+        assert!(
+            kill_entered,
+            "cleanup never reached the blocking child kill"
+        );
+        assert_eq!(
+            starting_while_kill_is_blocked, 0,
+            "starting lease remained held after fail-closed registration"
+        );
+        assert_eq!(running_while_kill_is_blocked, 1);
+    }
+
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn disable_waits_for_no_runtime_pending_start_cleanup_to_finish() {
         let backend = Arc::new(PublishLockBackend::default());
@@ -2076,6 +2191,7 @@ mod tests {
         .await
         .expect("guard entered waiter joins");
         let starting_during_cleanup = manager.slots.starting.load(Ordering::Acquire);
+        let running_during_cleanup = manager.slots.running.load(Ordering::Acquire);
         let disable_manager = manager.clone();
         let mut disable = tokio::spawn(async move { disable_manager.disable_and_stop_all().await });
         let early = tokio::time::timeout(Duration::from_millis(50), &mut disable).await;
@@ -2093,7 +2209,8 @@ mod tests {
             Err(_) => disable.await.expect("waiting disable joins"),
         };
 
-        assert_eq!(starting_during_cleanup, 1);
+        assert_eq!(starting_during_cleanup, 0);
+        assert_eq!(running_during_cleanup, 1);
         assert!(!finished_early, "disable bypassed no-runtime cleanup");
         disable_result.expect("disable succeeds after no-runtime cleanup");
         assert!(!early_running_release.load(Ordering::Acquire));
@@ -2135,7 +2252,7 @@ mod tests {
     }
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    async fn disable_cannot_finish_before_a_failed_unpublished_start_is_registered() {
+    async fn disable_observes_a_failed_start_registered_before_async_cleanup_finishes() {
         let backend = Arc::new(PublishLockBackend::default());
         let manager = ShellSessionManager::new(
             backend.clone(),
@@ -2170,26 +2287,22 @@ mod tests {
         let (settlement_manager, settlement) = pending.take_settlement();
         let finish = tokio::spawn(async move {
             settlement_manager
-                .finish_unpublished_start(settlement)
+                .settle_unpublished_start(settlement)
                 .await
         });
         gate.entered.wait().await;
 
         let disable_manager = manager.clone();
-        let mut disable = tokio::spawn(async move { disable_manager.disable_and_stop_all().await });
-        let early = tokio::time::timeout(Duration::from_millis(50), &mut disable).await;
-        let finished_early = early.is_ok();
+        let disable = tokio::spawn(async move { disable_manager.disable_and_stop_all().await });
+        let disable_result = tokio::time::timeout(Duration::from_secs(1), disable)
+            .await
+            .expect("disable sees the synchronously registered failed start")
+            .expect("disable task joins");
         gate.release.wait().await;
         assert_eq!(
             finish.await.expect("unpublished settlement joins"),
             Err(ShellManagerError::Indeterminate)
         );
-        let disable_result = match early {
-            Ok(result) => result.expect("early disable joins"),
-            Err(_) => disable.await.expect("waiting disable joins"),
-        };
-
-        assert!(!finished_early, "disable bypassed unpublished registration");
         assert_eq!(
             disable_result,
             Err(ShellCleanupError {
@@ -2234,12 +2347,16 @@ mod tests {
             let (settlement_manager, settlement) = pending.take_settlement();
             assert_eq!(
                 settlement_manager
-                    .finish_unpublished_start(settlement)
+                    .settle_unpublished_start(settlement)
                     .await,
                 Err(ShellManagerError::Indeterminate)
             );
             assert_eq!(
-                manager.inner.lock().await.unpublished_sessions.len(),
+                manager
+                    .unpublished_sessions
+                    .lock()
+                    .expect("unpublished registry")
+                    .len(),
                 1,
                 "failed unpublished cleanup is retained"
             );
@@ -2251,7 +2368,11 @@ mod tests {
                 .await
                 .expect("unpublished retry succeeds");
             assert_eq!(
-                manager.inner.lock().await.unpublished_sessions.len(),
+                manager
+                    .unpublished_sessions
+                    .lock()
+                    .expect("unpublished registry")
+                    .len(),
                 0,
                 "successful unpublished cleanup is pruned in cycle {cycle}"
             );
