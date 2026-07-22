@@ -920,7 +920,12 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
     )?;
     if lines[*env_start + 1..env_end]
         .iter()
-        .filter(|line| line.trim() == reproducible_msvc_link)
+        .filter(|line| {
+            let trimmed = line.trim_start();
+            line.len().saturating_sub(trimmed.len()) == 6
+                && trimmed == reproducible_msvc_link
+                && matches!(yaml_mapping_key(line), Ok(Some("RUSTFLAGS")))
+        })
         .count()
         != 1
     {

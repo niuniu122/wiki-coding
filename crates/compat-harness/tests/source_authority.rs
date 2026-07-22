@@ -1155,6 +1155,10 @@ fn ci_rejects_non_executing_authority_text_forgery() {
         &format!("      {reproducible_msvc_link}\n"),
         &format!("      RUSTFLAGS: ''\n      # {reproducible_msvc_link}\n"),
     );
+    let scalar_rustflags = source.replace(
+        &format!("      {reproducible_msvc_link}\n"),
+        &format!("      RUSTFLAGS: ''\n      PROOF: |\n        {reproducible_msvc_link}\n"),
+    );
     let conditional_canary = source.replace(
         "      - name: Run Linux adversarial sandbox canary\n        if: runner.os == 'Linux'\n        run: bash scripts/ci-linux-sandbox-canary.sh\n",
         "      - name: Run Linux adversarial sandbox canary\n        if: false\n        run: bash scripts/ci-linux-sandbox-canary.sh\n",
@@ -1176,6 +1180,11 @@ fn ci_rejects_non_executing_authority_text_forgery() {
         (
             "commented RUSTFLAGS",
             commented_rustflags,
+            "reproducible /Brepro linking",
+        ),
+        (
+            "block scalar RUSTFLAGS",
+            scalar_rustflags,
             "reproducible /Brepro linking",
         ),
         (
