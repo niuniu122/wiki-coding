@@ -4,7 +4,7 @@ use std::ffi::OsString;
 use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 #[cfg(windows)]
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 #[cfg(any(windows, target_os = "linux"))]
 use std::process::{Child, Command, ExitStatus, Stdio};
 #[cfg(target_os = "linux")]
@@ -20,6 +20,10 @@ const HOST_ADDRESS_ENV: &str = "MINIMAX_SHELL_HOST_ADDRESS";
 const HOST_TOKEN_ENV: &str = "MINIMAX_SHELL_HOST_TOKEN";
 const HOST_VERSION_ENV: &str = "MINIMAX_SHELL_HOST_VERSION";
 const HOST_TIMEOUT_ENV: &str = "MINIMAX_SHELL_HOST_TIMEOUT_MS";
+#[cfg(windows)]
+const WINDOWS_COMMAND_PATH_ENV: &str = "MINIMAX_SHELL_COMMAND_PATH";
+#[cfg(windows)]
+const WINDOWS_COMMAND_BOOTSTRAP: &str = "$p=$env:MINIMAX_SHELL_COMMAND_PATH; Remove-Item Env:MINIMAX_SHELL_COMMAND_PATH -ErrorAction SilentlyContinue; try {$c=[IO.File]::ReadAllText($p,[Text.UTF8Encoding]::new($false,$true))} finally {Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue}; Invoke-Expression $c";
 const PROTOCOL_MAGIC: [u8; 8] = *b"MMXHOST1";
 const PROTOCOL_VERSION: u16 = 1;
 const HEADER_BYTES: usize = 15;
@@ -577,6 +581,7 @@ fn linux_root_exit_from_status(status: ExitStatus) -> RootExit {
 #[cfg(windows)]
 struct WindowsProcessSupervisor {
     child: Option<Child>,
+    command_payload: Option<WindowsCommandPayload>,
     observed_exit: Option<RootExit>,
 }
 
@@ -585,6 +590,7 @@ impl WindowsProcessSupervisor {
     fn new() -> Self {
         Self {
             child: None,
+            command_payload: None,
             observed_exit: None,
         }
     }
@@ -603,7 +609,8 @@ impl HostSupervisor for WindowsProcessSupervisor {
                 "shell root process already exists",
             ));
         }
-        let shell = resolve_windows_process_shell(command)?;
+        let command_payload = WindowsCommandPayload::stage(command)?;
+        let shell = resolve_windows_process_shell()?;
         let mut process = Command::new(shell.program);
         process.args(shell.args);
         for key in [
@@ -614,11 +621,14 @@ impl HostSupervisor for WindowsProcessSupervisor {
         ] {
             process.env_remove(key);
         }
+        process.env(WINDOWS_COMMAND_PATH_ENV, command_payload.path());
         process
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
             .stderr(Stdio::inherit());
-        self.child = Some(process.spawn()?);
+        let child = process.spawn()?;
+        self.child = Some(child);
+        self.command_payload = Some(command_payload);
         Ok(())
     }
 
@@ -634,14 +644,17 @@ impl HostSupervisor for WindowsProcessSupervisor {
         };
         let exit = root_exit_from_status(status);
         self.observed_exit = Some(exit);
+        self.command_payload.take();
         Ok(Some(exit))
     }
 
     fn cleanup(&mut self) -> io::Result<Option<RootExit>> {
         if let Some(exit) = self.observed_exit {
+            self.command_payload.take();
             return Ok(Some(exit));
         }
         let Some(child) = self.child.as_mut() else {
+            self.command_payload.take();
             return Ok(Some(RootExit::Code(125)));
         };
         let status = match child.try_wait()? {
@@ -653,12 +666,37 @@ impl HostSupervisor for WindowsProcessSupervisor {
         };
         let exit = root_exit_from_status(status);
         self.observed_exit = Some(exit);
+        self.command_payload.take();
         Ok(Some(exit))
     }
 }
 
 #[cfg(windows)]
-fn resolve_windows_process_shell(command: &str) -> io::Result<ResolvedProcessShell> {
+struct WindowsCommandPayload {
+    path: tempfile::TempPath,
+}
+
+#[cfg(windows)]
+impl WindowsCommandPayload {
+    fn stage(command: &str) -> io::Result<Self> {
+        let mut file = tempfile::Builder::new()
+            .prefix("minimax-shell-")
+            .suffix(".ps1")
+            .tempfile()?;
+        file.write_all(command.as_bytes())?;
+        file.flush()?;
+        Ok(Self {
+            path: file.into_temp_path(),
+        })
+    }
+
+    fn path(&self) -> &Path {
+        self.path.as_ref()
+    }
+}
+
+#[cfg(windows)]
+fn resolve_windows_process_shell() -> io::Result<ResolvedProcessShell> {
     let pwsh = std::env::var_os("PATH")
         .into_iter()
         .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
@@ -682,7 +720,7 @@ fn resolve_windows_process_shell(command: &str) -> io::Result<ResolvedProcessShe
             "-NoLogo".to_owned(),
             "-NoProfile".to_owned(),
             "-Command".to_owned(),
-            command.to_owned(),
+            WINDOWS_COMMAND_BOOTSTRAP.to_owned(),
         ],
     })
 }
@@ -1418,6 +1456,96 @@ mod tests {
     #[test]
     fn linux_trusted_host_supervisor_is_available_to_the_internal_host() {
         let _ = super::LinuxProcessSupervisor::new();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_command_payload_is_utf8_exclusive_and_guard_deleted() {
+        let command = "Write-Output '雪-32k'";
+        let payload = super::WindowsCommandPayload::stage(command).expect("stage command");
+        let path = payload.path().to_owned();
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read payload"),
+            command
+        );
+        drop(payload);
+        assert!(!path.exists(), "payload guard must delete its path");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_powershell_arguments_are_one_bounded_constant_bootstrap() {
+        let shell = super::resolve_windows_process_shell().expect("PowerShell");
+        assert!(
+            shell
+                .args
+                .iter()
+                .any(|argument| argument == super::WINDOWS_COMMAND_BOOTSTRAP)
+        );
+        assert!(shell.args.iter().map(String::len).sum::<usize>() < 1_024);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_command_payload_bootstrap_decodes_unicode_and_removes_path_environment() {
+        let command = "Write-Output 'payload-unicode-雪🙂'; Write-Output \"payload-env-empty=$([String]::IsNullOrEmpty($env:MINIMAX_SHELL_COMMAND_PATH))\"";
+        let output = run_windows_command_payload(command);
+        let stdout = String::from_utf8(output.stdout).expect("UTF-8 PowerShell stdout");
+
+        assert_eq!(output.status.code(), Some(0), "{stdout:?}");
+        assert!(stdout.contains("payload-unicode-雪🙂"), "{stdout:?}");
+        assert!(stdout.contains("payload-env-empty=True"), "{stdout:?}");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_command_payload_bootstrap_rejects_invalid_utf8_and_deletes_payload() {
+        let payload = super::WindowsCommandPayload::stage("Write-Output 'must-not-run'")
+            .expect("stage command");
+        let path = payload.path().to_owned();
+        std::fs::write(&path, [0xff]).expect("replace payload with invalid UTF-8");
+        let shell = super::resolve_windows_process_shell().expect("PowerShell");
+        let output = std::process::Command::new(shell.program)
+            .args(shell.args)
+            .env(super::WINDOWS_COMMAND_PATH_ENV, &path)
+            .output()
+            .expect("run PowerShell bootstrap");
+
+        assert!(!output.status.success(), "invalid UTF-8 must fail decoding");
+        assert!(!String::from_utf8_lossy(&output.stdout).contains("must-not-run"));
+        assert!(!path.exists(), "bootstrap must delete a rejected payload");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_command_payload_keeps_user_command_out_of_process_argv() {
+        let marker = "process-list-secret-marker";
+        let command = format!(
+            "$m='{marker}'; if ([Environment]::CommandLine.Contains($m)) {{ Write-Output 'argv-dirty' }} else {{ Write-Output 'argv-clean' }}"
+        );
+        let output = run_windows_command_payload(&command);
+        let stdout = String::from_utf8(output.stdout).expect("UTF-8 PowerShell stdout");
+        let stderr = String::from_utf8(output.stderr).expect("UTF-8 PowerShell stderr");
+
+        assert_eq!(output.status.code(), Some(0), "{stderr:?}");
+        assert!(stdout.contains("argv-clean"), "{stdout:?}");
+        assert!(!stdout.contains("argv-dirty"), "{stdout:?}");
+        assert!(!stdout.contains(marker), "{stdout:?}");
+        assert!(!stderr.contains(marker), "{stderr:?}");
+    }
+
+    #[cfg(windows)]
+    fn run_windows_command_payload(command: &str) -> std::process::Output {
+        let payload = super::WindowsCommandPayload::stage(command).expect("stage command");
+        let path = payload.path().to_owned();
+        let shell = super::resolve_windows_process_shell().expect("PowerShell");
+        let output = std::process::Command::new(shell.program)
+            .args(shell.args)
+            .env(super::WINDOWS_COMMAND_PATH_ENV, &path)
+            .output()
+            .expect("run PowerShell bootstrap");
+        assert!(!path.exists(), "bootstrap must delete its payload");
+        output
     }
 
     #[cfg(target_os = "linux")]

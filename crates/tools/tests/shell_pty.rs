@@ -2,6 +2,8 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
+#[cfg(windows)]
+use minimax_protocol::MAX_SHELL_COMMAND_BYTES;
 use minimax_protocol::{
     MAX_SHELL_OUTPUT_BYTES, ShellReceipt, ShellSessionState, ToolCall, ToolCallId, ToolEffect,
     ToolInvocation,
@@ -432,6 +434,29 @@ async fn windows_trusted_host_does_not_inject_bootstrap_as_powershell_variables(
             "{receipt:?}"
         );
     }
+}
+
+#[cfg(windows)]
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn exact_maximum_windows_command_launches() {
+    let manager = native_manager();
+    manager.enable().await;
+
+    let first = start_command(
+        &manager,
+        exact_maximum_command(),
+        &repository_root(),
+        false,
+        Duration::from_secs(5),
+    )
+    .await;
+    let cleanup = cleanup(&manager).await;
+
+    cleanup.expect("cleanup succeeds");
+    let receipt = first.expect("exact maximum Windows command launches");
+    assert_eq!(receipt.state, ShellSessionState::Exited, "{receipt:?}");
+    assert_eq!(receipt.exit_code, Some(0), "{receipt:?}");
+    assert_eq!(receipt.output.matches("max-command-ok").count(), 1);
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
@@ -1271,6 +1296,17 @@ fn repository_root() -> PathBuf {
         .nth(2)
         .expect("repository root")
         .to_owned()
+}
+
+#[cfg(windows)]
+fn exact_maximum_command() -> String {
+    let prefix = "Write-Output 'max-command-ok'; #";
+    let command = format!(
+        "{prefix}{}",
+        "x".repeat(MAX_SHELL_COMMAND_BYTES - prefix.len())
+    );
+    assert_eq!(command.len(), MAX_SHELL_COMMAND_BYTES);
+    command
 }
 
 #[cfg(windows)]

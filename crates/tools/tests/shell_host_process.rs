@@ -26,8 +26,8 @@ fn real_internal_host_preserves_exit_stdio_and_hides_bootstrap_environment() {
     );
     let secret_command_marker = "internal-command-must-not-be-echoed-71f5650d";
     let shell_command = format!(
-        "$m='{secret_command_marker}'; Write-Output 'shell-stdio-ok'; \
-         'MINIMAX_SHELL_HOST_ADDRESS','MINIMAX_SHELL_HOST_TOKEN','MINIMAX_SHELL_HOST_VERSION','MINIMAX_SHELL_HOST_TIMEOUT_MS' | \
+        "$m='{secret_command_marker}'; if ([Environment]::CommandLine.Contains($m)) {{ Write-Output 'argv-dirty' }} else {{ Write-Output 'argv-clean' }}; Write-Output 'shell-stdio-ok'; \
+         'MINIMAX_SHELL_HOST_ADDRESS','MINIMAX_SHELL_HOST_TOKEN','MINIMAX_SHELL_HOST_VERSION','MINIMAX_SHELL_HOST_TIMEOUT_MS','MINIMAX_SHELL_COMMAND_PATH' | \
          ForEach-Object {{ Write-Output \"$_=$([String]::IsNullOrEmpty([Environment]::GetEnvironmentVariable($_, 'Process')))\" }}; exit 7"
     );
     parent
@@ -43,12 +43,15 @@ fn real_internal_host_preserves_exit_stdio_and_hides_bootstrap_environment() {
 
     assert_eq!(output.status.code(), Some(7));
     assert!(output.stderr.is_empty(), "host bootstrap must stay silent");
+    assert!(stdout.contains("argv-clean"), "{stdout}");
+    assert!(!stdout.contains("argv-dirty"), "{stdout}");
     assert!(stdout.contains("shell-stdio-ok"));
     for key in [
         "MINIMAX_SHELL_HOST_ADDRESS",
         "MINIMAX_SHELL_HOST_TOKEN",
         "MINIMAX_SHELL_HOST_VERSION",
         "MINIMAX_SHELL_HOST_TIMEOUT_MS",
+        "MINIMAX_SHELL_COMMAND_PATH",
     ] {
         assert!(stdout.contains(&format!("{key}=True")), "{stdout}");
     }
