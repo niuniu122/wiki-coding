@@ -127,6 +127,7 @@ enum ReaderState {
         handle: thread::JoinHandle<()>,
         completion: Arc<ReaderCompletion>,
     },
+    Joining(Arc<ReaderJoin>),
     Complete,
     Failed,
 }
@@ -155,6 +156,92 @@ impl ReaderCompletion {
         self.completed
             .wait_timeout_while(finished, timeout, |finished| !*finished)
             .is_ok_and(|(finished, _)| *finished)
+    }
+}
+
+struct ReaderJoin {
+    handle: StdMutex<Option<thread::JoinHandle<()>>>,
+    result: StdMutex<Option<bool>>,
+    completed: Condvar,
+}
+
+impl ReaderJoin {
+    fn new(handle: thread::JoinHandle<()>) -> Arc<Self> {
+        Arc::new(Self {
+            handle: StdMutex::new(Some(handle)),
+            result: StdMutex::new(None),
+            completed: Condvar::new(),
+        })
+    }
+
+    fn start(self: &Arc<Self>) {
+        let handle = self
+            .handle
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take();
+        let Some(handle) = handle else {
+            return;
+        };
+        let reporter = ReaderJoinReporter::new(Arc::clone(self));
+        drop(tokio::task::spawn_blocking(move || {
+            reporter.report(handle.join().is_ok());
+        }));
+    }
+
+    fn finish(&self, result: bool) {
+        let mut completed = self
+            .result
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if completed.is_none() {
+            *completed = Some(result);
+            self.completed.notify_all();
+        }
+    }
+
+    fn wait_timeout(&self, timeout: Duration) -> Option<bool> {
+        let completed = self
+            .result
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if completed.is_some() {
+            return *completed;
+        }
+        match self
+            .completed
+            .wait_timeout_while(completed, timeout, |completed| completed.is_none())
+        {
+            Ok((completed, _)) => *completed,
+            Err(poisoned) => *poisoned.into_inner().0,
+        }
+    }
+}
+
+struct ReaderJoinReporter {
+    reader_join: Arc<ReaderJoin>,
+    reported: bool,
+}
+
+impl ReaderJoinReporter {
+    fn new(reader_join: Arc<ReaderJoin>) -> Self {
+        Self {
+            reader_join,
+            reported: false,
+        }
+    }
+
+    fn report(mut self, result: bool) {
+        self.reader_join.finish(result);
+        self.reported = true;
+    }
+}
+
+impl Drop for ReaderJoinReporter {
+    fn drop(&mut self) {
+        if !self.reported {
+            self.reader_join.finish(false);
+        }
     }
 }
 
@@ -1174,7 +1261,7 @@ impl ShellSessionManager {
         let completion = match session.lock() {
             Ok(session) => match &session.reader {
                 ReaderState::Pending { completion, .. } => Some(Arc::clone(completion)),
-                ReaderState::Complete => None,
+                ReaderState::Joining(_) | ReaderState::Complete => None,
                 ReaderState::Failed => return false,
             },
             Err(_) => return false,
@@ -1189,9 +1276,17 @@ impl ShellSessionManager {
             return false;
         }
 
-        let handle = match session.lock() {
+        let joining = match session.lock() {
             Ok(mut session) => match std::mem::replace(&mut session.reader, ReaderState::Failed) {
-                ReaderState::Pending { handle, .. } => Some(handle),
+                ReaderState::Pending { handle, .. } => {
+                    let joining = ReaderJoin::new(handle);
+                    session.reader = ReaderState::Joining(Arc::clone(&joining));
+                    Some(joining)
+                }
+                ReaderState::Joining(joining) => {
+                    session.reader = ReaderState::Joining(Arc::clone(&joining));
+                    Some(joining)
+                }
                 ReaderState::Complete => {
                     session.reader = ReaderState::Complete;
                     None
@@ -1200,27 +1295,25 @@ impl ShellSessionManager {
             },
             Err(_) => return false,
         };
-        let reader_closed = match handle {
-            Some(handle) => matches!(
-                tokio::time::timeout(
-                    deadline.saturating_duration_since(Instant::now()),
-                    tokio::task::spawn_blocking(move || handle.join().is_ok()),
-                )
-                .await,
-                Ok(Ok(true))
-            ),
-            None => true,
+        let reader_result = match joining {
+            Some(joining) => {
+                joining.start();
+                wait_for_reader_join(&joining, deadline.saturating_duration_since(Instant::now()))
+                    .await
+            }
+            None => Some(true),
         };
         if let Ok(mut session) = session.lock() {
-            session.reader = if reader_closed {
-                ReaderState::Complete
-            } else {
-                ReaderState::Failed
-            };
+            match reader_result {
+                Some(true) => session.reader = ReaderState::Complete,
+                Some(false) => session.reader = ReaderState::Failed,
+                None => {}
+            }
         } else {
             return false;
         }
 
+        let reader_closed = reader_result == Some(true);
         let completed = tree_cleanup_confirmed && reader_closed;
         if completed {
             let mut guard = match session.lock() {
@@ -1449,6 +1542,16 @@ async fn wait_for_reader_completion(completion: &Arc<ReaderCompletion>, timeout:
         tokio::task::spawn_blocking(move || completion.wait_timeout(timeout)).await,
         Ok(true)
     )
+}
+
+async fn wait_for_reader_join(reader_join: &Arc<ReaderJoin>, timeout: Duration) -> Option<bool> {
+    let reader_join = Arc::clone(reader_join);
+    let operation = tokio::task::spawn_blocking(move || reader_join.wait_timeout(timeout));
+    match tokio::time::timeout(timeout, operation).await {
+        Ok(Ok(result)) => result,
+        Ok(Err(_)) => Some(false),
+        Err(_) => None,
+    }
 }
 
 struct OwnedSessionResources {
@@ -1720,14 +1823,24 @@ mod tests {
     use minimax_protocol::{MAX_SHELL_OUTPUT_BYTES, ShellSessionId};
 
     use super::{
-        CleanupAttempt, MAX_RUNNING_SHELL_SESSIONS, PendingStart, ShellCleanupError,
-        ShellCommandRequest, ShellManagerError, ShellSessionManager, UnpublishedRegistrationGate,
+        CleanupAttempt, MAX_RUNNING_SHELL_SESSIONS, PendingStart, ReaderJoin, ReaderJoinReporter,
+        ShellCleanupError, ShellCommandRequest, ShellManagerError, ShellSessionManager,
+        UnpublishedRegistrationGate,
     };
     use crate::NeverCancelled;
     use crate::shell::{
         ShellBackend, ShellChild, ShellIoMode, ShellSessionIdSource, ShellSpawnError,
         ShellSpawnRequest, ShellTerminateFuture, SpawnedShell, SystemShellClock,
     };
+
+    #[test]
+    fn dropped_reader_join_reporter_fails_closed() {
+        let reader_join = ReaderJoin::new(std::thread::spawn(|| {}));
+
+        drop(ReaderJoinReporter::new(Arc::clone(&reader_join)));
+
+        assert_eq!(reader_join.wait_timeout(Duration::ZERO), Some(false));
+    }
 
     #[derive(Default)]
     struct PublishLockBackend {

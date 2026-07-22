@@ -342,6 +342,7 @@ struct FakePlan {
     shared: Arc<FakeShared>,
     reader_rx: std::sync::mpsc::Receiver<ReaderEvent>,
     spawn_gate: Option<SpawnGate>,
+    reader_drop_gate: Option<ReaderDropGate>,
 }
 
 #[derive(Clone)]
@@ -370,6 +371,57 @@ struct KillGate {
     entered: Arc<AtomicBool>,
     entered_notify: Arc<tokio::sync::Notify>,
     released: Arc<(Mutex<bool>, Condvar)>,
+}
+
+#[derive(Clone)]
+struct ReaderDropGate {
+    entered: Arc<AtomicBool>,
+    entered_notify: Arc<tokio::sync::Notify>,
+    released: Arc<(Mutex<bool>, Condvar)>,
+}
+
+impl ReaderDropGate {
+    fn new() -> Self {
+        Self {
+            entered: Arc::new(AtomicBool::new(false)),
+            entered_notify: Arc::new(tokio::sync::Notify::new()),
+            released: Arc::new((Mutex::new(false), Condvar::new())),
+        }
+    }
+
+    fn block(&self) {
+        self.entered.store(true, Ordering::Release);
+        self.entered_notify.notify_waiters();
+        let (released, signal) = &*self.released;
+        let mut released = released.lock().expect("reader drop release lock");
+        while !*released {
+            released = signal.wait(released).expect("reader drop release wait");
+        }
+    }
+
+    async fn wait_until_entered_bounded(&self, timeout: Duration, message: &str) {
+        let wait = async {
+            loop {
+                let notified = self.entered_notify.notified();
+                tokio::pin!(notified);
+                notified.as_mut().enable();
+                if self.entered.load(Ordering::Acquire) {
+                    return;
+                }
+                notified.as_mut().await;
+            }
+        };
+        if tokio::time::timeout(timeout, wait).await.is_err() {
+            self.release();
+            panic!("{message}");
+        }
+    }
+
+    fn release(&self) {
+        let (released, signal) = &*self.released;
+        *released.lock().expect("reader drop release lock") = true;
+        signal.notify_all();
+    }
 }
 
 impl KillGate {
@@ -577,16 +629,26 @@ impl FakeBackend {
     }
 
     fn queue_process(&self) -> FakeControl {
-        self.queue_process_with_gate(None)
+        self.queue_process_with_gates(None, None)
     }
 
     fn queue_blocked_process(&self) -> (FakeControl, SpawnGate) {
         let gate = SpawnGate::new();
-        let control = self.queue_process_with_gate(Some(gate.clone()));
+        let control = self.queue_process_with_gates(Some(gate.clone()), None);
         (control, gate)
     }
 
-    fn queue_process_with_gate(&self, spawn_gate: Option<SpawnGate>) -> FakeControl {
+    fn queue_process_with_reader_drop_gate(&self) -> (FakeControl, ReaderDropGate) {
+        let gate = ReaderDropGate::new();
+        let control = self.queue_process_with_gates(None, Some(gate.clone()));
+        (control, gate)
+    }
+
+    fn queue_process_with_gates(
+        &self,
+        spawn_gate: Option<SpawnGate>,
+        reader_drop_gate: Option<ReaderDropGate>,
+    ) -> FakeControl {
         let process_id = u32::try_from(self.next_process_id.fetch_add(1, Ordering::AcqRel) + 1)
             .expect("test process id fits u32");
         let (reader_tx, reader_rx) = std::sync::mpsc::channel();
@@ -615,6 +677,7 @@ impl FakeBackend {
             shared: Arc::clone(&shared),
             reader_rx,
             spawn_gate,
+            reader_drop_gate,
         });
         FakeControl { shared }
     }
@@ -702,6 +765,7 @@ impl ShellBackend for FakeBackend {
             reader: Box::new(FakeReader {
                 receiver: plan.reader_rx,
                 pending: VecDeque::new(),
+                drop_gate: plan.reader_drop_gate,
             }),
             writer: Box::new(FakeWriter {
                 shared: Arc::clone(&plan.shared),
@@ -820,6 +884,7 @@ impl ShellChild for FakeChild {
 struct FakeReader {
     receiver: std::sync::mpsc::Receiver<ReaderEvent>,
     pending: VecDeque<u8>,
+    drop_gate: Option<ReaderDropGate>,
 }
 
 impl Read for FakeReader {
@@ -835,6 +900,14 @@ impl Read for FakeReader {
             *slot = self.pending.pop_front().expect("pending byte");
         }
         Ok(count)
+    }
+}
+
+impl Drop for FakeReader {
+    fn drop(&mut self) {
+        if let Some(gate) = self.drop_gate.take() {
+            gate.block();
+        }
     }
 }
 
@@ -2250,6 +2323,93 @@ async fn reader_timeout_preserves_resources_for_a_later_successful_retry() {
     assert_eq!(backend.termination_count(), 1);
     assert_eq!(control.guard_disarms(), 1);
     assert_eq!(control.guard_drops(), 1);
+}
+
+#[tokio::test]
+async fn completed_reader_with_blocked_drop_retries_join_and_restores_all_capacity() {
+    let backend = Arc::new(FakeBackend::default());
+    let (control, reader_drop_gate) = backend.queue_process_with_reader_drop_gate();
+    let manager = ShellSessionManager::new(
+        backend.clone(),
+        Arc::new(FailOnceIds::default()),
+        Arc::new(ManualClock::default()),
+    );
+    manager.enable().await;
+
+    let start_manager = manager.clone();
+    let start = tokio::spawn(async move {
+        start_manager
+            .start(
+                command_request("reader-drop-blocked", Duration::ZERO),
+                &NeverCancelled,
+            )
+            .await
+    });
+    reader_drop_gate
+        .wait_until_entered_bounded(
+            Duration::from_secs(3),
+            "reader never reached its post-completion Drop gate",
+        )
+        .await;
+    assert_eq!(
+        start.await.expect("blocked reader start caller joins"),
+        Err(ShellManagerError::Indeterminate)
+    );
+    assert_eq!(control.guard_disarms(), 0);
+    assert_eq!(control.guard_drops(), 0);
+
+    for index in 1..MAX_RUNNING_SHELL_SESSIONS {
+        backend.queue_process();
+        manager
+            .start(
+                command_request(&format!("retained-reader-slot-{index}"), Duration::ZERO),
+                &NeverCancelled,
+            )
+            .await
+            .expect("capacity excluding retained reader slot starts");
+    }
+    assert_eq!(
+        manager
+            .start(
+                command_request("over-retained-reader-capacity", Duration::ZERO),
+                &NeverCancelled,
+            )
+            .await,
+        Err(ShellManagerError::SessionLimit)
+    );
+
+    reader_drop_gate.release();
+    manager
+        .shutdown()
+        .await
+        .expect("later cleanup retries the same reader join and prunes the failed start");
+    assert_eq!(control.guard_disarms(), 1);
+    assert_eq!(control.guard_drops(), 1);
+
+    manager.enable().await;
+    for index in 0..MAX_RUNNING_SHELL_SESSIONS {
+        backend.queue_process();
+        manager
+            .start(
+                command_request(&format!("restored-reader-slot-{index}"), Duration::ZERO),
+                &NeverCancelled,
+            )
+            .await
+            .expect("successful retry restores every running slot");
+    }
+    assert_eq!(
+        manager
+            .start(
+                command_request("over-restored-reader-capacity", Duration::ZERO),
+                &NeverCancelled,
+            )
+            .await,
+        Err(ShellManagerError::SessionLimit)
+    );
+    manager
+        .shutdown()
+        .await
+        .expect("replacement sessions clean up");
 }
 
 #[tokio::test]
