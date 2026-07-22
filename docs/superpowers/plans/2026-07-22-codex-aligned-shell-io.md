@@ -4,9 +4,9 @@
 
 **Goal:** Make ordinary full-access Shell commands use lossless pipe I/O by default, retain explicit PTY/ConPTY execution with `tty: true`, and make the complete 32 KiB Windows command contract launchable.
 
-**Architecture:** Add one explicit `ShellIoMode` boundary from JSON parsing through the session manager to a renamed generic Shell backend. The native backend launches the existing authenticated host over either OS pipes or PTY/ConPTY while preserving the same Job/process-group containment. The Windows host stages command text outside `CreateProcess` arguments and launches a fixed PowerShell bootstrap that removes the payload before evaluating user code.
+**Architecture:** Add one explicit `ShellIoMode` boundary from JSON parsing through the session manager to a renamed generic Shell backend. The native backend launches the existing authenticated host over either OS pipes or a terminal while preserving the same Job/process-group containment. Linux terminal mode remains on `portable-pty`; Windows terminal mode crosses a new safe `windows-conpty` API whose isolated implementation owns the raw ConPTY, pipe, thread, process, and Job handles needed for deterministic teardown and pre-activation Job assignment. The Windows host stages command text outside `CreateProcess` arguments and launches a fixed PowerShell bootstrap that removes the payload before evaluating user code.
 
-**Tech Stack:** Rust 1.97/edition 2024, Tokio 1.52.3, `portable-pty` 0.9.0, direct `filedescriptor` 0.8.3, `tempfile` 3.27.0, PowerShell/pwsh, Windows Job Objects, Linux process groups/subreaper, JSON Schema fixtures, Cargo and Node verification harnesses.
+**Tech Stack:** Rust 1.97/edition 2024, Tokio 1.52.3, `portable-pty` 0.9.0 on Linux, direct `windows-sys` 0.61.2 plus `win32job` behind the isolated Windows boundary, direct `filedescriptor` 0.8.3, `tempfile` 3.27.0, PowerShell/pwsh, Windows Job Objects, Linux process groups/subreaper, JSON Schema fixtures, Cargo and Node verification harnesses.
 
 ## Global Constraints
 
@@ -24,12 +24,16 @@
 - Do not refresh hosted evidence, push, merge, tag, release, or publish.
 - Use TDD for every behavioral change: observe the focused test fail for the intended reason, implement the smallest coherent change, then rerun the focused and neighboring suites.
 - Use `apply_patch` for edits; preserve unrelated working-tree changes if any appear.
+- Every existing workspace crate, including `crates/tools`, retains `unsafe_code = "forbid"`. The only authorized exception is the new Windows-only `crates/windows-conpty` crate, which may contain the minimum reviewed `unsafe` needed to call Win32 ConPTY, pipe, thread, process, and Job APIs.
+- `crates/windows-conpty` exposes only safe Rust APIs and never exports raw handles. It must retain ConPTY-side pipe handles through `ClosePseudoConsole`, start a dedicated output drain before host activation, preserve the exact final output tail through pipe EOF, assign the Job before host activation, and join or cancel its owned blocking reader within the caller's single shared two-second cleanup budget.
 
 ## File and Responsibility Map
 
 - `crates/tools/src/shell/backend.rs`: generic Shell I/O mode and backend/resource contracts.
 - `crates/tools/src/shell/manager.rs`: map `tty` to an I/O mode and retain lifecycle/output ownership.
 - `crates/tools/src/shell/native.rs`: pipe versus terminal host launch, outer containment, and native resource wrappers.
+- `crates/windows-conpty/src/lib.rs`: Windows-only safe ConPTY boundary; owns raw handles, pre-activation Job assignment, output draining, exact-tail delivery, and bounded deterministic teardown.
+- `crates/windows-conpty/tests/teardown.rs`: deterministic lowest-boundary blocked-reader cancellation and output-tail regressions.
 - `crates/tools/src/shell/host.rs`: Windows command payload staging and PowerShell bootstrap.
 - `crates/tools/src/shell/command.rs`: strict JSON parsing and default `tty: false` behavior.
 - `crates/tools/src/policy.rs`: Provider-visible `tty` schema.
@@ -50,6 +54,9 @@
 
 - Modify: `Cargo.toml`
 - Modify: `crates/tools/Cargo.toml`
+- Create: `crates/windows-conpty/Cargo.toml`
+- Create: `crates/windows-conpty/src/lib.rs`
+- Create: `crates/windows-conpty/tests/teardown.rs`
 - Modify: `crates/tools/src/shell/backend.rs`
 - Modify: `crates/tools/src/shell/mod.rs`
 - Modify: `crates/tools/src/lib.rs`
@@ -308,7 +315,7 @@ SpawnedShell {
 }
 ```
 
-`NativeShellGuard` owns `Option<Box<dyn MasterPty + Send>>`; it is `Some` only for terminal mode. Job, parent control channel, Linux confirmation state, armed/disarmed rules, and drop cleanup remain common to both modes.
+On Linux, `NativeShellGuard` owns `Option<Box<dyn MasterPty + Send>>`; it is `Some` only for terminal mode. On Windows, terminal mode is created by the safe `windows-conpty` boundary. That boundary starts its dedicated output drain before activation, assigns the host to the kill-on-close Job before returning activation authority, retains ConPTY-side pipe handles until `ClosePseudoConsole`, and closes input then ConPTY then drains to EOF. `CancelSynchronousIo` is permitted only as a bounded fallback against the boundary-owned drain thread, followed by a join, and all close/drain/cancel/join work consumes the manager's one shared two-second cleanup deadline. Pipe mode, authentication, permission downgrade, output caps, fixed 120x30 geometry, and Linux `portable-pty` behavior remain unchanged.
 
 - [ ] **Step 7: Run the focused GREEN and neighboring suites**
 
@@ -331,6 +338,38 @@ git add Cargo.toml Cargo.lock crates/tools/Cargo.toml crates/tools/src/shell cra
 git diff --cached --check
 git commit -m "feat(shell): split pipe and terminal execution"
 ```
+
+#### Task 1 review-fix addendum: deterministic Windows ConPTY teardown
+
+Implementation commit `08748a9` passed its controller tests but review rejected the blanket native-test semaphore because it hid a real Windows reader-EOF race. The user authorized the minimum necessary `unsafe` only in the new Windows-only `crates/windows-conpty` boundary; no existing crate receives an exception.
+
+- [ ] **Review-fix Step A: Lock the boundary with deterministic RED tests**
+
+Add lowest-boundary tests before implementation. One test must leave an anonymous-pipe writer open and prove that a boundary-owned blocked drain can be cancelled and joined within the supplied deadline. A second must deliver multiple chunks plus an exact terminal tail, close normally, and prove every byte is delivered exactly once through EOF. Retain the un-serialized native regressions in `shell_pty.rs`, strengthening their payload to an exact multi-chunk body and unique tail. Run eight sessions through one manager and at least eight independent managers.
+
+Expected RED: the boundary tests fail to compile because the safe boundary API does not yet exist; the existing un-serialized native concurrency regressions expose the Windows reader-EOF hang or timeout without a test-only semaphore.
+
+- [ ] **Review-fix Step B: Implement the isolated safe boundary**
+
+Add pinned `windows-sys = "=0.61.2"` APIs only to `crates/windows-conpty`. Keep raw `HPCON`, pipe, process, thread, attribute-list, and Job handles private. Spawn the drain before activation, assign the Job before activation is exposed, and make explicit close order `input -> ClosePseudoConsole -> drain to EOF -> bounded CancelSynchronousIo fallback -> join -> remaining handle release`. Use explicit ownership rather than field-drop order. Copy no reference code without retaining its license notice and attribution.
+
+- [ ] **Review-fix Step C: Integrate one shared cleanup deadline**
+
+Change the safe guard contract only as needed to pass a remaining deadline into the boundary. The manager owns one `CLEANUP_WAIT` deadline; Windows close/drain/cancel and both reader joins all consume its remaining time rather than receiving independent two-second windows. Preserve authentication, permission downgrade, output caps, process-tree containment, fixed 120x30 geometry, pipe mode, and Linux `portable-pty`.
+
+- [ ] **Review-fix Step D: Prove GREEN and the unsafe boundary**
+
+```powershell
+cargo test -p minimax-windows-conpty --all-targets --locked -- --nocapture
+cargo test -p minimax-tools --test shell_pty native_terminal_concurrent --locked -- --nocapture
+cargo test -p minimax-tools --test shell_pty --locked -- --nocapture
+cargo test -p minimax-tools --all-targets --all-features --locked
+rg -n "unsafe" crates --glob "*.rs" --glob "!windows-conpty/**"
+cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
+cargo fmt --all -- --check
+```
+
+Expected GREEN: exact final tails are present, all sixteen concurrency shapes settle without serialization or survivors, every test remains inside the single two-second cleanup budget, and Rust `unsafe` occurs only in `crates/windows-conpty`.
 
 ---
 
@@ -613,7 +652,7 @@ cargo clippy --workspace --all-targets --all-features --locked -- -D warnings
 cargo fmt --all -- --check
 ```
 
-Expected: all exit `0`; no unsafe block is introduced, and both platform cfg branches compile.
+Expected: all exit `0`; `unsafe` is confined to the reviewed `crates/windows-conpty` boundary, every other crate remains `unsafe_code = "forbid"`, and both platform cfg branches compile.
 
 - [ ] **Step 3: Run the full local product gates**
 

@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-22
 
-**Status:** Approved direction; written specification awaiting user review
+**Status:** Approved; Task 1 implementation under review-fix
 
 ## Problem
 
@@ -38,6 +38,43 @@ unrelated architecture:
 MiniMax Codex retains its existing two-tool session contract, authenticated
 internal host, bounded output buffers, and process-tree containment. Only the
 I/O-mode selection and Windows command payload transport change.
+
+## Authorized Windows ConPTY Boundary
+
+Task 1 review exposed an intermittent Windows teardown failure: concurrent
+terminal sessions could terminate and reap their contained process trees while
+the erased `portable-pty` reader remained blocked past the fixed cleanup
+deadline. A test-wide semaphore was rejected because production supports eight
+concurrent sessions and independent managers.
+
+The user explicitly authorized one narrow exception to the workspace's
+no-unsafe rule. A new Windows boundary crate, `crates/windows-conpty`, may use
+the minimum Windows FFI needed to own ConPTY, anonymous-pipe, reader-thread,
+process, and Job-assignment handles. Its public API is safe and exposes no raw
+handle. `crates/tools` and every existing workspace crate continue to inherit
+`unsafe_code = "forbid"`; no generic shell lifecycle code may contain unsafe.
+
+The boundary follows the local Codex/WezTerm ConPTY ownership pattern under its
+retained MIT attribution, but does not copy Codex's non-cancellable
+`spawn_blocking` reader lifecycle. The locked safety invariants are:
+
+- create the ConPTY and both communication pipes before spawning the trusted
+  host, and retain the ConPTY-side pipe handles until `ClosePseudoConsole`;
+- start one dedicated output-drain thread before child activation and keep it
+  draining through `ClosePseudoConsole`, including any final frame, until the
+  output pipe breaks;
+- assign the trusted host process to the kill-on-close Job through the
+  boundary's safe API before authenticated host activation or command delivery;
+- close terminal input, close the ConPTY exactly once, drain and join the output
+  thread, and only then release the remaining output/process handles;
+- use `CancelSynchronousIo` only as a bounded fallback after ConPTY closure and
+  the normal drain interval, targeted exclusively at the owned drain thread;
+- share the manager's existing single two-second reader-cleanup deadline across
+  ConPTY close, final-frame drain, fallback cancellation, and both reader joins;
+- preserve fixed 120x30 terminal geometry, output budgets, authentication,
+  permissions, containment confirmation, and all pipe-mode behavior;
+- retain `portable-pty` unchanged for Linux and other non-Windows terminal
+  compilation paths.
 
 ## User-Facing Contract
 
@@ -132,8 +169,9 @@ activated and before it can start PowerShell. On Linux, the existing host
 preflight and process-group/subreaper containment remain authoritative. A pipe
 session therefore has the same cleanup boundary as a terminal session.
 
-For terminal mode, the current PTY/ConPTY launch path remains in use. The only
-behavioral change there is the explicit mode selection.
+For terminal mode, Linux retains the current `portable-pty` launch path.
+Windows uses the isolated ConPTY boundary above so reader teardown remains
+deterministic under the same supported concurrency as the session manager.
 
 ## Windows Command Payload
 
@@ -189,6 +227,9 @@ guessing which newlines a terminal inserted.
 - The permission snapshot and execution preflight remain unchanged.
 - Host authentication still precedes command delivery.
 - Windows Job assignment still precedes host activation.
+- Raw Windows handles and unsafe operations remain confined to the isolated
+  Windows ConPTY crate; safe callers cannot construct, duplicate, cancel, or
+  close an unowned handle.
 - Internal host address, token, protocol version, and timeout variables are not
   inherited by PowerShell.
 - The temporary payload path is removed from PowerShell's environment before
@@ -221,6 +262,20 @@ Write failing tests that prove:
 
 Then implement the minimal mode-aware backend and run focused protocol, tool,
 manager, native Shell, CLI, and policy-schema tests.
+
+### Cycle 1 review fix: concurrent ConPTY teardown
+
+Write boundary tests before implementation that prove a drain thread blocked on
+an open anonymous pipe is cancelled and joined within the supplied deadline,
+and that multi-chunk output plus an exact tail marker is preserved when normal
+writer closure produces EOF. Then run real native tests proving one manager can
+close eight simultaneous terminal sessions and at least eight independent
+managers can do the same without serialization. The full native suite must run
+with the test harness's ordinary parallelism.
+
+The boundary tests must first fail because the crate/API does not exist. The
+GREEN path must retain the exact final marker, use one shared two-second cleanup
+budget, and leave no detached reader thread or raw handle.
 
 ### Cycle 2: Windows 32 KiB payload
 
@@ -261,6 +316,8 @@ In scope:
 
 - the `tty` field and schema description;
 - pipe/terminal backend separation;
+- the isolated Windows ConPTY ownership and deterministic reader-teardown
+  boundary authorized during Task 1 review;
 - Windows command payload transport;
 - exact regression and lifecycle tests;
 - affected documentation, contract fixtures, and fingerprints;
