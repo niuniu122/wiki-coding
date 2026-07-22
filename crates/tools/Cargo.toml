@@ -18,6 +18,7 @@ tokio.workspace = true
 
 [target.'cfg(target_os = "linux")'.dependencies]
 rustix.workspace = true
+signal-hook.workspace = true
 
 [target.'cfg(windows)'.dependencies]
 win32job.workspace = true

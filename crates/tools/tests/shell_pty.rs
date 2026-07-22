@@ -7,10 +7,12 @@ use minimax_protocol::{
     ToolInvocation,
 };
 use minimax_tools::{
-    NativePtyBackend, NeverCancelled, ProcessShellSessionIds, PtyBackend, ShellCommandRequest,
-    ShellCommandTool, ShellManagerError, ShellPollRequest, ShellSessionManager, ShellSpawnRequest,
-    ShellWriteRequest, SystemShellClock, WorkspaceRoot,
+    NativePtyBackend, NeverCancelled, ProcessShellSessionIds, ShellCommandRequest,
+    ShellCommandTool, ShellManagerError, ShellPollRequest, ShellSessionManager, ShellWriteRequest,
+    SystemShellClock, WorkspaceRoot,
 };
+#[cfg(windows)]
+use minimax_tools::{PtyBackend, ShellSpawnRequest};
 
 const TEST_TIMEOUT: Duration = Duration::from_secs(15);
 
@@ -48,12 +50,12 @@ fn command_fixture(kind: FixtureKind) -> &'static str {
 }
 
 fn native_manager() -> ShellSessionManager {
-    #[cfg(windows)]
+    #[cfg(any(windows, target_os = "linux"))]
     let backend = NativePtyBackend::with_host_executable(PathBuf::from(env!(
         "CARGO_BIN_EXE_minimax-shell-test-host"
     )))
     .expect("absolute trusted test host");
-    #[cfg(not(windows))]
+    #[cfg(not(any(windows, target_os = "linux")))]
     let backend = NativePtyBackend::default();
     ShellSessionManager::new(
         Arc::new(backend),
@@ -771,12 +773,13 @@ async fn assert_tree_cleanup(action: TreeCleanup) {
 async fn wait_for_process_ids(
     manager: &ShellSessionManager,
     mut receipt: ShellReceipt,
-) -> Result<(ShellReceipt, Vec<u32>), String> {
+) -> Result<(ShellReceipt, Vec<TestProcessIdentity>), String> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(5);
     let mut output = receipt.output.clone();
     loop {
         if let Ok(process_ids) = parse_process_ids(&output) {
-            return Ok((receipt, process_ids));
+            return capture_process_identities(&process_ids)
+                .map(|identities| (receipt, identities));
         }
         if receipt.state != ShellSessionState::Running || tokio::time::Instant::now() >= deadline {
             return Err(format!("missing deterministic process IDs in {output:?}"));
@@ -789,6 +792,31 @@ async fn wait_for_process_ids(
         .await?;
         output.push_str(&receipt.output);
     }
+}
+
+#[derive(Clone, Debug)]
+struct TestProcessIdentity {
+    process_id: u32,
+    #[cfg(target_os = "linux")]
+    start_time: u64,
+}
+
+fn capture_process_identities(process_ids: &[u32]) -> Result<Vec<TestProcessIdentity>, String> {
+    process_ids
+        .iter()
+        .copied()
+        .map(|process_id| {
+            #[cfg(target_os = "linux")]
+            let start_time = linux_process_start_time(process_id).ok_or_else(|| {
+                format!("process {process_id} disappeared before identity capture")
+            })?;
+            Ok(TestProcessIdentity {
+                process_id,
+                #[cfg(target_os = "linux")]
+                start_time,
+            })
+        })
+        .collect()
 }
 
 async fn execute_shell_command_tool(
@@ -880,13 +908,12 @@ fn parse_process_ids(output: &str) -> Result<Vec<u32>, String> {
     }
 }
 
-async fn wait_for_processes_to_exit(process_ids: &[u32]) -> Result<(), String> {
+async fn wait_for_processes_to_exit(process_ids: &[TestProcessIdentity]) -> Result<(), String> {
     let deadline = tokio::time::Instant::now() + Duration::from_secs(10);
     loop {
         let survivors = process_ids
             .iter()
-            .copied()
-            .filter(|process_id| process_is_alive(*process_id))
+            .filter(|process| process_is_alive(process))
             .collect::<Vec<_>>();
         if survivors.is_empty() {
             return Ok(());
@@ -899,29 +926,32 @@ async fn wait_for_processes_to_exit(process_ids: &[u32]) -> Result<(), String> {
 }
 
 #[cfg(windows)]
-fn force_kill_processes(process_ids: &[u32]) {
+fn force_kill_processes(process_ids: &[TestProcessIdentity]) {
     let taskkill =
         Path::new(&std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into()))
             .join("System32")
             .join("taskkill.exe");
-    for process_id in process_ids {
+    for process in process_ids {
         let _ = std::process::Command::new(&taskkill)
-            .args(["/PID", &process_id.to_string(), "/F"])
+            .args(["/PID", &process.process_id.to_string(), "/F"])
             .status();
     }
 }
 
 #[cfg(target_os = "linux")]
-fn force_kill_processes(process_ids: &[u32]) {
-    for process_id in process_ids {
+fn force_kill_processes(process_ids: &[TestProcessIdentity]) {
+    for process in process_ids {
+        if !process_is_alive(process) {
+            continue;
+        }
         let _ = std::process::Command::new("/bin/kill")
-            .args(["-KILL", "--", &process_id.to_string()])
+            .args(["-KILL", "--", &process.process_id.to_string()])
             .status();
     }
 }
 
 #[cfg(windows)]
-fn process_is_alive(process_id: u32) -> bool {
+fn process_is_alive(process: &TestProcessIdentity) -> bool {
     std::process::Command::new(
         Path::new(&std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into()))
             .join("System32")
@@ -934,7 +964,8 @@ fn process_is_alive(process_id: u32) -> bool {
         "-NoProfile",
         "-Command",
         &format!(
-            "if (Get-Process -Id {process_id} -ErrorAction SilentlyContinue) {{ exit 0 }} else {{ exit 1 }}"
+            "if (Get-Process -Id {} -ErrorAction SilentlyContinue) {{ exit 0 }} else {{ exit 1 }}",
+            process.process_id
         ),
     ])
     .status()
@@ -942,8 +973,17 @@ fn process_is_alive(process_id: u32) -> bool {
 }
 
 #[cfg(target_os = "linux")]
-fn process_is_alive(process_id: u32) -> bool {
-    Path::new("/proc").join(process_id.to_string()).exists()
+fn process_is_alive(process: &TestProcessIdentity) -> bool {
+    linux_process_start_time(process.process_id) == Some(process.start_time)
+}
+
+#[cfg(target_os = "linux")]
+fn linux_process_start_time(process_id: u32) -> Option<u64> {
+    let stat =
+        std::fs::read_to_string(Path::new("/proc").join(process_id.to_string()).join("stat"))
+            .ok()?;
+    let close = stat.rfind(')')?;
+    stat[close + 1..].split_whitespace().nth(19)?.parse().ok()
 }
 
 fn repository_root() -> PathBuf {
@@ -1010,7 +1050,7 @@ fn process_tree_command() -> &'static str {
 
 #[cfg(target_os = "linux")]
 fn process_tree_command() -> &'static str {
-    "sleep 120 & child=$!; printf 'parent=%s;child=%s\\n' \"$$\" \"$child\"; wait \"$child\""
+    "setsid sh -c 'exec sleep 120' </dev/null >/dev/null 2>&1 & child=$!; printf 'parent=%s;child=%s\\n' \"$$\" \"$child\"; wait \"$child\""
 }
 
 #[cfg(windows)]
@@ -1034,7 +1074,7 @@ fn detached_process_tree_command(stdio: &Path) -> String {
 
 #[cfg(target_os = "linux")]
 fn detached_process_tree_command(_stdio: &Path) -> String {
-    "sleep 120 </dev/null >/dev/null 2>&1 & child=$!; printf 'parent=%s;child=%s\\n' \"$$\" \"$child\"; sleep 2; exit 0".to_owned()
+    r#"pidfile="$(mktemp)"; ( setsid sh -c 'pidfile="$1"; ( sh -c '"'"'printf "%s\n" "$$" > "$1"; exec sleep 120'"'"' sh "$pidfile" </dev/null >/dev/null 2>&1 & )' sh "$pidfile" </dev/null >/dev/null 2>&1 & ) & i=0; while test ! -s "$pidfile" && test "$i" -lt 500; do i=$((i + 1)); sleep 0.01; done; child="$(cat "$pidfile")"; rm -f "$pidfile"; printf 'parent=%s;child=%s\n' "$$" "$child"; sleep 2; exit 0"#.to_owned()
 }
 
 #[cfg(windows)]

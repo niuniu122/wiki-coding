@@ -1,10 +1,16 @@
+#[cfg(target_os = "linux")]
+use std::collections::{HashMap, VecDeque};
 use std::ffi::OsString;
 use std::io::{self, Read, Write};
 use std::net::{Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 #[cfg(windows)]
 use std::path::PathBuf;
-#[cfg(windows)]
+#[cfg(any(windows, target_os = "linux"))]
 use std::process::{Child, Command, ExitStatus, Stdio};
+#[cfg(target_os = "linux")]
+use std::sync::Arc;
+#[cfg(target_os = "linux")]
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
 use minimax_protocol::MAX_SHELL_COMMAND_BYTES;
@@ -183,17 +189,20 @@ pub fn run_internal_shell_host() -> i32 {
 #[cfg(windows)]
 type PlatformHostSupervisor = WindowsProcessSupervisor;
 
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+type PlatformHostSupervisor = LinuxProcessSupervisor;
+
+#[cfg(not(any(windows, target_os = "linux")))]
 struct PlatformHostSupervisor;
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 impl PlatformHostSupervisor {
     fn new() -> Self {
         Self
     }
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 impl HostSupervisor for PlatformHostSupervisor {
     fn preflight(&mut self) -> io::Result<()> {
         Err(io::Error::new(
@@ -215,6 +224,353 @@ impl HostSupervisor for PlatformHostSupervisor {
 
     fn cleanup(&mut self) -> io::Result<Option<RootExit>> {
         Ok(Some(RootExit::Code(125)))
+    }
+}
+
+#[cfg(target_os = "linux")]
+struct LinuxProcessSupervisor {
+    child: Option<Child>,
+    observed_exit: Option<RootExit>,
+    host: LinuxProcessIdentity,
+    cleanup_requested: Arc<AtomicBool>,
+    signal_registrations: Vec<signal_hook::SigId>,
+    term_deadline: Option<Instant>,
+    kill_phase: bool,
+    empty_scans: u8,
+}
+
+#[cfg(target_os = "linux")]
+impl LinuxProcessSupervisor {
+    fn new() -> Self {
+        Self {
+            child: None,
+            observed_exit: None,
+            host: LinuxProcessIdentity {
+                pid: std::process::id(),
+                parent_pid: 0,
+                start_time: 0,
+                state: '?',
+            },
+            cleanup_requested: Arc::new(AtomicBool::new(false)),
+            signal_registrations: Vec::new(),
+            term_deadline: None,
+            kill_phase: false,
+            empty_scans: 0,
+        }
+    }
+
+    fn observe_root_exit(&mut self) -> io::Result<Option<RootExit>> {
+        if let Some(exit) = self.observed_exit {
+            return Ok(Some(exit));
+        }
+        let Some(child) = self.child.as_mut() else {
+            return Ok(None);
+        };
+        let Some(status) = child.try_wait()? else {
+            return Ok(None);
+        };
+        let exit = linux_root_exit_from_status(status);
+        self.observed_exit = Some(exit);
+        Ok(Some(exit))
+    }
+
+    fn scan_descendants(&self) -> io::Result<Vec<LinuxProcessIdentity>> {
+        let processes = linux_process_table()?;
+        let host = processes
+            .iter()
+            .find(|process| process.pid == self.host.pid)
+            .ok_or_else(|| io::Error::other("Linux shell host disappeared from /proc"))?;
+        if host.start_time != self.host.start_time {
+            return Err(io::Error::other(
+                "Linux shell host identity changed while scanning /proc",
+            ));
+        }
+
+        Ok(linux_descendants_from_table(self.host.pid, processes))
+    }
+
+    fn signal_descendants(
+        &self,
+        descendants: &[LinuxProcessIdentity],
+        signal: rustix::process::Signal,
+    ) -> io::Result<()> {
+        for identity in descendants {
+            if identity.state == 'Z' {
+                continue;
+            }
+            let Some(pid) = linux_pid(identity.pid)? else {
+                continue;
+            };
+            let pidfd = match rustix::process::pidfd_open(pid, rustix::process::PidfdFlags::empty())
+            {
+                Ok(pidfd) => pidfd,
+                Err(rustix::io::Errno::SRCH) => continue,
+                Err(error) => return Err(io::Error::from(error)),
+            };
+            let Some(current) = read_linux_process(identity.pid)? else {
+                continue;
+            };
+            if current.start_time != identity.start_time {
+                continue;
+            }
+            let still_contained = self.scan_descendants()?.into_iter().any(|candidate| {
+                candidate.pid == identity.pid && candidate.start_time == identity.start_time
+            });
+            if !still_contained {
+                continue;
+            }
+            match rustix::process::pidfd_send_signal(&pidfd, signal) {
+                Ok(()) | Err(rustix::io::Errno::SRCH) => {}
+                Err(error) => return Err(io::Error::from(error)),
+            }
+        }
+        Ok(())
+    }
+
+    fn reap_exited_children(&mut self) -> io::Result<()> {
+        let root_pid = self.child.as_ref().map(Child::id);
+        for process in self.scan_descendants()? {
+            if process.parent_pid != self.host.pid
+                || process.state != 'Z'
+                || Some(process.pid) == root_pid
+            {
+                continue;
+            }
+            let Some(pid) = linux_pid(process.pid)? else {
+                continue;
+            };
+            match rustix::process::waitpid(Some(pid), rustix::process::WaitOptions::NOHANG) {
+                Ok(_) | Err(rustix::io::Errno::CHILD) => {}
+                Err(error) => return Err(io::Error::from(error)),
+            }
+        }
+
+        let root_exited = self.observe_root_exit()?.is_some();
+        if !root_exited {
+            return Ok(());
+        }
+        loop {
+            match rustix::process::wait(rustix::process::WaitOptions::NOHANG) {
+                Ok(Some(_)) => {}
+                Ok(None) | Err(rustix::io::Errno::CHILD) => return Ok(()),
+                Err(error) => return Err(io::Error::from(error)),
+            }
+        }
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn linux_descendants_from_table(
+    host_pid: u32,
+    processes: Vec<LinuxProcessIdentity>,
+) -> Vec<LinuxProcessIdentity> {
+    let mut children = HashMap::<u32, Vec<LinuxProcessIdentity>>::new();
+    for process in processes {
+        children
+            .entry(process.parent_pid)
+            .or_default()
+            .push(process);
+    }
+    let mut descendants = Vec::new();
+    let mut parents = VecDeque::from([host_pid]);
+    while let Some(parent) = parents.pop_front() {
+        if let Some(mut direct_children) = children.remove(&parent) {
+            direct_children.sort_by_key(|process| process.pid);
+            for child in direct_children {
+                parents.push_back(child.pid);
+                descendants.push(child);
+            }
+        }
+    }
+    descendants
+}
+
+#[cfg(target_os = "linux")]
+impl HostSupervisor for LinuxProcessSupervisor {
+    fn preflight(&mut self) -> io::Result<()> {
+        let host = linux_process_table()?
+            .into_iter()
+            .find(|process| process.pid == std::process::id())
+            .ok_or_else(|| io::Error::other("Linux shell host is unavailable in /proc"))?;
+        let host_pid = linux_pid(host.pid)?
+            .ok_or_else(|| io::Error::other("Linux shell host PID is invalid"))?;
+        let _pidfd = rustix::process::pidfd_open(host_pid, rustix::process::PidfdFlags::empty())
+            .map_err(io::Error::from)?;
+        rustix::process::set_child_subreaper(rustix::process::Pid::from_raw(1))
+            .map_err(io::Error::from)?;
+        if rustix::process::child_subreaper().map_err(io::Error::from)?
+            != rustix::process::Pid::from_raw(1)
+        {
+            return Err(io::Error::other(
+                "Linux shell host could not enable child-subreaper containment",
+            ));
+        }
+
+        for signal in [
+            signal_hook::consts::SIGINT,
+            signal_hook::consts::SIGTERM,
+            signal_hook::consts::SIGHUP,
+            signal_hook::consts::SIGQUIT,
+        ] {
+            let registration =
+                signal_hook::flag::register(signal, Arc::clone(&self.cleanup_requested))?;
+            self.signal_registrations.push(registration);
+        }
+        self.host = host;
+        Ok(())
+    }
+
+    fn spawn(&mut self, command: &str) -> io::Result<()> {
+        if self.child.is_some() {
+            return Err(io::Error::new(
+                io::ErrorKind::AlreadyExists,
+                "shell root process already exists",
+            ));
+        }
+        let shell = super::native::resolve_native_shell(command)?;
+        let mut process = Command::new(shell.program);
+        process.args(shell.args);
+        for key in [
+            HOST_ADDRESS_ENV,
+            HOST_TOKEN_ENV,
+            HOST_VERSION_ENV,
+            HOST_TIMEOUT_ENV,
+        ] {
+            process.env_remove(key);
+        }
+        process
+            .stdin(Stdio::inherit())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
+        self.child = Some(process.spawn()?);
+        Ok(())
+    }
+
+    fn try_root_exit(&mut self) -> io::Result<Option<RootExit>> {
+        self.observe_root_exit()
+    }
+
+    fn cleanup_requested(&self) -> bool {
+        self.cleanup_requested.load(Ordering::Relaxed)
+    }
+
+    fn cleanup(&mut self) -> io::Result<Option<RootExit>> {
+        self.reap_exited_children()?;
+        let descendants = self.scan_descendants()?;
+        if descendants.is_empty() {
+            self.empty_scans = self.empty_scans.saturating_add(1);
+            if self.empty_scans >= 2 {
+                return Ok(Some(self.observed_exit.unwrap_or(RootExit::Code(125))));
+            }
+            return Ok(None);
+        }
+        self.empty_scans = 0;
+
+        let term_deadline = *self
+            .term_deadline
+            .get_or_insert_with(|| Instant::now() + Duration::from_millis(50));
+        if !self.kill_phase && Instant::now() < term_deadline {
+            self.signal_descendants(&descendants, rustix::process::Signal::TERM)?;
+            return Ok(None);
+        }
+        self.kill_phase = true;
+        self.signal_descendants(&descendants, rustix::process::Signal::KILL)?;
+        Ok(None)
+    }
+}
+
+#[cfg(target_os = "linux")]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct LinuxProcessIdentity {
+    pid: u32,
+    parent_pid: u32,
+    start_time: u64,
+    state: char,
+}
+
+#[cfg(target_os = "linux")]
+fn linux_pid(raw_pid: u32) -> io::Result<Option<rustix::process::Pid>> {
+    let raw_pid =
+        i32::try_from(raw_pid).map_err(|_| io::Error::other("Linux process ID exceeds i32"))?;
+    Ok(rustix::process::Pid::from_raw(raw_pid))
+}
+
+#[cfg(target_os = "linux")]
+fn linux_process_table() -> io::Result<Vec<LinuxProcessIdentity>> {
+    let mut processes = Vec::new();
+    for entry in std::fs::read_dir("/proc")? {
+        let entry = entry?;
+        let Some(pid) = entry
+            .file_name()
+            .to_str()
+            .and_then(|name| name.parse::<u32>().ok())
+        else {
+            continue;
+        };
+        match read_linux_process(pid) {
+            Ok(Some(process)) => processes.push(process),
+            Ok(None) => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(processes)
+}
+
+#[cfg(target_os = "linux")]
+fn read_linux_process(pid: u32) -> io::Result<Option<LinuxProcessIdentity>> {
+    let stat = match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
+        Ok(stat) => stat,
+        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => return Err(error),
+    };
+    parse_linux_process_stat(&stat).map(Some)
+}
+
+#[cfg(target_os = "linux")]
+fn parse_linux_process_stat(stat: &str) -> io::Result<LinuxProcessIdentity> {
+    let open = stat
+        .find('(')
+        .ok_or_else(|| io::Error::other("Linux /proc stat omitted process name"))?;
+    let close = stat
+        .rfind(')')
+        .filter(|close| *close > open)
+        .ok_or_else(|| io::Error::other("Linux /proc stat has malformed process name"))?;
+    let pid = stat[..open]
+        .trim()
+        .parse::<u32>()
+        .map_err(|_| io::Error::other("Linux /proc stat has invalid PID"))?;
+    let fields = stat[close + 1..].split_whitespace().collect::<Vec<_>>();
+    if fields.len() <= 19 {
+        return Err(io::Error::other("Linux /proc stat is truncated"));
+    }
+    let state = fields[0]
+        .chars()
+        .next()
+        .ok_or_else(|| io::Error::other("Linux /proc stat has invalid state"))?;
+    let parent_pid = fields[1]
+        .parse::<u32>()
+        .map_err(|_| io::Error::other("Linux /proc stat has invalid parent PID"))?;
+    let start_time = fields[19]
+        .parse::<u64>()
+        .map_err(|_| io::Error::other("Linux /proc stat has invalid start time"))?;
+    Ok(LinuxProcessIdentity {
+        pid,
+        parent_pid,
+        start_time,
+        state,
+    })
+}
+
+#[cfg(target_os = "linux")]
+fn linux_root_exit_from_status(status: ExitStatus) -> RootExit {
+    use std::os::unix::process::ExitStatusExt as _;
+
+    if let Some(code) = status.code() {
+        RootExit::Code(code)
+    } else if let Some(signal) = status.signal().and_then(|signal| u8::try_from(signal).ok()) {
+        RootExit::Signal(signal)
+    } else {
+        RootExit::Code(125)
     }
 }
 
@@ -346,6 +702,9 @@ pub trait HostSupervisor {
     fn preflight(&mut self) -> io::Result<()>;
     fn spawn(&mut self, command: &str) -> io::Result<()>;
     fn try_root_exit(&mut self) -> io::Result<Option<RootExit>>;
+    fn cleanup_requested(&self) -> bool {
+        false
+    }
     /// Returns the root outcome only after the containment fixed point is empty.
     fn cleanup(&mut self) -> io::Result<Option<RootExit>>;
 }
@@ -359,52 +718,61 @@ pub fn run_host_lifecycle(
     supervisor.preflight()?;
     channel.send_contained()?;
     let command = channel.recv_command()?;
-    supervisor.spawn(&command)?;
     let mut root_exit = None;
-    let mut cleaning = false;
+    let mut terminal_error = supervisor
+        .spawn(&command)
+        .err()
+        .map(HostProtocolError::from);
+    let mut cleaning = terminal_error.is_some();
     let mut failure_reported = false;
-    let mut parent_connected = true;
-    let mut terminal_error = None;
-    let control_rx = match channel.stream.try_clone() {
-        Ok(mut control_stream) => match channel.send_ready() {
-            Ok(()) => {
-                let (control_tx, control_rx) = std::sync::mpsc::sync_channel(4);
-                match std::thread::Builder::new()
-                    .name("minimax-shell-host-control".to_owned())
-                    .spawn(move || {
-                        loop {
-                            let control = read_host_control(&mut control_stream);
-                            let terminal = !matches!(control, Ok(HostControl::Stop));
-                            if control_tx.send(control).is_err() || terminal {
-                                break;
+    let mut parent_connected = terminal_error.is_none();
+    let control_rx = if terminal_error.is_some() {
+        None
+    } else {
+        match channel.stream.try_clone() {
+            Ok(mut control_stream) => match channel.send_ready() {
+                Ok(()) => {
+                    let (control_tx, control_rx) = std::sync::mpsc::sync_channel(4);
+                    match std::thread::Builder::new()
+                        .name("minimax-shell-host-control".to_owned())
+                        .spawn(move || {
+                            loop {
+                                let control = read_host_control(&mut control_stream);
+                                let terminal = !matches!(control, Ok(HostControl::Stop));
+                                if control_tx.send(control).is_err() || terminal {
+                                    break;
+                                }
                             }
+                        }) {
+                        Ok(_) => Some(control_rx),
+                        Err(error) => {
+                            terminal_error = Some(error.into());
+                            parent_connected = false;
+                            cleaning = true;
+                            None
                         }
-                    }) {
-                    Ok(_) => Some(control_rx),
-                    Err(error) => {
-                        terminal_error = Some(error.into());
-                        parent_connected = false;
-                        cleaning = true;
-                        None
                     }
                 }
-            }
+                Err(error) => {
+                    terminal_error = Some(error);
+                    parent_connected = false;
+                    cleaning = true;
+                    None
+                }
+            },
             Err(error) => {
-                terminal_error = Some(error);
+                terminal_error = Some(error.into());
                 parent_connected = false;
                 cleaning = true;
                 None
             }
-        },
-        Err(error) => {
-            terminal_error = Some(error.into());
-            parent_connected = false;
-            cleaning = true;
-            None
         }
     };
 
     loop {
+        if !cleaning && supervisor.cleanup_requested() {
+            cleaning = true;
+        }
         if !cleaning {
             match supervisor.try_root_exit() {
                 Ok(Some(exit)) => {
@@ -620,6 +988,11 @@ pub struct ParentChannel {
 }
 
 impl ParentChannel {
+    #[cfg(target_os = "linux")]
+    pub(crate) fn set_operation_timeout(&mut self, timeout: Duration) {
+        self.deadline = Some(Instant::now() + timeout);
+    }
+
     pub fn send_activate(&mut self) -> Result<(), HostProtocolError> {
         self.require_state(ParentState::Connected)?;
         write_frame(&mut self.stream, FrameKind::Activate, &[], self.deadline)?;
@@ -1040,6 +1413,62 @@ mod tests {
         HostProtocolError, HostState, HostSupervisor, PROTOCOL_MAGIC, PROTOCOL_VERSION, RootExit,
         read_frame, run_host_lifecycle, write_frame,
     };
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_trusted_host_supervisor_is_available_to_the_internal_host() {
+        let _ = super::LinuxProcessSupervisor::new();
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_proc_stat_parser_uses_the_last_process_name_delimiter() {
+        let stat = "42 (worker ) with spaces) S 7 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 0 123456";
+
+        let identity = super::parse_linux_process_stat(stat).expect("parse Linux /proc stat");
+
+        assert_eq!(
+            identity,
+            super::LinuxProcessIdentity {
+                pid: 42,
+                parent_pid: 7,
+                start_time: 123_456,
+                state: 'S',
+            }
+        );
+        assert!(super::parse_linux_process_stat("42 (truncated) S 7").is_err());
+        assert!(super::parse_linux_process_stat("missing delimiters").is_err());
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn linux_descendant_bfs_includes_adopted_daemons_and_excludes_unrelated_processes() {
+        fn process(pid: u32, parent_pid: u32) -> super::LinuxProcessIdentity {
+            super::LinuxProcessIdentity {
+                pid,
+                parent_pid,
+                start_time: u64::from(pid) * 10,
+                state: 'S',
+            }
+        }
+
+        let descendants = super::linux_descendants_from_table(
+            100,
+            vec![
+                process(100, 1),
+                process(101, 100),
+                process(102, 101),
+                process(103, 100),
+                process(200, 1),
+            ],
+        );
+        let process_ids = descendants
+            .into_iter()
+            .map(|process| process.pid)
+            .collect::<Vec<_>>();
+
+        assert_eq!(process_ids, vec![101, 103, 102]);
+    }
 
     #[test]
     fn bootstrap_contains_only_fixed_ipc_metadata_and_never_the_command() {
@@ -1555,6 +1984,55 @@ mod tests {
             error,
             HostProtocolError::Io(error) if error.kind() == io::ErrorKind::BrokenPipe
         ));
+        let state = state.lock().expect("scripted state");
+        assert_eq!(
+            state
+                .events
+                .iter()
+                .filter(|event| **event == "cleanup")
+                .count(),
+            1
+        );
+    }
+
+    #[test]
+    fn lifecycle_cleans_partial_spawn_before_returning_a_post_command_failure() {
+        let state = Arc::new(Mutex::new(ScriptedState {
+            cleanup: VecDeque::from([CleanupStep::Done(RootExit::Code(125))]),
+            ..ScriptedState::default()
+        }));
+        let (spawn_release_tx, spawn_release_rx) = mpsc::sync_channel(1);
+        let (listener, bootstrap) = HostListener::bind_for_test(Duration::from_secs(2), [0x76; 32])
+            .expect("partial spawn listener");
+        let host_state = Arc::clone(&state);
+        let host = thread::spawn(move || {
+            let channel = bootstrap.connect().expect("host connects");
+            run_host_lifecycle(
+                channel,
+                BlockingSpawnSupervisor {
+                    inner: ScriptedSupervisor { state: host_state },
+                    release: spawn_release_rx,
+                },
+                Duration::from_millis(2),
+            )
+        });
+
+        let mut parent = listener.accept().expect("accept host");
+        parent.send_activate().expect("activate host");
+        assert_eq!(
+            parent.recv_event().expect("contained"),
+            HostEvent::Contained
+        );
+        parent
+            .send_command("spawn-then-fail")
+            .expect("deliver command");
+        drop(spawn_release_tx);
+
+        assert!(matches!(
+            parent.recv_event(),
+            Err(HostProtocolError::PeerClosed)
+        ));
+        assert!(host.join().expect("host thread").is_err());
         let state = state.lock().expect("scripted state");
         assert_eq!(
             state
