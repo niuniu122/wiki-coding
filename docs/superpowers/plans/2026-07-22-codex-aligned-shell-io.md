@@ -4,7 +4,7 @@
 
 **Goal:** Make ordinary full-access Shell commands use lossless pipe I/O by default, retain explicit PTY/ConPTY execution with `tty: true`, and make the complete 32 KiB Windows command contract launchable.
 
-**Architecture:** Add one explicit `ShellIoMode` boundary from JSON parsing through the session manager to a renamed generic Shell backend. The native backend launches the existing authenticated host over either OS pipes or a terminal while preserving the same Job/process-group containment. Linux terminal mode remains on `portable-pty`; Windows terminal mode crosses a new safe `windows-conpty` API whose isolated implementation owns the raw ConPTY, pipe, thread, process, and Job handles needed for deterministic teardown and pre-activation Job assignment. The Windows host stages command text outside `CreateProcess` arguments and launches a fixed PowerShell bootstrap that removes the payload before evaluating user code.
+**Architecture:** Add one explicit `ShellIoMode` boundary from JSON parsing through the session manager to a renamed generic Shell backend. The native backend launches the existing authenticated host over either OS pipes or a terminal while preserving the same Job/process-group containment. Linux terminal mode remains on `portable-pty`; Windows terminal mode crosses a new safe `windows-conpty` API whose isolated implementation owns the raw ConPTY, pipe, thread, process, and Job handles needed for deterministic teardown and pre-activation Job assignment. The native Windows parent stages command text outside `CreateProcess` arguments and retains its `TempPath` owner outside the Job. The trusted host verifies that payload against the authenticated command and launches a fixed PowerShell bootstrap that strict-decodes and deletes the payload before an authenticated loopback acknowledgement permits host `Ready`.
 
 **Tech Stack:** Rust 1.97/edition 2024, Tokio 1.52.3, `portable-pty` 0.9.0 on Linux, direct `windows-sys` 0.61.2 plus `win32job` behind the isolated Windows boundary, direct `filedescriptor` 0.8.3, `tempfile` 3.27.0, PowerShell/pwsh, Windows Job Objects, Linux process groups/subreaper, JSON Schema fixtures, Cargo and Node verification harnesses.
 
@@ -19,7 +19,7 @@
 - Each session retains at most 1 MiB unread output, all sessions retain at most 8 MiB, and one Shell receipt contains at most 49,152 output bytes.
 - Windows Job assignment remains before host activation; Linux host containment remains fail closed.
 - Command, cwd, stdin, and output bodies remain absent from safe trace.
-- Payload staging, decoding, or child-spawn failure occurs before session publication, returns `shell_launch_failed`, releases the reserved slot, and leaves no payload or process survivor.
+- Payload staging, validation, decoding, deletion acknowledgement, or child-spawn failure occurs before session publication. Post-spawn failure transfers the complete payload/tree/I/O ownership to an internal unpublished manager entry; its running slot and resources remain owned until cleanup succeeds. Immediate cleanup returns `shell_launch_failed`; failed cleanup remains fail closed and retryable with the existing indeterminate cleanup result.
 - Do not add Pi, Node/TypeScript Agent runtime, tmux, browser control, external terminal runtime, `cmd.exe` fallback, or macOS enablement.
 - Do not refresh hosted evidence, push, merge, tag, release, or publish.
 - Use TDD for every behavioral change: observe the focused test fail for the intended reason, implement the smallest coherent change, then rerun the focused and neighboring suites.
@@ -34,7 +34,7 @@
 - `crates/tools/src/shell/native.rs`: pipe versus terminal host launch, outer containment, and native resource wrappers.
 - `crates/windows-conpty/src/lib.rs`: Windows-only safe ConPTY boundary; owns raw handles, pre-activation Job assignment, output draining, exact-tail delivery, and bounded deterministic teardown.
 - `crates/windows-conpty/tests/teardown.rs`: deterministic lowest-boundary blocked-reader cancellation and output-tail regressions.
-- `crates/tools/src/shell/host.rs`: Windows command payload staging and PowerShell bootstrap.
+- `crates/tools/src/shell/host.rs`: Windows payload validation, PowerShell bootstrap, and authenticated deletion acknowledgement.
 - `crates/tools/src/shell/command.rs`: strict JSON parsing and default `tty: false` behavior.
 - `crates/tools/src/policy.rs`: Provider-visible `tty` schema.
 - `crates/tools/tests/shell_manager.rs`: deterministic manager mode and cursor-handshake tests.
@@ -377,14 +377,19 @@ Expected GREEN: exact final tails are present, all sixteen concurrency shapes se
 
 **Files:**
 
+- Modify: `crates/tools/src/shell/native.rs`
 - Modify: `crates/tools/src/shell/host.rs`
-- Modify: `crates/tools/tests/shell_pty.rs`
+- Modify: `crates/tools/src/shell/manager.rs`
+- Modify: `crates/tools/tests/shell_io.rs` (named `shell_pty.rs` during the Task 2 RED cycle and renamed by Task 3)
 - Modify: `crates/tools/tests/shell_host_process.rs`
+- Modify: `crates/tools/tests/shell_manager.rs`
+- Modify: `crates/tools/tests/shell_tools.rs`
+- Modify: `crates/cli/tests/tool_loop.rs`
 
 **Interfaces:**
 
-- Consumes: the authenticated host's validated command string and existing `tempfile` dependency.
-- Produces: `WindowsCommandPayload::stage`, `WINDOWS_COMMAND_PATH_ENV`, a constant PowerShell bootstrap, and exact-boundary integration evidence.
+- Consumes: the native parent's command, the authenticated host's independently delivered command string, and existing `tempfile`/`getrandom` dependencies.
+- Produces: parent-owned `WindowsCommandPayload::stage`, `WINDOWS_COMMAND_PATH_ENV`, a constant PowerShell bootstrap, a fresh 256-bit loopback acknowledgement, and retryable unpublished-start cleanup ownership.
 
 - [ ] **Step 1: Write Windows payload unit tests**
 
@@ -413,7 +418,7 @@ Add a direct bootstrap test that runs a staged Unicode command, asserts its outp
 
 - [ ] **Step 2: Write the exact 32 KiB integration regression**
 
-In the native Shell integration test, build a syntactically valid command whose UTF-8 byte length is exact:
+In the native Shell integration test (then named `shell_pty.rs`), build a syntactically valid command whose UTF-8 byte length is exact:
 
 ```rust
 #[cfg(windows)]
@@ -432,6 +437,9 @@ Run it in default pipe mode and assert `shell_exited`, exit code `0`, and one `m
 
 - [ ] **Step 3: Run the Windows tests and record the RED evidence**
 
+These RED commands intentionally retain the pre-Task 3 target name that existed
+when the failures were captured:
+
 ```powershell
 cargo test -p minimax-tools windows_command_payload --locked -- --nocapture
 cargo test -p minimax-tools --test shell_pty exact_maximum_windows_command_launches --locked -- --nocapture
@@ -439,7 +447,7 @@ cargo test -p minimax-tools --test shell_pty exact_maximum_windows_command_launc
 
 Expected RED: payload types/constants do not compile; after adding only the test scaffolding, the exact maximum command returns `ShellManagerError::Launch` because the current `-Command <command>` argv exceeds the Windows limit.
 
-- [ ] **Step 4: Implement guarded payload staging**
+- [ ] **Step 4: Implement parent-owned guarded payload staging and acknowledged deletion**
 
 Add these Windows-only constants and owner:
 
@@ -448,7 +456,13 @@ Add these Windows-only constants and owner:
 const WINDOWS_COMMAND_PATH_ENV: &str = "MINIMAX_SHELL_COMMAND_PATH";
 
 #[cfg(windows)]
-const WINDOWS_COMMAND_BOOTSTRAP: &str = "$p=$env:MINIMAX_SHELL_COMMAND_PATH; Remove-Item Env:MINIMAX_SHELL_COMMAND_PATH -ErrorAction SilentlyContinue; try {$c=[IO.File]::ReadAllText($p,[Text.UTF8Encoding]::new($false,$true))} finally {Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue}; Invoke-Expression $c";
+const WINDOWS_ACK_ADDRESS_ENV: &str = "MINIMAX_SHELL_ACK_ADDRESS";
+
+#[cfg(windows)]
+const WINDOWS_ACK_TOKEN_ENV: &str = "MINIMAX_SHELL_ACK_TOKEN";
+
+#[cfg(windows)]
+const WINDOWS_COMMAND_BOOTSTRAP: &str = "$p=$env:MINIMAX_SHELL_COMMAND_PATH;$a=$env:MINIMAX_SHELL_ACK_ADDRESS;$t=$env:MINIMAX_SHELL_ACK_TOKEN;Remove-Item Env:MINIMAX_SHELL_COMMAND_PATH -ErrorAction SilentlyContinue;Remove-Item Env:MINIMAX_SHELL_ACK_ADDRESS -ErrorAction SilentlyContinue;Remove-Item Env:MINIMAX_SHELL_ACK_TOKEN -ErrorAction SilentlyContinue;try{$c=[IO.File]::ReadAllText($p,[Text.UTF8Encoding]::new($false,$true))}catch{throw 'shell command payload decode failed'}finally{Remove-Item -LiteralPath $p -Force -ErrorAction SilentlyContinue};if([IO.File]::Exists($p)){throw 'shell command payload cleanup failed'};$s=[Net.Sockets.TcpClient]::new();try{$h,$o=$a.Split(':');$s.Connect($h,[int]$o);$b=[Text.Encoding]::ASCII.GetBytes($t);$n=$s.GetStream();$n.Write($b,0,$b.Length)}finally{$s.Dispose()};Remove-Variable p,a,t,s,h,o,b,n -ErrorAction SilentlyContinue;Invoke-Expression $c";
 
 #[cfg(windows)]
 struct WindowsCommandPayload {
@@ -473,7 +487,10 @@ impl WindowsCommandPayload {
 }
 ```
 
-Change `resolve_windows_process_shell` so it takes no command and returns only:
+The native Windows pipe and terminal paths stage this payload before starting
+the trusted host, pass only its path in `WINDOWS_COMMAND_PATH_ENV`, and retain
+the `TempPath` owner in `NativeShellGuard` outside the Job/process tree. Change
+`resolve_windows_process_shell` so it takes no command and returns only:
 
 ```rust
 vec![
@@ -484,22 +501,45 @@ vec![
 ]
 ```
 
-Add `command_payload: Option<WindowsCommandPayload>` to `WindowsProcessSupervisor`. Stage before spawn, set only `WINDOWS_COMMAND_PATH_ENV` on PowerShell, remove the existing four host bootstrap variables, store the owner only after successful spawn, and drop it when exit is observed or cleanup completes. A failed stage or spawn drops the local owner and returns before `Ready`.
+`WindowsProcessSupervisor` must not own or create the payload. After the host
+receives the authenticated command, read the staged path and require exact text
+equality. Bind a loopback listener with a fresh 256-bit token, remove the four
+internal host-bootstrap variables from PowerShell, and pass only the payload
+path plus acknowledgement address/token. The fixed bootstrap removes those
+three variables, strict-decodes and deletes the payload, verifies that the path
+is absent, and returns the token before invoking user code. The supervisor waits
+for the loopback token before spawn succeeds; only then may the host send
+`Ready`.
+
+On any post-spawn protocol/bootstrap failure, return `ShellSpawnError` with the
+child, reader, writer, Job/ConPTY control, and native-side payload guard. The
+manager converts those resources into an internal unpublished session. Keep its
+running slot, payload, and contained tree owned across a failed cleanup attempt;
+remove the unpublished entry and release the slot only after a retry confirms
+cleanup.
 
 - [ ] **Step 5: Prove cleanup and execution semantics**
 
-Run the exact-boundary test, Unicode/nonterminating-error tests, prompt write test, process-tree cleanup tests, and internal host process test:
+Run the exact-boundary test, Unicode/nonterminating-error tests, prompt write
+test, failed-start retention tests, process-tree cleanup tests, and internal host
+process test. Task 3 renamed the final integration target to `shell_io`; unlike
+the Step 3 RED record, these final commands use its current name:
 
 ```powershell
 cargo test -p minimax-tools windows_command_payload --locked -- --nocapture
-cargo test -p minimax-tools --test shell_pty exact_maximum_windows_command_launches --locked -- --nocapture
-cargo test -p minimax-tools --test shell_pty windows_trusted_host --locked -- --nocapture
-cargo test -p minimax-tools --test shell_pty prompt_receives_write_and_submit_then_exits --locked -- --nocapture
-cargo test -p minimax-tools --test shell_pty terminates_the_reported_parent_and_child --locked -- --nocapture
+cargo test -p minimax-tools --test shell_io exact_maximum_windows_command_launches --locked -- --nocapture
+cargo test -p minimax-tools --test shell_io windows_trusted_host --locked -- --nocapture
+cargo test -p minimax-tools --test shell_io windows_failed_ --locked -- --nocapture
+cargo test -p minimax-tools --test shell_io prompt_receives_write_and_submit_then_exits --locked -- --nocapture
+cargo test -p minimax-tools --test shell_io terminates_the_reported_parent_and_child --locked -- --nocapture
 cargo test -p minimax-tools --test shell_host_process --locked -- --nocapture
 ```
 
-Expected GREEN: every test passes, the payload environment variable is absent from user code, command bytes are not present in PowerShell argv, exact 32 KiB runs, nonzero/Unicode/prompt semantics remain stable, and no process or payload survives cleanup.
+Expected GREEN: every test passes, payload/ack variables are absent from user
+code, command bytes are not present in PowerShell argv, exact 32 KiB runs,
+nonzero/Unicode/prompt semantics remain stable, failed-start payload and slot
+ownership survives a blocked first cleanup, the next retry succeeds, and no
+process or payload survives confirmed cleanup.
 
 - [ ] **Step 6: Commit the Windows boundary slice**
 
@@ -508,6 +548,25 @@ git add crates/tools/src/shell/host.rs crates/tools/tests/shell_pty.rs crates/to
 git diff --cached --check
 git commit -m "fix(shell): preserve windows command boundary"
 ```
+
+#### Task 2 review-fix addendum: parent ownership, readiness, and failed-start retention
+
+The Step 6 command records the original `8cbc77e` implementation commit and its
+then-current `shell_pty` filename. Review found three lifecycle gaps and closed
+them without rewriting that historical TDD evidence:
+
+- `f4f3a10` moved payload staging and `TempPath` ownership out of the trusted
+  host and into the native parent/guard outside the Job;
+- `874c3ca` required exact payload/authenticated-command equality plus strict
+  PowerShell decode/delete and a fresh 256-bit loopback acknowledgement before
+  host `Ready`;
+- `8fd76f8` returned all failed-start resources to the manager and retained the
+  unpublished session, running slot, payload, and contained tree until cleanup
+  retry succeeded.
+
+The current final target is `shell_io`; Step 5 uses that name. Step 3 and the
+Step 6 historical commit command deliberately retain `shell_pty` because Task 3
+had not renamed the evidence target at those points.
 
 ---
 

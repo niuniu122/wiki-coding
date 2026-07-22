@@ -175,30 +175,52 @@ deterministic under the same supported concurrency as the session manager.
 
 ## Windows Command Payload
 
-The authenticated parent-to-host protocol remains the authority for accepting
-the command. After receiving a validated command, the Windows host:
+The native parent stages the command before launching the trusted host. It:
 
 1. creates an exclusive, randomly named temporary payload with a `.ps1` suffix;
-2. writes the command as UTF-8 and flushes it before child launch;
-3. closes the file handle while retaining a `TempPath` cleanup owner;
-4. launches PowerShell with `-NoLogo -NoProfile -Command` and a short constant
-   bootstrap that reads the payload with explicit UTF-8 decoding and evaluates
-   it in the command scope;
-5. supplies only the random payload path through a dedicated child environment
-   variable, removes that variable before evaluating user code, and removes all
-   existing internal-host bootstrap variables as today;
-6. retains the cleanup owner until PowerShell has exited or cleanup terminates
-   the process tree, then deletes the payload.
+2. writes the command as UTF-8, flushes it, closes the file handle, and retains
+   the `TempPath` cleanup owner outside the Job/process tree;
+3. supplies only that random path to the trusted host through
+   `MINIMAX_SHELL_COMMAND_PATH`, while the authenticated parent-to-host protocol
+   independently delivers the authoritative command text;
+4. transfers the `TempPath`, child, reader, writer, and Job/ConPTY cleanup
+   controls together to the manager on every post-spawn startup failure.
+
+After containment and authentication, the trusted Windows host receives the
+command and reads the staged payload. It rejects startup unless the payload text
+exactly equals the authenticated command. The host then binds a loopback
+acknowledgement listener with a fresh 256-bit token and launches PowerShell with
+`-NoLogo -NoProfile -Command` plus one short constant bootstrap. The bootstrap:
+
+1. captures the payload path and acknowledgement values and removes all three
+   variables from PowerShell's process environment;
+2. strict-decodes the payload as UTF-8 and deletes it in a `finally` path;
+3. rejects startup if the payload path still exists;
+4. returns the 256-bit token to the loopback listener; and only then
+5. evaluates the decoded command in the command scope.
+
+The host waits for that authenticated acknowledgement before its spawn step
+succeeds and before it sends `Ready` to the native parent. The native-side
+`TempPath` guard remains authoritative even though successful bootstrap cleanup
+has already removed the file; dropping the guard is therefore an idempotent
+fallback, not host ownership through process exit.
 
 The user command is therefore absent from the Windows process command line, and
 the 32 KiB public boundary no longer competes with executable/flag/quoting
 overhead. Standard input remains available for `shell_session` writes because
 the bootstrap reads the command from the payload rather than stdin.
 
-Payload creation, writing, decoding, or PowerShell spawn failure occurs before
-the host sends `Ready`. The parent reports `shell_launch_failed`, runs unified
-unpublished-session cleanup, publishes no session ID, and releases the running
-slot. Cleanup also removes the payload on every error path.
+Payload creation/writing failure occurs before host launch. Payload mismatch,
+strict decoding, deletion confirmation, acknowledgement, or PowerShell spawn
+failure occurs before the host sends `Ready`. A post-spawn failure returns
+complete cleanup ownership to the manager, which publishes no user-visible
+session ID and registers an internal unpublished session. Its running slot,
+payload guard, reader/writer, child, and Job/ConPTY tree remain owned until
+unified cleanup succeeds; a failed cleanup attempt remains registered for the
+next downgrade/shutdown retry. Only successful cleanup releases the slot and
+removes the unpublished entry. The public result is `shell_launch_failed` when
+that cleanup succeeds immediately, or the existing indeterminate cleanup error
+when containment/payload deletion cannot yet be confirmed.
 
 Linux keeps its existing `-lc <command>` transport because the 32 KiB contract
 is below the supported argument boundary there. The I/O-mode split still
@@ -234,8 +256,9 @@ guessing which newlines a terminal inserted.
   inherited by PowerShell.
 - The temporary payload path is removed from PowerShell's environment before
   user code runs.
-- The payload uses exclusive creation, is never reused, and is owned by a guard
-  whose drop path deletes it.
+- The payload uses exclusive creation, is never reused, and its native-side
+  `TempPath` guard remains outside the Job so failed-start cleanup can retry
+  deletion after the contained process tree is terminated.
 - Command contents remain excluded from safe trace and receipt metadata.
 - No fallback silently changes a requested terminal session into pipe mode or a
   pipe session into terminal mode.
