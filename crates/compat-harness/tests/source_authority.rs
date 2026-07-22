@@ -1159,6 +1159,10 @@ fn ci_rejects_non_executing_authority_text_forgery() {
         &format!("      {reproducible_msvc_link}\n"),
         &format!("      RUSTFLAGS: ''\n      PROOF: |\n        {reproducible_msvc_link}\n"),
     );
+    let step_rustflags_override = source.replace(
+        "      - run: npm run build:rust:release\n",
+        "      - run: npm run build:rust:release\n        env:\n          RUSTFLAGS: ''\n",
+    );
     let conditional_canary = source.replace(
         "      - name: Run Linux adversarial sandbox canary\n        if: runner.os == 'Linux'\n        run: bash scripts/ci-linux-sandbox-canary.sh\n",
         "      - name: Run Linux adversarial sandbox canary\n        if: false\n        run: bash scripts/ci-linux-sandbox-canary.sh\n",
@@ -1186,6 +1190,11 @@ fn ci_rejects_non_executing_authority_text_forgery() {
             "block scalar RUSTFLAGS",
             scalar_rustflags,
             "reproducible /Brepro linking",
+        ),
+        (
+            "step RUSTFLAGS override",
+            step_rustflags_override,
+            "must not inject credentials or override the job environment",
         ),
         (
             "conditional Linux canary",

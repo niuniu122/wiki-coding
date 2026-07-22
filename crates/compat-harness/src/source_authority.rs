@@ -1042,6 +1042,20 @@ pub fn validate_ci_workflow_text(source: &str) -> Result<(), SourceAuthorityErro
     if !valid_native_pty_step {
         return violation("CI must run native PTY Shell integration on every hosted platform");
     }
+    if lines[*steps_start + 1..steps_end].iter().any(|line| {
+        let trimmed = line.trim_start();
+        let indent = line.len().saturating_sub(trimmed.len());
+        let mapping = match indent {
+            6 => trimmed.strip_prefix("- "),
+            8 => Some(trimmed),
+            _ => None,
+        };
+        mapping.is_some_and(|mapping| matches!(yaml_mapping_key(mapping), Ok(Some("env"))))
+    }) {
+        return violation(
+            "CI authority steps must not inject credentials or override the job environment",
+        );
+    }
     if normalized.contains("continue-on-error:") {
         return violation("CI authority and package gates must fail closed");
     }
