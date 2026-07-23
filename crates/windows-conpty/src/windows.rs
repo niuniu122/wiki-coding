@@ -31,7 +31,7 @@ use windows_sys::Win32::System::Threading::{
 
 const PSEUDOCONSOLE_RESIZE_QUIRK: u32 = 0x2;
 const PSEUDOCONSOLE_WIN32_INPUT_MODE: u32 = 0x4;
-const CANCEL_JOIN_RESERVE: Duration = Duration::from_millis(50);
+const CANCEL_JOIN_RESERVE: Duration = Duration::from_millis(200);
 const THREAD_RETURN_RESERVE: Duration = Duration::from_millis(25);
 const OUTPUT_READ_CHUNK_BYTES: usize = 16 * 1_024;
 pub(crate) const OUTPUT_QUEUE_CAPACITY_BYTES: usize = 64 * 1_024;

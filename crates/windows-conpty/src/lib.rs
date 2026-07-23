@@ -162,6 +162,10 @@ mod tests {
             drain.close_before(Instant::now() + Duration::from_millis(500))
         });
         between_reads.wait_until_cancellation_requested(Duration::from_secs(1));
+        // Model a briefly descheduled drain worker after cancellation. The
+        // caller's absolute deadline still has enough room for the final read
+        // and join when cancellation reserves a practical scheduling budget.
+        std::thread::sleep(Duration::from_millis(75));
         between_reads.release();
         closer
             .join()
